@@ -146,6 +146,55 @@ enum Resource3 { CASH, COMPONENTS, ECO }
 @export var belt_visual_travel_secs: float = 3.0          # TUNE：帶上碎料由 BELT_HEAD 行到 SMELTER 嘅視覺時間
 
 
+# ══════════════ D. VR-04 狂熱車場：物件／關卡數值（全部 TUNE） ══════════════
+# docx 對呢張只有質性描述（跟指、剷斗剛體堆、刺滾筒、UPGRADE 墊、窄岩浆＋
+# 木橋，見附件），冇實數；場地座標／gates／frenzy_* 已經喺 A5／B 部定咗，
+# 呢度淨係補返場景擺位同物件數值。跟 gate_y／gates／car_park_max_y 同一個
+# 世界座標系（同放置場共用一個 3D world，門盡頭即係 smelter_pos 附近）。
+
+## -- 車場範圍 --
+@export var yard_x_range: Vector2 = Vector2(-1.1, 2.3) # TUNE：跟指橫向可去嘅範圍，包晒四道門 x
+@export var yard_min_y: float = -1.9                   # TUNE：車場最深（近爐前），碎料過咗呢度即入爐兌現
+@export var yard_spawn_y: float = 0.02                 # TUNE：車＋碎料初始生成 y（< car_park_max_y）
+
+## -- 散幣／藍波（車場入面被推嘅剛體） --
+@export var scrap_coin_value: float = 2.0      # TUNE：散幣基礎值
+@export var scrap_barrel_value: float = 1.0    # TUNE：藍波基礎值（未過刺滾筒），故意平過散幣
+@export var scrap_gold_value: float = 6.0      # TUNE：藍波過咗刺滾筒轉做金幣之後嘅值
+@export var barrel_spawn_ratio: float = 0.35   # TUNE：生成池入面藍波佔比，其餘係散幣
+
+## -- 刺滾筒（藍波 → 金幣） --
+@export var spike_roller_pos: Vector2 = Vector2(0.65, -0.5)            # TUNE
+@export var spike_roller_half_extents: Vector3 = Vector3(0.5, 0.3, 0.25) # TUNE
+
+## -- 窄岩浆 + 木橋（車跌落唔即死，只加溢滿；溢滿上限見 A1 trash_meter_cap） --
+@export var lava_bridge_y: float = -0.78                        # TUNE
+@export var lava_bridge_safe_x_range: Vector2 = Vector2(-0.22, 0.22) # TUNE：木橋安全闊度
+@export var lava_fall_overflow_amount: float = 6.0              # TUNE：跌一次溢滿條加幾多
+@export var lava_fall_stun_secs: float = 0.6                    # TUNE：跌落之後車短暫定住先返回橋面
+
+## -- UPGRADE 墊（即換模型，灰模用色塊／大細分身分，冇實際換 mesh） --
+@export var upgrade_pad_pos: Vector2 = Vector2(-0.9, -0.95) # TUNE
+@export var upgrade_pad_rearm_secs: float = 6.0             # TUNE：同一墊重複觸發嘅冷卻
+@export var car_upgrade_tiers: Array[Dictionary] = [
+	{"name": "拖拉機", "scale": 1.0, "speed_mult": 1.0, "push_mult": 1.0, "color": Color(0.55, 0.15, 0.15)},
+	{"name": "剷泥車", "scale": 1.15, "speed_mult": 1.15, "push_mult": 1.3, "color": Color(0.75, 0.55, 0.1)},
+	{"name": "裝甲車", "scale": 1.3, "speed_mult": 1.3, "push_mult": 1.7, "color": Color(0.35, 0.55, 0.75)},
+] # TUNE：UPGRADE 墊逐級升嘅三級
+
+## -- 齒輪（狂熱期間每 gear_drop_interval_secs 一粒，只計玩家親手攔截） --
+@export var gear_component_reward: float = 1.0   # TUNE：每粒齒輪兌 Components
+@export var gear_pickup_window_secs: float = 4.0 # TUNE：粒齒輪冇喺呢段時間內截到就消失，唔計分
+
+## -- 幀數自動降級（S8+ 實測前嘅暫定策略；DEBRIS_RIGIDBODY_CAP 見上面
+## debris_rigidbody_cap，暫定 150，待實機 100/200/300 剛體 fps 報告核實）--
+@export var frenzy_fps_sample_interval_secs: float = 1.0 # TUNE：隔幾耐取樣一次 fps
+@export var frenzy_fps_low_threshold: float = 40.0       # TUNE：docx 驗收線（< 40fps 自動減粒子／碎片）
+@export var frenzy_fps_low_streak_to_degrade: int = 2    # TUNE：連續幾多次低於門檻先降級，避免單幀抖動
+@export var frenzy_debris_degrade_steps: Array[int] = [100, 60, 30] # TUNE：debris_rigidbody_cap（tier 0）之後逐級降嘅上限
+@export var frenzy_fake_physics_min_tier: int = 3 # TUNE：跌到呢一級（0=debris_rigidbody_cap，1..=frenzy_debris_degrade_steps）先轉用假物理（位置插值代替剛體）
+
+
 # ══════════════════════════ 計算方法 ══════════════════════════
 
 ## 離線收益：banded yield + 回撥保護（elapsed < 0 → 0）+ 極短空隙保護
