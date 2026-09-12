@@ -125,3 +125,10 @@ func test_unlock_prices() -> void:
 	assert_almost_eq(c.unlock_price("mid"), 2000000.0, EPS)
 	assert_almost_eq(c.unlock_price("upper"), 30000000.0, EPS)
 	assert_almost_eq(c.unlock_price("nope"), 0.0, EPS)
+
+
+# ── VR-03 新增（C 部，TUNE）──────────────────────────────────
+
+func test_vr03_visual_pacing_constants_are_positive() -> void:
+	assert_gt(c.pile_debris_spawn_interval_secs, 0.0)
+	assert_gt(c.belt_visual_travel_secs, 0.0)
