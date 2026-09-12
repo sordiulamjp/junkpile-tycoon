@@ -110,7 +110,7 @@ enum Resource3 { CASH, COMPONENTS, ECO }
 ## -- 主戰車 / 碎片 --
 @export var car_capacity: int = 30          # TUNE
 @export var car_speed: float = 3.0          # TUNE
-@export var debris_rigidbody_cap: int = 150 # TUNE：待 VR-04 實測
+@export var debris_rigidbody_cap: int = 300 # TUNE：VR-04 實機（S8+，bench/fps_bench.tscn）100/200/300 平均 60.8/60.8fps、最低 58–59fps 全部 ≥40fps 門檻，見留言報告
 @export var ai_driver_eff: float = 0.4      # TUNE：AI 司機效率，差過玩家（docx 只講質性描述）
 
 ## -- 溢滿條 --
@@ -195,12 +195,18 @@ enum Resource3 { CASH, COMPONENTS, ECO }
 @export var gear_component_reward: float = 1.0   # TUNE：每粒齒輪兌 Components
 @export var gear_pickup_window_secs: float = 4.0 # TUNE：粒齒輪冇喺呢段時間內截到就消失，唔計分
 
-## -- 幀數自動降級（S8+ 實測前嘅暫定策略；DEBRIS_RIGIDBODY_CAP 見上面
-## debris_rigidbody_cap，暫定 150，待實機 100/200/300 剛體 fps 報告核實）--
+## -- 幀數自動降級 --
+## S8+ 實機 bench/fps_bench.tscn 報告（見留言）：100/200/300 個碎片
+## 剛體平均 fps 分別係 57.6／60.8／60.8，最低 fps 58–59（100 嗰組首
+## 1 秒 warmup 之後見過一次 1.0fps 嘅離群值，懷疑係首次生成嗰刻嘅
+## GC／shader compile 一次性 hitch，200／300 兩組冇再見過，唔計入
+## 「持續」低幀）。三組全部遠高於 40fps 門檻，所以 debris_rigidbody_cap
+## 定 300（見上面）；降級梯度留返做真正落場（HUD／belt tween／齒輪／
+## 滾筒轉動一齊跑）嗰陣嘅安全網，唔係跟返 bench 嗰三個純剛體數。
 @export var frenzy_fps_sample_interval_secs: float = 1.0 # TUNE：隔幾耐取樣一次 fps
 @export var frenzy_fps_low_threshold: float = 40.0       # TUNE：docx 驗收線（< 40fps 自動減粒子／碎片）
 @export var frenzy_fps_low_streak_to_degrade: int = 2    # TUNE：連續幾多次低於門檻先降級，避免單幀抖動
-@export var frenzy_debris_degrade_steps: Array[int] = [100, 60, 30] # TUNE：debris_rigidbody_cap（tier 0）之後逐級降嘅上限
+@export var frenzy_debris_degrade_steps: Array[int] = [200, 100, 50] # TUNE：debris_rigidbody_cap（tier 0＝300）之後逐級降嘅上限
 @export var frenzy_fake_physics_min_tier: int = 3 # TUNE：跌到呢一級（0=debris_rigidbody_cap，1..=frenzy_debris_degrade_steps）先轉用假物理（位置插值代替剛體）
 
 

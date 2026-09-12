@@ -484,7 +484,13 @@ func _fps_sample_tick(delta: float) -> void:
 		return
 	_fps_sample_accum = 0.0
 	var prev_tier: int = frenzy.debris_tier
-	frenzy.sample_fps(Engine.get_frames_per_second())
+	var fps := Engine.get_frames_per_second()
+	frenzy.sample_fps(fps)
+	if OS.is_debug_build():
+		# VR-04 驗收要求「120 秒狂熱流暢（≥40fps）」實測報告；debug
+		# build 先印，adb logcat 攞到就得，release 唔會有呢句。
+		print("FRENZY_FPS t=%.1f fps=%.1f debris=%d cap=%d tier=%d" \
+			% [c.frenzy_duration_secs - frenzy.time_remaining, fps, _debris_nodes.size(), frenzy.current_debris_cap(), frenzy.debris_tier])
 	if frenzy.debris_tier != prev_tier:
 		_trim_debris_to_cap()
 
