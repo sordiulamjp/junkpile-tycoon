@@ -6,10 +6,10 @@ class_name Prestige
 ## 就可以重置。重置會清礦工／升級／Cash，但保留 prestige_count（+1）同
 ## lifetime_cash；每重置一次，永久收入 +50%（累加，唔係複合）。
 ##
-## VR-08 備註：main.gd 而家仲未有威望重置嘅 UI／觸發（HUD 淨係擺位，
-## 見 main.gd _build_hud() 註解），所以呢度未有 EventLog.log_event("prestige", …)
-## 嘅呼叫點。日後接返個掣／流程嗰陣，喺 reset() 執行成功之後記得補一句
-## `EventLog.log_event("prestige", {"prestige_count": new_state["prestige_count"]})`。
+## VR-05b（ALTA-216）備註：main.gd 已經接咗「拆廠搬礦」掣同確認面板
+## （達到 can_prestige() 門檻先顯示），確認之後 reset() 嘅結果搬返落
+## GameState 同補 EventLog.log_event("prestige", …)（見 main.gd
+## _show_prestige_confirm()／_do_prestige_reset()）。
 
 ## 依家個存檔夠唔夠門檻做威望重置。
 static func can_prestige(constants: GameConstants, state: Dictionary) -> bool:

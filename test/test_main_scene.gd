@@ -8,11 +8,17 @@ var main: Node
 
 func before_each() -> void:
 	RemoteConstants.clear_cache()
+	# VR-05b：main.gd 而家 _ready() 會讀 SaveManager 存檔——冇呢句嘅話上
+	# 一個測試（或者呢個檔新加嘅存檔／離線測試）留低嘅 user://save-v1.json
+	# 會累到下一個測試（例如 test_scene_loads_and_ticks_without_error()
+	# 假設嘅「開場 Cash＝starting_cash」）睇到唔啱嘅殘留存檔。
+	SaveManager.delete_save()
 
 func after_each() -> void:
 	if is_instance_valid(main):
 		main.free()
 	RemoteConstants.clear_cache()
+	SaveManager.delete_save()
 
 func test_scene_loads_and_ticks_without_error() -> void:
 	var scene: PackedScene = load("res://main.tscn")
@@ -585,3 +591,94 @@ func test_top_hud_content_height_fits_within_hud_top_budget() -> void:
 	var design_viewport_h: float = ProjectSettings.get_setting("display/window/size/viewport_height")
 	var budget_px: float = main.c.hud_top / 100.0 * design_viewport_h
 	assert_lt(top_vbox.size.y, budget_px, "頂 HUD 內容總高度應該喺 hud_top 預算之內")
+
+
+# ── VR-05b（ALTA-216）：存檔／離線結算面板／威望重置接駁入 main 流程 ──
+
+## 驗收「殺 App 重開資源不變」：經 main 嘅真實觸發（_try_summon_miner()
+## 尾段 _save_game()）存檔，free 個場景模擬殺 App，重新 instantiate 模擬
+## 重開，狀態應該原封不動咁讀返嚟（唔淨係 SaveManager 單元測試嗰層，
+## 呢度連 _ready() 嘅讀檔／套用流程都一齊過）。
+func test_save_round_trips_through_main_flow() -> void:
+	var scene: PackedScene = load("res://main.tscn")
+	main = scene.instantiate()
+	add_child_autofree(main)
+
+	main.state.cash = main.state.next_miner_cost()
+	main._try_summon_miner()
+	var miners_after: int = main.state.miner_count
+	var cash_after: float = main.state.cash
+	var lifetime_after: float = main._lifetime_cash
+
+	main.free()
+
+	main = scene.instantiate()
+	add_child_autofree(main)
+
+	assert_eq(main.state.miner_count, miners_after, "殺 App 重開，經 main 流程存返嘅礦工數應該不變")
+	assert_almost_eq(main.state.cash, cash_after, 0.01, "殺 App 重開，經 main 流程存返嘅 Cash 應該不變")
+	assert_almost_eq(main._lifetime_cash, lifetime_after, 0.01, "殺 App 重開，終身 Cash 應該不變")
+
+## 驗收「離線面板金額 = settle() 結果」：預先寫一份存檔（last_save_unix
+## 擺喺 1 小時前，帶 3 個礦工），開場應該即刻彈離線面板，顯示金額直接
+## 嚟自 _pending_offline_result（settle() 嘅結果），撳「收下」先真正入帳。
+func test_offline_panel_shows_and_claim_applies_settle_result() -> void:
+	var seed_state := SaveManager.default_state()
+	seed_state["last_save_unix"] = Time.get_unix_time_from_system() - 3600.0
+	seed_state["cash"] = 100.0
+	seed_state["lifetime_cash"] = 100.0
+	seed_state["miners"] = 3
+	seed_state["belt_level"] = 5
+	SaveManager.save_state(seed_state)
+
+	var scene: PackedScene = load("res://main.tscn")
+	main = scene.instantiate()
+	add_child_autofree(main)
+
+	assert_true(main._offline_panel.visible, "有存檔就應該即刻彈離線結算面板")
+	assert_false(main._pending_offline_result.is_empty())
+	var cash_yield: float = main._pending_offline_result["cash_yield"]
+	assert_gt(cash_yield, 0.0, "3 個礦工離場 1 小時應該有離線收成")
+	assert_eq(
+		main._offline_yield_label.text, "+%s" % main._fmt_num(cash_yield),
+		"面板顯示金額應該直接嚟自 settle() 結果"
+	)
+
+	var cash_before: float = main.state.cash
+	var lifetime_before: float = main._lifetime_cash
+	main._on_offline_claim_pressed()
+
+	assert_almost_eq(main.state.cash, cash_before + cash_yield, 0.01, "撳收下先入帳，金額應該同 settle() 結果一致")
+	assert_almost_eq(main._lifetime_cash, lifetime_before + cash_yield, 0.01)
+	assert_false(main._offline_panel.visible, "撳收下之後面板應該收埋")
+
+## 驗收「威望重置後 HUD 倍率」：夠門檻先顯示「拆廠搬礦」掣；確認重置
+## 之後 Cash／礦工／升級清零，終身 Cash／重置次數保留，HUD 威望 bar
+## 嘅門檻同永久收入倍率都要跟返新嘅 prestige_count 算。
+func test_prestige_reset_updates_income_multiplier_and_hud() -> void:
+	var scene: PackedScene = load("res://main.tscn")
+	main = scene.instantiate()
+	add_child_autofree(main)
+
+	main._lifetime_cash = main.c.prestige_threshold(0)
+	main.state.cash = 999.0
+	main.state.miner_count = 5
+	main.state.belt_level = 7
+	main._refresh_hud()
+	assert_true(main._prestige_button.visible, "威望達門檻應該顯示「拆廠搬礦」掣")
+
+	main._do_prestige_reset()
+
+	assert_eq(main._prestige_count, 1, "應該記到已經重置一次")
+	assert_eq(main.state.cash, 0.0, "重置應該清 Cash")
+	assert_eq(main.state.miner_count, 0, "重置應該清礦工")
+	assert_eq(main.state.belt_level, 1, "重置應該將帶打番去 Lv1")
+	assert_almost_eq(main._lifetime_cash, main.c.prestige_threshold(0), 0.01, "lifetime_cash 唔應該清零")
+	assert_almost_eq(Prestige.income_multiplier(main.c, main._prestige_count), 1.5, 0.001, "重置一次永久收入應該 ×1.5")
+
+	main._refresh_hud()
+	assert_almost_eq(
+		main._prestige_bar.max_value, main.c.prestige_threshold(1), 0.01,
+		"HUD 威望門檻應該跟返新嘅 prestige_count 算"
+	)
+	assert_false(main._prestige_button.visible, "重置完未再夠新門檻，掣應該收返")
