@@ -343,8 +343,12 @@ func _debris_color(kind: String) -> Color:
 		"gold": return Color(0.95, 0.8, 0.15)
 		_: return Color(0.85, 0.7, 0.2) # coin
 
+## 真剛體嘅 body 係 RigidBody3D，MeshInstance3D 掛喺 child(0)；假物理
+## 嗰邊 _spawn_fake_debris() 直接用 _make_box() 個 MeshInstance3D 做
+## node 本身，冇 child——兩種情況都要兼容（Reviewer 意見：漏咗呢個
+## case，藍波喺假物理路徑一過滾筒就 get_child(0) 越界 + null 存取）。
 func _recolor_debris(body: Node3D, kind: String) -> void:
-	var mesh: MeshInstance3D = body.get_child(0)
+	var mesh: MeshInstance3D = body if body is MeshInstance3D else body.get_child(0)
 	var mat: StandardMaterial3D = mesh.material_override
 	mat.albedo_color = _debris_color(kind)
 

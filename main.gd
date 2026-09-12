@@ -107,12 +107,19 @@ func _try_start_frenzy() -> void:
 	if not frenzy.start(state.current_income_rate()):
 		return
 	_placement_root.visible = false
+	# Review 意見：淨係隱藏 _placement_root 唔會關咗山腳碎料 Area3D 嘅
+	# 揀選——CollisionObject3D 物理揀選同 VisualInstance3D visible 係
+	# 兩件事，隱形碎料狂熱期間仍然 tap 得中。狂熱嘅車／門／滾筒／爐
+	# 全部靠 body_entered／_unhandled_input，冇一個靠 physics_object_picking，
+	# 所以成個 viewport 揼熄佢係安全嘅。
+	get_viewport().physics_object_picking = false
 	_frenzy_view.start()
 
 func _on_frenzy_ended() -> void:
 	state.eco += frenzy.eco_bonus_earned
 	_frenzy_view.stop()
 	_placement_root.visible = true
+	get_viewport().physics_object_picking = true
 
 
 # ══════════════════════ 建場景（灰模） ══════════════════════
