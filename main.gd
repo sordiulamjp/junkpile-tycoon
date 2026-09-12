@@ -23,13 +23,19 @@ extends Node3D
 ## 射線同 Z=0 平面求交，唔再假設相機正面望 -Z，所以呢個決定唔會再
 ## 逼手指映射嗰段代碼重做多次。副作用：帶／車道／四道門呢類橫向佈局
 ## 斜視之後會睇落斜咗（唔再係水平線），純美術取捨，留返俾日後獨立
-## 設計 issue 處理。）相機用正交，跟 docx §6 斜視 pitch/yaw 約
-## −55°／45°（screen_camera_pitch_deg／screen_camera_yaw_deg，用戶實機
-## 回饋 ALTA-150：正面平視令方塊變 2D 色塊），令 BoxMesh 睇得出側面/立
-## 體感（配 DirectionalLight3D 陰影）。size／位置由 _compute_camera_frame()
-## 直接由場地座標反推，保證山腳／帶／爐／倉喺 3:4 直版入面啱晒 HUD
-## 12/66/22 版面（screen_kx／screen_ky／screen_cy 冇再用，留喺
-## constants.gd）。
+## 設計 issue 處理。VR-06b（ALTA-214）用戶已經拍板接受呢個斜線取捨，
+## 對應嘅「改地面平面」issue ALTA-198 已 cancelled，所以呢個決定不變。）
+##
+## VR-06b：相機由正交改透視（issue 視覺參考 ALTA-153 最後一則留言，IZM
+## 截圖構圖：高角度望落一條由畫面頂延伸到底嘅峽谷，前景大後景細）。
+## FOV／pitch／yaw 唔再讀 constants.gd 嘅 screen_camera_pitch_deg／
+## yaw_deg（嗰兩個係舊正交相機嘅角度，issue 明確話「唔郁 constants.gd」，
+## 留喺嗰度做歷史記錄／日後遠端設定接手），改用呢個 script 自己嘅
+## CAMERA_FOV_DEG／CAMERA_PITCH_DEG／CAMERA_YAW_DEG（見上面，同
+## FOOTHILL_* 一樣係美術取景常數，唔係遊戲數值）。位置由
+## _compute_camera_frame() 數值解出嚟（透視底下垂直取景比例隨深度變，
+## 冇封閉公式，改用二分法，見該函式註解），保證山腳～山頂、帶、爐、
+## 倉、車場兩牆全部喺 3:4 直版入面啱晒 HUD 12/22 版面嘅中層帶。
 
 ## 山腳堆疊嘅盒仔尺寸——純美術造型，唔係遊戲數值，所以留喺呢度做
 ## script const（唔屬於 constants.gd 嘅「數值」，但相機取景要用嚟計算
@@ -37,6 +43,23 @@ extends Node3D
 ## 避免兩處各自 hardcode 一份出現唔一致）。
 const FOOTHILL_BASE_HEIGHT := 0.3
 const FOOTHILL_TIER_HEIGHT := 0.16
+
+## VR-06b：鏡頭改透視（issue 視覺參考 ALTA-153 最後一則留言，IZM 截圖：
+## 高角度望落一條由頂延伸到底嘅峽谷，前景大後景細）。呢啲純粹係鏡頭
+## 取景嘅美術參數，唔屬於 constants.gd 嘅遊戲數值（issue 明確話「唔郁
+## constants.gd」），所以同 FOOTHILL_* 一樣擺呢度做 script const。
+## constants.gd 嘅 screen_camera_pitch_deg／yaw_deg 係之前正交相機嗰set
+## 角度，維持唔變（留返俾歷史記錄／日後遠端設定），新透視相機用返呢
+## 幾個獨立常數。
+const CAMERA_FOV_DEG := 42.0    # 視覺參考：40–45°
+const CAMERA_PITCH_DEG := -57.5 # 視覺參考：55–60°（負數＝低頭望落場地，跟返正交相機嗰個正負號慣例）
+const CAMERA_YAW_DEG := 8.0     # 視覺參考：「輕微 yaw」
+
+## 取景安全邊界（screen fraction／世界單位），畀盒仔／模型本身嘅大細
+## 留返少少呼吸位，純美術決定，唔係精算出嚟嘅公差。
+const CAMERA_TOP_MARGIN := 0.02
+const CAMERA_BOTTOM_MARGIN := 0.03
+const CAMERA_HORIZONTAL_MARGIN_WORLD := 0.2
 
 ## 山腳碎料嘅 tap 拾取範圍——刻意獨立於 0.12 嘅視覺盒仔尺寸（ALTA-195，
 ## 實機驗收見 Reviewer 喺 ALTA-150 嘅提醒）。720×960 下依家個相機要一次
@@ -76,6 +99,7 @@ var _prestige_label: Label
 var _cash_label: Label
 var _components_label: Label
 var _eco_label: Label
+var _miner_count_label: Label # VR-06b：頂列「礦工 n/12」pill，純顯示，唔可以撳（撳嘅掣仍然係底部 _summon_button）
 var _summon_button: Button
 var _belt_upgrade_button: Button
 var _miner_upgrade_button: Button
@@ -152,68 +176,133 @@ func _on_frenzy_ended() -> void:
 func _site_to_world(v: Vector2, z: float = 0.0) -> Vector3:
 	return Vector3(v.x, v.y, z)
 
-## 由實際場地座標（山腳／帶頭／爐／倉，加山頂長到盡嘅高度）反推正交
-## 相機嘅 size／位置，令呢啲物件嘅螢幕 Y 比例落喺 hud_top~1-hud_bottom
-## 之間（中層 66% 果段），唔會俾頂／底 HUD 遮咗。
-##
-## 相機依家跟 docx §6 斜視咗（screen_camera_pitch_deg／screen_camera_yaw_deg，
-## 用戶實機回饋 ALTA-150：正面平視令 BoxMesh 睇落係死板 2D 色塊），唔再係
-## 望向 -Z 嘅平面投影，所以「世界 x/y＝螢幕 x/y」呢個假設唔再成立。做法：
-## 將關鍵場地點轉去相機自己嘅本地座標系（basis 轉置＝world→local，
-## 因為 basis 係正交矩陣），喺嗰個座標系度做返同上一版一樣嘅 bounding-box
-## 反推（size／置中），再將反推出嚟嘅本地座標轉返做世界座標畀 cam.position。
-##
-## 上一版單憑 docx 嘅 screen_kx／screen_ky／screen_cy 三個數推導鏡頭
-## size／中心，撞出帶／爐／倉全部跌出畫面；原 Canvas 工程／docx 冇留低
-## 呢三個數點樣換算做正交相機參數嘅公式，淨憑估好易再撞第二次——而家
-## 一律由場地座標反推，保證幾個關鍵節點實跌喺中層帶入面。screen_kx／
-## screen_ky／screen_cy 冇再用喺呢個 function（留喺 constants.gd 等後續
-## 搵返原公式或者遠端設定接手）。
-func _compute_camera_frame() -> Dictionary:
-	var basis := Basis.from_euler(
-		Vector3(deg_to_rad(c.screen_camera_pitch_deg), deg_to_rad(c.screen_camera_yaw_deg), 0.0)
-	)
-	var basis_t := basis.transposed() # 正交矩陣嘅轉置＝反矩陣，world→local
-
-	# 山頂會隨召喚礦工長到最盡（miner_summon_cap 層），連山腳 x 一齊入 pts。
+## VR-06b：鏡頭改透視之後由邊幾個地標決定取景——山腳／山頂（同舊版
+## 一樣）、帶頭／爐／倉，加埋車場兩幅牆（FrenzyYardView._build_walls()
+## 嘅位置，同一份場地座標）。狂熱車場同放置場共用呢一個相機（唔另起
+## 爐灶），舊版正交相機淨計放置場 5 個點就啱使，係因為嗰個取景範圍
+## 啱啱好連車場都框埋；依家帶車場兩牆落嚟一齊算，係因為新透視
+## 相機嘅橫向視野比正交窄（KEEP_HEIGHT 之下，3:4 直版嘅橫向 FOV 細過
+## 縱向），唔可以再靠撞彩，要老老實實將車場橫向範圍都計埋先保證
+## 「車場兩牆全部喺中層帶」（issue 驗收）。
+func _camera_reference_points() -> Array[Vector3]:
 	var mountain_top_y: float = c.site_foothill_pos.y + FOOTHILL_BASE_HEIGHT \
 		+ float(c.miner_summon_cap) * FOOTHILL_TIER_HEIGHT
-	var world_pts: Array[Vector3] = [
+	var wall_mid_y: float = (c.car_park_max_y + c.yard_min_y) * 0.5
+	return [
 		_site_to_world(c.site_foothill_pos),
 		_site_to_world(Vector2(c.site_foothill_pos.x, mountain_top_y)),
 		_site_to_world(c.belt_head_pos),
 		_site_to_world(c.smelter_pos, 0.25),
 		_site_to_world(c.warehouse_pos, 0.22),
+		_site_to_world(Vector2(c.yard_x_range.x - 0.1, wall_mid_y)),
+		_site_to_world(Vector2(c.yard_x_range.y + 0.1, wall_mid_y)),
 	]
+
+## 透視相機嘅垂直取景比例隨深度變（近大遠細），冇一個封閉公式可以好似
+## 正交相機舊版咁一步用 bounding-box 反推 size／位置——上一版嗰條公式
+## 淨啱正交（screen 比例同深度無關）。而家改用二分法數值解：候選相機
+## 距離（local_cz，沿住相機自己 -forward 退後幾多）配合
+## _solve_camera_height_for_bottom_fit() 揸實「畫面最底嗰個地標」貼
+## bottom_frac，再睇吓呢個距離之下「畫面最頂嗰個地標」跌落邊——跌得
+## 太深（frac 細過 top_frac，即係穿咗去頂 HUD 之上）就要再退後（加大
+## local_cz），跌得太淺（仲有好多白，未貼到 top_frac）就要再貼近（縮細
+## local_cz）。兩個方向都單調（見 _solve_camera_height_for_bottom_fit()
+## 註解），所以二分法保證收斂。
+func _solve_camera_distance_for_vertical_fit(
+	locals: Array[Vector3], max_lz: float, k_v: float, top_frac: float, bottom_frac: float
+) -> float:
+	var lo: float = max_lz + 0.5
+	var hi: float = max_lz + 60.0
+	for _i in range(48):
+		var mid: float = (lo + hi) * 0.5
+		var lcy: float = _solve_camera_height_for_bottom_fit(locals, mid, k_v, bottom_frac)
+		var min_frac: float = INF
+		for l: Vector3 in locals:
+			var depth: float = mid - l.z
+			var frac: float = 0.5 - 0.5 * (l.y - lcy) / (depth * k_v)
+			min_frac = minf(min_frac, frac)
+		if min_frac > top_frac:
+			hi = mid # 頂點留白太多，仲貼唔切 top_frac，鏡頭要再貼近（縮細 local_cz）
+		else:
+			lo = mid # 頂點已經頂到（或者穿咗）top_frac，鏡頭要再退後
+	return hi
+
+## 喺畀定嘅相機距離（local_cz）之下，二分法搵鏡頭沿住 up 軸嘅偏移
+## （local_cy），令「畫面最底嗰個地標」啱好貼近 bottom_frac。每個地標
+## 嘅螢幕 Y 比例隨 local_cy 單調遞增（鏡頭企得愈高，啲嘢喺畫面度愈跌
+## 愈低），所以「畫面最底嗰個」都係單調遞增，可以直接二分。
+func _solve_camera_height_for_bottom_fit(
+	locals: Array[Vector3], local_cz: float, k_v: float, bottom_frac: float
+) -> float:
+	var lo: float = -100.0
+	var hi: float = 100.0
+	for _i in range(48):
+		var mid: float = (lo + hi) * 0.5
+		var max_frac: float = -INF
+		for l: Vector3 in locals:
+			var depth: float = local_cz - l.z
+			var frac: float = 0.5 - 0.5 * (l.y - mid) / (depth * k_v)
+			max_frac = maxf(max_frac, frac)
+		if max_frac > bottom_frac:
+			hi = mid
+		else:
+			lo = mid
+	return (lo + hi) * 0.5
+
+## 由場地座標（加車場兩牆）反推透視相機嘅位置，令關鍵地標嘅螢幕 Y 比例
+## 落喺 hud_top~1-hud_bottom（中層帶）之間，橫向亦唔會撞出畫面兩側
+## （KEEP_HEIGHT 之下橫向 FOV 隨 3:4 直版縮窄，見下面橫向部分）。
+##
+## 做法：先將地標轉去相機自己嘅本地座標系（basis 轉置＝world→local，
+## 因為 basis 係正交矩陣，同正交相機舊版一樣嘅技巧），分開解橫向／垂直
+## 兩條：橫向每個地標喺自己深度要求嘅最少相機距離可以直接由
+## tan(半橫向 FOV) 反推（見 needed 嗰行）；垂直冇封閉解，用
+## _solve_camera_distance_for_vertical_fit() 數值解。最後鏡頭距離取
+## 兩者較大嗰個（較保守，確保橫向都唔會爆鏡），先再喺呢個距離之下
+## 用 _solve_camera_height_for_bottom_fit() 揸實垂直位置。
+func _compute_camera_frame() -> Dictionary:
+	var basis := Basis.from_euler(
+		Vector3(deg_to_rad(CAMERA_PITCH_DEG), deg_to_rad(CAMERA_YAW_DEG), 0.0)
+	)
+	var basis_t := basis.transposed() # 正交矩陣嘅轉置＝反矩陣，world→local
+
+	var locals: Array[Vector3] = []
+	for p in _camera_reference_points():
+		locals.append(basis_t * p)
 
 	var min_lx: float = INF
 	var max_lx: float = -INF
-	var min_ly: float = INF
-	var max_ly: float = -INF
 	var max_lz: float = -INF
-	for p in world_pts:
-		var l: Vector3 = basis_t * p
+	for l: Vector3 in locals:
 		min_lx = minf(min_lx, l.x)
 		max_lx = maxf(max_lx, l.x)
-		min_ly = minf(min_ly, l.y)
-		max_ly = maxf(max_ly, l.y)
 		max_lz = maxf(max_lz, l.z)
-
-	max_ly += 0.3   # 山頂／礦工盒仔留白
-	min_ly -= 0.5   # 倉腳留白
-	min_lx -= 0.5
-	max_lx += 0.5
-
-	var top_frac: float = c.hud_top / 100.0
-	var bottom_frac: float = 1.0 - (c.hud_bottom / 100.0)
-
-	var size: float = (max_ly - min_ly) / (bottom_frac - top_frac)
 	var local_cx: float = (min_lx + max_lx) * 0.5
-	var local_cy: float = max_ly - size * (0.5 - top_frac)
-	var local_cz: float = max_lz + 10.0 # 相機沿住自己嘅 -forward 退後喺場景後面
+
+	var half_fov_v: float = deg_to_rad(CAMERA_FOV_DEG) * 0.5
+	var k_v: float = tan(half_fov_v)
+	# keep_aspect＝KEEP_HEIGHT：垂直 FOV 固定，橫向 FOV 隨畫面闊高比縮放
+	# （tan(半橫向)＝tan(半垂直)×aspect，唔使行 atan／tan 一嚟一回）。
+	var viewport_size: Vector2 = get_viewport().get_visible_rect().size
+	var aspect: float = viewport_size.x / viewport_size.y
+	var k_h: float = k_v * aspect
+
+	var top_frac: float = c.hud_top / 100.0 + CAMERA_TOP_MARGIN
+	var bottom_frac: float = 1.0 - (c.hud_bottom / 100.0) - CAMERA_BOTTOM_MARGIN
+
+	var local_cz_horizontal: float = -INF
+	for l: Vector3 in locals:
+		var needed: float = l.z + (absf(l.x - local_cx) + CAMERA_HORIZONTAL_MARGIN_WORLD) / k_h
+		local_cz_horizontal = maxf(local_cz_horizontal, needed)
+
+	var local_cz_vertical: float = _solve_camera_distance_for_vertical_fit(
+		locals, max_lz, k_v, top_frac, bottom_frac
+	)
+	var local_cz: float = maxf(local_cz_vertical, local_cz_horizontal)
+	var local_cy: float = _solve_camera_height_for_bottom_fit(locals, local_cz, k_v, bottom_frac)
 
 	var cam_pos: Vector3 = basis.x * local_cx + basis.y * local_cy + basis.z * local_cz
-	return {"size": size, "position": cam_pos}
+	return {"position": cam_pos}
 
 func _build_world() -> void:
 	_world = Node3D.new()
@@ -222,12 +311,12 @@ func _build_world() -> void:
 
 	var cam := Camera3D.new()
 	cam.name = "Camera3D"
-	cam.projection = Camera3D.PROJECTION_ORTHOGONAL
-	cam.keep_aspect = Camera3D.KEEP_HEIGHT # size＝視野「高度」，唔受畫面闊度影響
-	# docx §6：斜視 2.5D（用戶實機回饋 ALTA-150，正面平視令方塊變 2D 色塊）。
-	cam.rotation_degrees = Vector3(c.screen_camera_pitch_deg, c.screen_camera_yaw_deg, 0.0)
+	# VR-06b：透視取代正交（issue 視覺參考：望落峽谷，前景大後景細）。
+	cam.projection = Camera3D.PROJECTION_PERSPECTIVE
+	cam.fov = CAMERA_FOV_DEG
+	cam.keep_aspect = Camera3D.KEEP_HEIGHT # fov＝垂直視野，唔受畫面闊度影響
+	cam.rotation_degrees = Vector3(CAMERA_PITCH_DEG, CAMERA_YAW_DEG, 0.0)
 	var frame := _compute_camera_frame()
-	cam.size = frame["size"]
 	cam.position = frame["position"]
 	cam.current = true
 	_world.add_child(cam)
@@ -255,6 +344,12 @@ func _build_world() -> void:
 	light.shadow_enabled = true
 	_world.add_child(light)
 
+	# VR-06b：峽谷環境（岩壁「碗」+ 地面）——純背景裝飾，擺喺 _world
+	# 底下而唔係 _placement_root，狂熱切換 _placement_root.visible 嗰陣
+	# 唔會連環境一齊隱藏（同 IZM 參考一致：車場都係喺同一個峽谷入面）。
+	_build_ground()
+	_build_canyon_walls()
+
 	# VR-04：放置場成組收埋喺呢個 root 底下，狂熱期間 toggle
 	# visible 就成組隱藏／還原，唔使逐個節點記低顯示狀態。
 	_placement_root = Node3D.new()
@@ -276,7 +371,9 @@ func _build_world() -> void:
 	belt_track.look_at_from_position(belt_track.position, _site_to_world(c.smelter_pos), Vector3.UP)
 	_placement_root.add_child(belt_track)
 
-	# 熔爐：藍身 + 發光橙色爐口（VR-06 換皮，代替純色盒仔）。
+	# 熔爐：藍身 + 發光藍火爐口（VR-06b 色板：爐口改藍火，同暖色洞穴做
+	# 對比，見 VisualFactory.PALETTE 註解）+ 屋簷 + 一盞燈——「方形入口 +
+	# 屋簷 + 一盞燈」語言（issue 視覺參考），用自己色，唔抄 IZM 藍頂。
 	var smelter := Node3D.new()
 	smelter.name = "Smelter"
 	smelter.position = _site_to_world(c.smelter_pos, 0.25)
@@ -287,9 +384,15 @@ func _build_world() -> void:
 	)
 	smelter_mouth.position = Vector3(0.0, -0.05, 0.26)
 	smelter.add_child(smelter_mouth)
+	var smelter_eave := VisualFactory.make_flat_box(Vector3(0.56, 0.06, 0.22), VisualFactory.PALETTE["entrance_eave"])
+	smelter_eave.position = Vector3(0.0, 0.28, 0.16)
+	smelter.add_child(smelter_eave)
+	var smelter_lamp := VisualFactory.make_lamp(0.05, VisualFactory.PALETTE["lamp_warm"])
+	smelter_lamp.position = Vector3(0.22, 0.22, 0.26)
+	smelter.add_child(smelter_lamp)
 	_placement_root.add_child(smelter)
 
-	# 倉：body + 斜頂，代替純色盒仔。
+	# 倉：body + 斜頂 + 一盞燈，同一套「入口 + 屋簷 + 一盞燈」語言。
 	var warehouse := Node3D.new()
 	warehouse.name = "Warehouse"
 	warehouse.position = _site_to_world(c.warehouse_pos, 0.22)
@@ -298,6 +401,9 @@ func _build_world() -> void:
 	var warehouse_roof := VisualFactory.make_flat_box(Vector3(0.66, 0.08, 0.5), VisualFactory.PALETTE["warehouse_roof"])
 	warehouse_roof.position = Vector3(0.0, 0.265, 0.0)
 	warehouse.add_child(warehouse_roof)
+	var warehouse_lamp := VisualFactory.make_lamp(0.05, VisualFactory.PALETTE["lamp_warm"])
+	warehouse_lamp.position = Vector3(0.28, 0.2, 0.24)
+	warehouse.add_child(warehouse_lamp)
 	_placement_root.add_child(warehouse)
 
 	# 礦工／山腳碎料嘅本地座標係「相對山腳」嘅少少 jitter；root 本身要
@@ -317,6 +423,83 @@ func _build_world() -> void:
 	_belt_items_root = Node3D.new()
 	_belt_items_root.name = "BeltItemsRoot"
 	_placement_root.add_child(_belt_items_root)
+
+## VR-06b：地面——一嚿暖灰底板 + 兩三條淡車轍紋（用「decal」做法：幾嚿
+## 更暗嘅幼長扁盒仔疊喺底板之上少少，代替 issue 講嘅 vertex color，
+## 同一份 flat-shaded 盒仔手法，唔使起 SurfaceTool 自訂 mesh）。擺喺場地
+## 中心（帶頭／爐／倉／車場之間），底板夠大冚晒中層帶睇得到嘅範圍。
+func _build_ground() -> void:
+	var ground_root := Node3D.new()
+	ground_root.name = "Ground"
+	_world.add_child(ground_root)
+
+	var mid_x: float = (c.yard_x_range.x + c.yard_x_range.y) * 0.5
+	var mid_y: float = (c.site_foothill_pos.y + c.warehouse_pos.y) * 0.5
+	var width: float = (c.yard_x_range.y - c.yard_x_range.x) + 1.2
+	var height: float = (c.site_foothill_pos.y - c.warehouse_pos.y) + 1.5
+
+	var backdrop := VisualFactory.make_flat_box(
+		Vector3(width, height, 0.06), VisualFactory.PALETTE["ground_warm"]
+	)
+	backdrop.position = Vector3(mid_x, mid_y, -0.08)
+	ground_root.add_child(backdrop)
+
+	# 車轍紋：由帶頭經爐去倉一條，車場中軸一條——同帶／車道嘅實際路徑
+	# 大致對得上，睇落似「成日有嘢輾過」，冇實際碰撞／判定。
+	var tread_paths: Array[Array] = [
+		[c.belt_head_pos, c.smelter_pos, c.warehouse_pos],
+		[Vector2(mid_x, c.car_park_max_y), Vector2(mid_x, c.yard_min_y)],
+	]
+	for path: Array in tread_paths:
+		for i in range(path.size() - 1):
+			var a: Vector2 = path[i]
+			var b: Vector2 = path[i + 1]
+			var seg_mid: Vector2 = (a + b) * 0.5
+			var seg_len: float = (b - a).length()
+			if seg_len < 0.001:
+				continue
+			var tread := VisualFactory.make_flat_box(
+				Vector3(0.1, seg_len, 0.02), VisualFactory.PALETTE["ground_tread"]
+			)
+			tread.position = _site_to_world(seg_mid, -0.05)
+			# 呢個 world 用 y 向上（山向上長），唔係 Godot 2D 螢幕座標，
+			# 所以自己攞 (0,1) 做「上」，唔用 Vector2.UP 常數（嗰個係
+			# (0,-1)，Y 向下嘅螢幕慣例，喺呢個世界用就會轉錯方向）。
+			tread.rotation.z = Vector2(0.0, 1.0).angle_to(b - a)
+			ground_root.add_child(tread)
+
+## VR-06b：低多邊形切面岩壁包住場地兩邊成「碗」（issue 視覺參考：faceted
+## rock，flat shading，冇貼圖）——每邊疊幾層，每層生幾嚿隨機大細／
+## 旋轉／深淺色嘅楔形（VisualFactory.make_rock_facet()），砌出唔規則
+## 切面感。純背景裝飾，冇碰撞，唔影響任何判分／拾取。
+func _build_canyon_walls() -> void:
+	var wall_root := Node3D.new()
+	wall_root.name = "CanyonWalls"
+	_world.add_child(wall_root)
+
+	var mountain_top_y: float = c.site_foothill_pos.y + FOOTHILL_BASE_HEIGHT \
+		+ float(c.miner_summon_cap) * FOOTHILL_TIER_HEIGHT
+	var bottom_y: float = c.warehouse_pos.y - 1.0
+	var rows := 6
+	var row_height: float = (mountain_top_y - bottom_y + 1.5) / float(rows)
+
+	for side in [-1.0, 1.0]:
+		var side_x: float = (c.yard_x_range.x - 0.7) if side < 0.0 else (c.yard_x_range.y + 0.7)
+		for row in range(rows):
+			var y: float = bottom_y + float(row) * row_height
+			for i in range(3):
+				var jitter_x := rng.randf_range(-0.3, 0.3)
+				var jitter_z := rng.randf_range(-0.2, 0.4)
+				var facet_size := Vector3(
+					0.9 + rng.randf_range(-0.15, 0.3), row_height * 1.2, 0.5 + rng.randf_range(0.0, 0.4)
+				)
+				var tone: Color = VisualFactory.PALETTE["canyon_wall"].lerp(
+					VisualFactory.PALETTE["canyon_wall_dark"], rng.randf()
+				)
+				var facet := VisualFactory.make_rock_facet(facet_size, tone, rng.randf())
+				facet.position = Vector3(side_x + jitter_x, y, jitter_z)
+				facet.rotation.y = rng.randf_range(-0.4, 0.4) + (0.0 if side < 0.0 else PI)
+				wall_root.add_child(facet)
 
 ## 廢料山（往上長）：山腳一個底座 + 每召喚一個礦工加一層方塊，
 ## 視覺上表達「開採緊、堆越嚟越高」。上限同召喚上限一致（12）。
@@ -454,7 +637,10 @@ func _build_hud() -> void:
 	var top_frac: float = c.hud_top / 100.0
 	var bottom_frac: float = c.hud_bottom / 100.0
 
-	# -- 頂：常駐鎖住提示 + 威望進度（重置邏輯係 VR-05，呢度只顯示） --
+	# -- 頂：VR-06b 跟 issue 視覺參考重排——第一行三資源（圓 icon +
+	# 數字 + 「+」掣，暫不接功能）、第二行「礦工 n/12」pill ＋「山腳／
+	# 中層鎖住」pill、右上設定／任務兩個方掣（先做外觀）；威望進度
+	# （VR-05 重置邏輯，呢度只顯示）擺第三行。 --
 	var top_bar := Control.new()
 	top_bar.name = "TopBar"
 	top_bar.set_anchors_preset(Control.PRESET_TOP_WIDE)
@@ -471,14 +657,26 @@ func _build_hud() -> void:
 	top_vbox.set_anchors_preset(Control.PRESET_FULL_RECT)
 	top_bar.add_child(top_vbox)
 
-	var lock_row := HBoxContainer.new()
-	top_vbox.add_child(lock_row)
-	lock_row.add_child(VisualFactory.make_icon("res://assets/icons/locked.png", 18.0, Color(0.9, 0.75, 0.4)))
-	_lock_label = Label.new()
+	var resources_row := HBoxContainer.new()
+	top_vbox.add_child(resources_row)
+	_cash_label = _add_top_resource_slot(resources_row, "res://assets/icons/coin.png", Color(1.0, 0.85, 0.35))
+	_components_label = _add_top_resource_slot(resources_row, "res://assets/icons/gear.png", Color(0.75, 0.78, 0.85))
+	_eco_label = _add_top_resource_slot(resources_row, "res://assets/icons/eco_leaf.png", Color(0.55, 0.85, 0.5))
+
+	var status_row := HBoxContainer.new()
+	top_vbox.add_child(status_row)
+	_miner_count_label = _add_pill(status_row, "礦工 0/%d" % c.miner_summon_cap, "")
 	# issue 文案要求完整數字「鎖住 · 2,000,000」，唔用 _fmt_num() 嘅
 	# K/M 縮寫（嗰個係俾底部窄 HUD 用）。
-	_lock_label.text = "鎖住 · %s" % _fmt_int_commas(c.unlock_price("mid"))
-	lock_row.add_child(_lock_label)
+	_lock_label = _add_pill(status_row, "鎖住 · %s" % _fmt_int_commas(c.unlock_price("mid")), "res://assets/icons/locked.png")
+
+	# 右上：設定／任務兩個方掣——issue 話「先做外觀」，暫時冇接任何功能。
+	var corner_row := HBoxContainer.new()
+	corner_row.alignment = BoxContainer.ALIGNMENT_END
+	corner_row.set_anchors_preset(Control.PRESET_TOP_WIDE)
+	top_bar.add_child(corner_row)
+	corner_row.add_child(_make_square_icon_button("res://assets/icons/gear.png"))
+	corner_row.add_child(_make_square_icon_button("res://assets/icons/star.png"))
 
 	_prestige_bar = ProgressBar.new()
 	_prestige_bar.min_value = 0.0
@@ -524,12 +722,8 @@ func _build_hud() -> void:
 	bottom_vbox.set_anchors_preset(Control.PRESET_FULL_RECT)
 	bottom_bar.add_child(bottom_vbox)
 
-	var resources_row := HBoxContainer.new()
-	bottom_vbox.add_child(resources_row)
-	_cash_label = _add_resource_slot(resources_row, "res://assets/icons/coin.png", Color(1.0, 0.85, 0.35))
-	_components_label = _add_resource_slot(resources_row, "res://assets/icons/gear.png", Color(0.75, 0.78, 0.85))
-	_eco_label = _add_resource_slot(resources_row, "res://assets/icons/eco_leaf.png", Color(0.55, 0.85, 0.5))
-
+	# VR-06b：三資源搬咗上頂 HUD（issue 視覺參考排法），底部淨低升級
+	# 掣同「地上大字＋價錢」呢類升級／觸發按鈕，唔再重複顯示資源數字。
 	_summon_button = Button.new()
 	_summon_button.text = "召喚礦工"
 	_summon_button.pressed.connect(_try_summon_miner)
@@ -570,16 +764,74 @@ func _build_hud() -> void:
 	)
 	upgrades_row.add_child(_refine_upgrade_button)
 
-## 資源列一格：icon + 數值 label，回傳 label 俾 _refresh_hud() 更新文字。
-func _add_resource_slot(parent: HBoxContainer, icon_path: String, tint: Color) -> Label:
+## VR-06b：頂列資源一格——圓 icon（見 _make_circular_icon()）+ 數值
+## label + 「+」掣（跟 issue 視覺參考：暫不接功能，未來 rewarded 廣告
+## 加碼接落呢個掣，VR-07 範圍）。回傳數值 label 俾 _refresh_hud() 更新。
+func _add_top_resource_slot(parent: HBoxContainer, icon_path: String, tint: Color) -> Label:
 	var slot := HBoxContainer.new()
 	slot.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	parent.add_child(slot)
-	slot.add_child(VisualFactory.make_icon(icon_path, 18.0, tint))
+	slot.add_child(_make_circular_icon(icon_path, tint))
 	var lbl := Label.new()
 	lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	slot.add_child(lbl)
+	var add_btn := Button.new()
+	add_btn.text = "+"
+	add_btn.custom_minimum_size = Vector2(24.0, 24.0)
+	add_btn.tooltip_text = "睇廣告加碼（未接，VR-07）"
+	slot.add_child(add_btn)
 	return lbl
+
+## VR-06b：圓形 icon 底——PanelContainer + 圓角 StyleBoxFlat（半徑等於
+## 一半闊高即係正圓），代替之前方形 TextureRect，跟 issue 視覺參考
+## 「三資源各一圓 icon」。
+func _make_circular_icon(icon_path: String, tint: Color) -> Control:
+	var badge := PanelContainer.new()
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.16, 0.13, 0.11, 0.9)
+	style.set_corner_radius_all(16)
+	style.content_margin_left = 4.0
+	style.content_margin_right = 4.0
+	style.content_margin_top = 4.0
+	style.content_margin_bottom = 4.0
+	badge.add_theme_stylebox_override("panel", style)
+	badge.custom_minimum_size = Vector2(32.0, 32.0)
+	badge.add_child(VisualFactory.make_icon(icon_path, 20.0, tint))
+	return badge
+
+## VR-06b：pill——深色圓角底 + （可選 icon）+ label，代替之前純文字行，
+## 跟 issue 視覺參考「礦工 n/12」「山腳／中層鎖住」兩個 pill。回傳
+## label 俾 _refresh_hud() 更新文字。
+func _add_pill(parent: HBoxContainer, initial_text: String, icon_path: String = "") -> Label:
+	var panel := PanelContainer.new()
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.14, 0.12, 0.1, 0.85)
+	style.set_corner_radius_all(10)
+	style.content_margin_left = 10.0
+	style.content_margin_right = 10.0
+	style.content_margin_top = 3.0
+	style.content_margin_bottom = 3.0
+	panel.add_theme_stylebox_override("panel", style)
+	parent.add_child(panel)
+
+	var row := HBoxContainer.new()
+	panel.add_child(row)
+	if icon_path != "":
+		row.add_child(VisualFactory.make_icon(icon_path, 14.0, Color(0.9, 0.85, 0.75)))
+	var label := Label.new()
+	label.text = initial_text
+	row.add_child(label)
+	return label
+
+## VR-06b：右上設定／任務方掣——issue 話「先做外觀」，暫時冇連任何
+## pressed 訊號。
+func _make_square_icon_button(icon_path: String) -> Button:
+	var btn := Button.new()
+	btn.custom_minimum_size = Vector2(34.0, 34.0)
+	if ResourceLoader.exists(icon_path):
+		btn.icon = load(icon_path)
+	btn.add_theme_constant_override("icon_max_width", 20)
+	return btn
 
 ## 升級按鈕統一加 icon（Kenney Game Icons，見 CREDITS.md），icon 大細
 ## 用 theme constant 夾住，唔會俾原生 50x50 PNG 谷爆粒按鈕。
@@ -589,9 +841,10 @@ func _style_upgrade_button(button: Button, icon_path: String) -> void:
 	button.add_theme_constant_override("icon_max_width", 22)
 
 func _refresh_hud() -> void:
-	_cash_label.text = "Cash %s" % _fmt_num(state.cash)
-	_components_label.text = "Components %s" % _fmt_num(state.components)
-	_eco_label.text = "Eco %s" % _fmt_num(state.eco)
+	_cash_label.text = _fmt_num(state.cash)
+	_components_label.text = _fmt_num(state.components)
+	_eco_label.text = _fmt_num(state.eco)
+	_miner_count_label.text = "礦工 %d/%d" % [state.miner_count, c.miner_summon_cap]
 
 	_summon_button.text = "召喚礦工 (%d/%d)" % [state.miner_count, c.miner_summon_cap]
 	if state.can_summon_miner():

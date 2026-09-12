@@ -237,6 +237,26 @@ func test_summoned_miner_and_pile_debris_land_in_camera_mid_band() -> void:
 	_assert_in_mid_band(cam, miner.global_position, viewport_h, "Miner")
 	_assert_in_mid_band(cam, chunk.global_position, viewport_h, "PileDebrisChunk")
 
+## VR-06b 驗收：「車場兩牆全部喺中層帶」——透視相機橫向 FOV 比正交窄
+## （KEEP_HEIGHT 底下 3:4 直版橫向視野縮咗），車場兩牆（FrenzyYardView
+## ._build_walls() 嘅位置）冇喺 _camera_reference_points() 度計埋就好易
+## 撞出畫面（見 _compute_camera_frame() 註解）。
+func test_frenzy_yard_walls_are_in_camera_mid_band() -> void:
+	var scene: PackedScene = load("res://main.tscn")
+	main = scene.instantiate()
+	add_child_autofree(main)
+
+	var cam: Camera3D = main.get_node("World/Camera3D")
+	var viewport_h: float = main.get_viewport().get_visible_rect().size.y
+	var wall_mid_y: float = (main.c.car_park_max_y + main.c.yard_min_y) * 0.5
+
+	_assert_in_mid_band(
+		cam, main._site_to_world(Vector2(main.c.yard_x_range.x - 0.1, wall_mid_y)), viewport_h, "WestWall"
+	)
+	_assert_in_mid_band(
+		cam, main._site_to_world(Vector2(main.c.yard_x_range.y + 0.1, wall_mid_y)), viewport_h, "EastWall"
+	)
+
 
 # ── 用戶實機回饋回歸測試（ALTA-150，2026-09-12 Windows Godot playtest）───
 # 四點：開場經濟、相機視角、碎料視覺／回饋、掣顏色。
@@ -254,17 +274,21 @@ func test_starting_cash_covers_first_miner_purchase() -> void:
 	main._try_summon_miner()
 	assert_eq(main.state.miner_count, 1, "開場 Cash 應該可以直接撳掣買到第一個礦工")
 
-## 2. 相機視角：跟 docx §6 斜視（pitch/yaw），唔再係正面平視（rotation=0）
-## 令 BoxMesh 變 2D 色塊。
+## 2. 相機視角：VR-06b 改透視（issue 視覺參考：pitch 55–60°、FOV
+## 40–45°），唔再係正面平視（rotation=0），亦唔再係 VR-03 嗰陣嘅正交
+## （screen_camera_pitch_deg／yaw_deg 依家淨係歷史記錄，冇再用喺相機）。
 func test_camera_is_tilted_not_front_on() -> void:
 	var scene: PackedScene = load("res://main.tscn")
 	main = scene.instantiate()
 	add_child_autofree(main)
 
 	var cam: Camera3D = main.get_node("World/Camera3D")
-	assert_almost_eq(cam.rotation_degrees.x, main.c.screen_camera_pitch_deg, 0.01)
-	assert_almost_eq(cam.rotation_degrees.y, main.c.screen_camera_yaw_deg, 0.01)
+	assert_eq(cam.projection, Camera3D.PROJECTION_PERSPECTIVE, "VR-06b：鏡頭應該改咗透視")
+	assert_almost_eq(cam.rotation_degrees.x, main.CAMERA_PITCH_DEG, 0.01)
+	assert_almost_eq(cam.rotation_degrees.y, main.CAMERA_YAW_DEG, 0.01)
 	assert_ne(cam.rotation_degrees, Vector3.ZERO, "相機唔應該再係正面平視")
+	assert_between(absf(main.CAMERA_PITCH_DEG), 55.0, 60.0, "pitch 應該跟視覺參考 55–60°")
+	assert_between(cam.fov, 40.0, 45.0, "FOV 應該跟視覺參考 40–45°")
 
 ## 3. 碎料視覺：放大到至少 0.25 世界單位，撳中有回饋（放大 tween）
 ## 先消失（唔係即刻 free），開場提示第一次剷完就收起。
