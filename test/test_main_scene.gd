@@ -326,8 +326,32 @@ func test_foothill_shows_full_terrace_before_any_miner_summoned() -> void:
 			tier_count += 1
 	assert_eq(tier_count, main.c.miner_summon_cap, "未召喚都應該見到全部 12 層梯田")
 
-## 第 5 點：召喚幾個礦工之後應該企喺山腳周圍唔同角度（圍住山腳分佈），
-## 唔係全部黐晒喺同一個原點嘅少少 jitter。
+## Review 意見（round2 修正）：12 層梯田常駐之後，舊生成位（y=0.55、
+## z∈±0.3）陷咗入 tier1／2 個 box 入面（headless 量度 300 粒有 105 粒
+## 完全睇唔到）。改咗擺喺山腳前面地面一圈、半徑大過梯田最闊嘅底座
+## 之後，呢個測試斷言生成位一定喺呢個安全半徑範圍入面（唔淨係查
+## PrismMesh size，仲要查實際擺位冇陷落梯田幾何）。
+func test_pile_debris_spawns_outside_terrace_footprint() -> void:
+	var scene: PackedScene = load("res://main.tscn")
+	main = scene.instantiate()
+	add_child_autofree(main)
+
+	for i in range(20):
+		main._on_pile_spawn_timeout()
+
+	assert_gt(main._pile_root.get_child_count(), 0, "應該生咗至少一粒碎料")
+	for chunk: Node3D in main._pile_root.get_children():
+		var flat_radius: float = Vector2(chunk.position.x, chunk.position.z).length()
+		assert_gte(
+			flat_radius, main.PILE_CHUNK_RING_RADIUS_MIN,
+			"碎料嘅擺位半徑應該大過梯田底座嘅半闊，唔會陷落去梯田幾何入面"
+		)
+		assert_true(chunk.position.z >= 0.0, "碎料應該喺前半弧（z ≥ 0），唔會俾梯田擋住")
+
+## 第 5 點：召喚幾個礦工之後應該企喺山腳前面半圈唔同角度（圍住山腳
+## 分佈），唔係全部黐晒喺同一個原點嘅少少 jitter；亦都要面向山腳（唔
+## 側身唔趴低）——Review 意見（round2 修正）：`look_at()` 之前錯咗畀
+## local 座標當全域用，令礦工全部歪咗去面向世界原點。
 func test_summoned_miners_are_distributed_around_foothill() -> void:
 	var scene: PackedScene = load("res://main.tscn")
 	main = scene.instantiate()
@@ -341,9 +365,17 @@ func test_summoned_miners_are_distributed_around_foothill() -> void:
 	var m0: Node3D = main._miners_root.get_child(0)
 	var m1: Node3D = main._miners_root.get_child(1)
 	# 門檻跟返 _place_miner_around_foothill() 嘅幾何保證：radius=0.5、
-	# 12 格、jitter ±0.08 rad 之下，任意相鄰兩格嘅最壞情況都仲有實質
-	# 距離（唔止「唔完全撞埋」咁鬆）。
-	assert_gt(m0.position.distance_to(m1.position), 0.15, "兩個礦工唔應該企喺同一個位")
+	# 前半弧（π）攤 12 格、jitter ±0.05 rad 之下，任意相鄰兩格嘅最壞
+	# 情況都仲有實質距離（唔止「唔完全撞埋」咁鬆）。
+	assert_gt(m0.position.distance_to(m1.position), 0.07, "兩個礦工唔應該企喺同一個位")
+
+	# Review 意見：面向山腳即係企喺半徑圓上望返轉頭去圓心，pitch/roll
+	# 應該維持 0（純橫向 Y 轉），唔應該因為錯用 local 座標做 look_at()
+	# 目標而歪咗成 30 幾度。
+	for miner: Node3D in [m0, m1]:
+		assert_almost_eq(miner.rotation.x, 0.0, 0.01, "礦工唔應該向前傾／趴低")
+		assert_almost_eq(miner.rotation.z, 0.0, 0.01, "礦工唔應該側身")
+		assert_true(miner.position.z >= 0.0, "礦工應該企喺前半弧（z ≥ 0），唔會俾梯田擋住")
 
 ## 第 6 點：帶用分段滾軸 mesh，持續自轉先有「流動視覺」。
 func test_belt_rollers_registered_and_spin_over_time() -> void:

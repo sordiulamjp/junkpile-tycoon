@@ -641,15 +641,30 @@ func _try_summon_miner() -> void:
 	_rebuild_foothill_stack()
 
 ## 用戶實機回饋（round2 第 5 點）：召喚後嘅礦工「圍住山腳分佈」，唔係
-## 全部堆喺同一個原點嘅少少 jitter。用極座標平均分佈喺山腳周圍一圈，
-## 面朝住圓心（即係山腳本身）——先有「一齊喺度開採緊」嘅感覺，唔會
-## 個個疊晒埋一堆。
+## 全部堆喺同一個原點嘅少少 jitter。用極座標分佈喺山腳前面半圈，面朝住
+## 圓心（即係山腳本身）——先有「一齊喺度開採緊」嘅感覺，唔會個個疊晒
+## 埋一堆。
+##
+## Review 意見（round2 修正）兩點：
+## 1. 淨用前半弧（-90°~90°，即 z ≥ 0 嗰邊）：相機喺 +Z 上方望落，成圈
+##    12 格擺滿 360° 嘅話，z < 0 嗰四五隻會俾梯田本身完全遮住，用戶
+##    見唔到，等於白召喚。
+## 2. `look_at()` 收嘅係全域座標——之前錯咗直接畀 `_miners_root` 嘅
+##    local 原點 (0, miner_y, 0) 當全域用，等於望住世界原點，唔係望住
+##    山腳，仲累到成隻礦工歪晒（pitch/roll 都唔啱），`_animate_mining()`
+##    嘅 swing 再以呢個歪咗嘅姿勢做 base，變咗長期趴住。要用
+##    `_miners_root.to_global()` 攞返正確嘅全域目標點。
 func _place_miner_around_foothill(miner: Node3D, index: int) -> void:
-	var angle: float = (float(index) / float(maxi(c.miner_summon_cap, 1))) * TAU \
-		+ rng.randf_range(-0.08, 0.08)
+	var slot_count: int = maxi(c.miner_summon_cap - 1, 1)
+	var angle: float = -PI * 0.5 + (float(index) / float(slot_count)) * PI \
+		+ rng.randf_range(-0.05, 0.05)
+	# 兩個端點（index 0／slot_count）加咗負／正 jitter 之後可能撞穿
+	# ±90°，令 z 變負（跌返出「前半弧」以外，俾梯田擋返住）——夾住個
+	# 範圍，其餘中間嘅格都唔會撞邊。
+	angle = clampf(angle, -PI * 0.5, PI * 0.5)
 	var miner_y := 0.1
 	miner.position = Vector3(sin(angle) * MINER_RING_RADIUS, miner_y, cos(angle) * MINER_RING_RADIUS)
-	miner.look_at(Vector3(0.0, miner_y, 0.0), Vector3.UP)
+	miner.look_at(_miners_root.to_global(Vector3(0.0, miner_y, 0.0)), Vector3.UP)
 
 ## 用戶實機回饋（round2 第 5 點）：「有敲擊動畫（tween 上下 + 鎬頭擺）」
 ## ——Kenney glTF 冇逐條骨嘅駕馭介面，改用成隻 miner 嘅垂直起伏（模擬
@@ -679,9 +694,21 @@ func _on_pile_spawn_timeout() -> void:
 		return
 	_spawn_pile_visual(ore_key)
 
+## Review 意見（round2 修正）：舊生成位（y=0.55、z∈±0.3）喺 12 層梯田
+## 未常駐嗰陣係安全嘅（企喺個地台頂嘅半空度），而家梯田由開場就長到
+## 盡，嗰個位啱啱好陷咗入 tier1／2 個 box 入面（headless 量度 300 粒有
+## 105 粒完全睇唔到）。改做擺喺山腳地面前排一圈（同
+## _place_miner_around_foothill() 一樣揀 z ≥ 0 前半弧，先唔會俾梯田
+## 幾何擋住），半徑刻意大過梯田最闊嘅底座（半闊 0.55），確保成粒碎料
+## 都企喺梯田幾何範圍以外嘅地面。
+const PILE_CHUNK_RING_RADIUS_MIN := 0.65
+const PILE_CHUNK_RING_RADIUS_MAX := 0.95
+
 func _spawn_pile_visual(ore_key: String) -> void:
 	var chunk := VisualFactory.make_ore_chunk(PILE_CHUNK_VISUAL_SIZE, _ore_color(ore_key))
-	chunk.position = Vector3(rng.randf_range(-0.4, 0.4), 0.55, rng.randf_range(-0.3, 0.3))
+	var angle: float = rng.randf_range(-PI * 0.5, PI * 0.5)
+	var radius: float = rng.randf_range(PILE_CHUNK_RING_RADIUS_MIN, PILE_CHUNK_RING_RADIUS_MAX)
+	chunk.position = Vector3(sin(angle) * radius, 0.08, cos(angle) * radius)
 	chunk.rotation.y = rng.randf_range(0.0, TAU)
 
 	var area := Area3D.new()
@@ -704,11 +731,6 @@ func _on_pile_chunk_input(
 ) -> void:
 	if not (event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT):
 		return
-	# 用戶回饋（round2 第 1 點）：放置場常駐之後，呢粒撳落嚟嘅事件唔應該
-	# 再落去 FrenzyYardView._unhandled_input()（狂熱期間撳中一粒碎料唔
-	# 應該連車都一齊拖走）——physics picking 揀中呢個 Area3D 就即刻攔截，
-	# 唔理有冇真係剷到嘢。
-	get_viewport().set_input_as_handled()
 	var gained := state.scoop_ore(ore_key)
 	if gained <= 0.0:
 		return
