@@ -144,6 +144,45 @@ func test_frenzy_ticks_for_full_duration_without_error_then_restores_placement()
 ## 真係俾 SceneTree 行幾十個引擎幀（唔係手動 call _process()），等
 ## FrenzyYardView._process() 自己嘅生成／車巡航／幀數取樣真正跑到，
 ## 揸實幾十粒真 RigidBody3D 剛體物理落嚟都唔應該有 error。
+## Review 意見（ALTA-150 round 3）：斜視相機之後，車場跟指用嘅
+## `cam.project_position(screen_pos, cam.global_position.z)` 假設咗相機
+## 正面望 -Z、z=10 先啱，斜視之後成條射線行偏咗，手指全螢幕闊度撳落去
+## 算出嚟嘅 world x 全部撞晒右牆（yard_x_range.y），車郁唔到。改用射線
+## 同 Z=0 平面求交之後，手指由左掃到右，_car_target_x（clamp 之前嘅原
+## 始值）應該單調遞增，而且實際覆蓋 yard_x_range 大部分闊度，唔會全部
+## 撞晒去同一邊牆。
+func test_frenzy_finger_position_maps_across_yard_x_range() -> void:
+	var scene: PackedScene = load("res://main.tscn")
+	main = scene.instantiate()
+	add_child_autofree(main)
+
+	main.frenzy.cooldown_remaining = 0.0
+	main._try_start_frenzy()
+
+	var view: FrenzyYardView = main._frenzy_view
+	var vp_size: Vector2 = main.get_viewport().get_visible_rect().size
+
+	var xs: Array[float] = []
+	for frac in [0.02, 0.25, 0.5, 0.75, 0.98]:
+		var evt := InputEventScreenTouch.new()
+		evt.pressed = true
+		evt.position = Vector2(vp_size.x * frac, vp_size.y * 0.5)
+		view._unhandled_input(evt)
+		xs.append(view._car_target_x)
+
+	for i in range(1, xs.size()):
+		assert_gt(xs[i], xs[i - 1], "由左至右嘅手指應該令車 x 遞增（第 %d 點）" % i)
+
+	var yard_span: float = main.c.yard_x_range.y - main.c.yard_x_range.x
+	assert_gt(
+		xs[xs.size() - 1] - xs[0], yard_span * 0.3,
+		"手指由左掃到右，車 x 應該有實質橫向覆蓋範圍（唔應該全部撞晒同一邊牆）"
+	)
+	assert_lt(
+		xs[0], main.c.yard_x_range.y,
+		"最左邊嘅手指唔應該一開始就撞晒去右牆（先前 regression）"
+	)
+
 func test_frenzy_yard_spawns_real_rigidbody_debris_over_several_frames() -> void:
 	var scene: PackedScene = load("res://main.tscn")
 	main = scene.instantiate()

@@ -116,8 +116,18 @@ func _unhandled_input(event: InputEvent) -> void:
 	var cam := get_viewport().get_camera_3d()
 	if cam == null:
 		return
-	var world_pos: Vector3 = cam.project_position(screen_pos, cam.global_position.z)
-	_car_target_x = world_pos.x
+	# 成個世界（放置場＋車場，見 constants.gd／main.gd 註解）都住喺 Z=0
+	# 呢個平面，車場物件淨係用 x／y，z 恆等 0（見 _build_car() 等）。
+	# 舊式 project_position(screen_pos, cam.global_position.z) 假設咗相機
+	# 正面望 -Z、z=10 先啱（Review 意見，ALTA-150）：改咗斜視相機
+	# （pitch/yaw）之後呢條式唔再啱——依家改為用射線同 Z=0 平面求交，
+	# 唔理相機擺法點都啱（包括未來再調角度）。
+	var ray_origin: Vector3 = cam.project_ray_origin(screen_pos)
+	var ray_dir: Vector3 = cam.project_ray_normal(screen_pos)
+	var hit: Variant = Plane(Vector3.BACK, 0.0).intersects_ray(ray_origin, ray_dir)
+	if hit == null:
+		return # 射線同 Z=0 平面平行（理論上斜視相機唔會撞到，防守性檢查）
+	_car_target_x = (hit as Vector3).x
 
 
 # ══════════════════════ 車：巡航向落 + 跟指橫向 ══════════════════════
