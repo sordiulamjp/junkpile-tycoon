@@ -139,6 +139,13 @@ enum Resource3 { CASH, COMPONENTS, ECO }
 @export var rewarded_extra_frenzy_per_day: int = 2 # TUNE
 
 
+# ══════════════ C. VR-03 放置場灰模：視覺／節奏（TUNE）══════════════
+# 淨係影響場景視覺同手動 scoop 節奏，唔影響任何價格曲線／收益公式。
+
+@export var pile_debris_spawn_interval_secs: float = 2.5 # TUNE：山腳每幾耐生一粒可剷碎料
+@export var belt_visual_travel_secs: float = 3.0          # TUNE：帶上碎料由 BELT_HEAD 行到 SMELTER 嘅視覺時間
+
+
 # ══════════════════════════ 計算方法 ══════════════════════════
 
 ## 離線收益：banded yield + 回撥保護（elapsed < 0 → 0）+ 極短空隙保護
