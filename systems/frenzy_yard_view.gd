@@ -134,14 +134,17 @@ func _unhandled_input(event: InputEvent) -> void:
 	if cam == null:
 		return
 	# 用戶回饋（ALTA-153 round2 第 1 點）：放置場常駐之後，山腳／帶／爐
-	# 同車場共用埋同一個輸入通道——撳中山腳碎料（tap-to-scoop，見
-	# main.gd _on_pile_chunk_input()，已經 set_input_as_handled() 攔咗
-	# 一次）嗰粒 InputEventMouseButton 理論上唔應該再行到呢度。加多一重
-	# 防守：用「呢個螢幕 Y 有冇喺車場最頂（car_park_max_y）嗰行之下」
-	# 判斷，先至當跟指處理。刻意唔用射線同 Z=0 平面求交嘅世界 Y 嚟判斷
-	# ——嗰條反向投影近畫面邊緣（好斜嘅視角）容易求出好誇張嘅世界 Y
-	# （近乎同平面平行嘅射線，交點會彈得好遠），唔穩陣；呢度用嘅
-	# `unproject_position()` 係正向投影，唔會有呢個問題。
+	# 同車場共用埋同一個輸入通道——撳中山腳碎料（tap-to-scoop）都會經
+	# 呢個 `_unhandled_input()`。Review 意見（round2 修正）：Godot 4 嘅
+	# physics object picking 響 `_unhandled_input` 之後先排隊，喺
+	# main.gd `_on_pile_chunk_input()` 度 set_input_as_handled() 完全
+	# 攔唔到今次呢個 `_unhandled_input`（已經行緊緊）——真正生效嘅防守
+	# 淨係得下面呢句：用「呢個螢幕 Y 有冇喺車場最頂（car_park_max_y）
+	# 嗰行之下」判斷，先至當跟指處理，否則撳中山腳碎料會連車都拖埋一齊
+	# 郁。刻意唔用射線同 Z=0 平面求交嘅世界 Y 嚟判斷——嗰條反向投影近
+	# 畫面邊緣（好斜嘅視角）容易求出好誇張嘅世界 Y（近乎同平面平行嘅
+	# 射線，交點會彈得好遠），唔穩陣；呢度用嘅 `unproject_position()`
+	# 係正向投影，唔會有呢個問題。
 	var yard_mid_x: float = (c.yard_x_range.x + c.yard_x_range.y) * 0.5
 	var yard_top_screen_y: float = cam.unproject_position(
 		_site_to_world_yard_ref(Vector2(yard_mid_x, c.car_park_max_y))
