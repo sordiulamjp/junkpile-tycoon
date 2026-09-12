@@ -84,6 +84,15 @@ var _belt_visual_accum: float = 0.0
 var _pile_spawn_timer: Timer
 var _remote_constants_loader: RemoteConstantsLoader # VR-08
 
+# -- VR-05b：存檔／離線結算／威望——GameState 冇呢幾個欄位（唔屬於放置場
+# 核心數值，見 data/save_manager.gd／data/prestige.gd 嘅欄位定義），由呢個
+# script 自己揸，經 _build_save_state()／_apply_loaded_state() 同存檔互轉。--
+var _save_timer: Timer
+var _lifetime_cash: float = 0.0
+var _prestige_count: int = 0
+var _last_save_unix: float = 0.0
+var _pending_offline_result: Dictionary = {} # 等緊玩家撳「收下」嘅 OfflineSettlement.settle() 結果
+
 # -- 3D 節點 --
 var _world: Node3D
 # ALTA-153 round2：放置場一直 visible（唔再狂熱期間隱藏，見
@@ -113,6 +122,16 @@ var _frenzy_button: Button
 var _scoop_hint_label: Label # 開場提示「撳碎料鏟入爐」，第一次剷完就收起（ALTA-150 實機回饋）
 var _scoop_hint_shown: bool = false
 
+# -- VR-05b：離線結算彈窗（浣熊經理發糧）／威望確認彈窗 --
+var _offline_panel: Control
+var _offline_message_label: Label
+var _offline_yield_label: Label
+var _offline_claim_button: Button
+var _offline_double_button: Button # 「×2」：先顯示但灰，rewarded 接駁留 VR-07
+var _prestige_button: Button # 「拆廠搬礦」：達到威望門檻先顯示
+var _prestige_confirm_panel: Control
+var _prestige_confirm_label: Label
+
 
 func _ready() -> void:
 	c = GameConstants.new()
@@ -128,6 +147,18 @@ func _ready() -> void:
 
 	get_viewport().physics_object_picking = true
 
+	# VR-05b：存檔接駁——冇存檔（save_exists=false）就維持 GameState._init()
+	# 啱啱設好嘅新玩家開場值（唔可以俾 SaveManager.load_state() 喺冇檔案
+	# 個案回傳嘅 default_state()「cash=0」冚咗 c.starting_cash）；有存檔就
+	# 喺呢度（構造 _foothill／HUD 之前）套用落 state／_lifetime_cash／
+	# _prestige_count，等 _build_world() 起梯田、_build_hud() 起 HUD 嗰陣
+	# 已經睇到啱嘅數值。離線結算面板要等 _build_hud() 起完先彈（見底）。
+	var save_exists := FileAccess.file_exists(SaveManager.SAVE_PATH)
+	var loaded_state: Dictionary = {}
+	if save_exists:
+		loaded_state = SaveManager.load_state()
+		_apply_loaded_state(loaded_state)
+
 	_build_world()
 	_build_hud()
 
@@ -141,6 +172,15 @@ func _ready() -> void:
 	_pile_spawn_timer.timeout.connect(_on_pile_spawn_timeout)
 	add_child(_pile_spawn_timer)
 
+	# VR-05b：每 30 秒自動存檔兜底——升級／召喚／狂熱完場／退背景／關閉
+	# 視窗呢幾個時間點各自主動存（見對應函式／_notification()），呢個
+	# timer 淨係保證長時間掛住冇觸發任何一個上述事件都唔會唔存檔。
+	_save_timer = Timer.new()
+	_save_timer.wait_time = 30.0
+	_save_timer.autostart = true
+	_save_timer.timeout.connect(_save_game)
+	add_child(_save_timer)
+
 	_refresh_hud()
 
 	# VR-08：本機事件 log + 遠端 constants 覆寫，見 systems/event_log.gd／
@@ -148,6 +188,24 @@ func _ready() -> void:
 	# 先做，唔會拖慢開場（背景 fetch，攞唔到就繼續用本機預設）。
 	EventLog.log_event("session_start")
 	_start_remote_constants_fetch()
+
+	# VR-05b：離線結算要等 HUD（連埋離線面板本身）起晒先可以彈，所以擺
+	# _ready() 最尾。用返上面讀檔嗰刻嘅 loaded_state（未套用之前嘅原始
+	# 存檔，帶住上次嘅 last_save_unix），OfflineSettlement.settle() 自己
+	# 計「經過咗幾耐」。
+	if save_exists:
+		_run_offline_settlement(loaded_state)
+
+
+## VR-05b：退到背景／關閉視窗一定要存檔（唔係殺 App 嗰一刻嘅進度會冚
+## 失）。NOTIFICATION_APPLICATION_PAUSED＝手機切去背景／熄屏；
+## NOTIFICATION_WM_CLOSE_REQUEST＝Windows host 撳關閉掣（SceneTree 通知
+## 晒所有 node 之後先自動 quit，呢度啱啱嚟得切存檔）。
+func _notification(what: int) -> void:
+	if state == null:
+		return # _ready() 未行完（例如場景仲喺構造中）就唔會有嘢好存
+	if what == NOTIFICATION_APPLICATION_PAUSED or what == NOTIFICATION_WM_CLOSE_REQUEST:
+		_save_game()
 
 
 ## 開機背景攞遠端 constants 覆寫；成功就直接 set() 落現有嘅 `c`（同一個
@@ -183,8 +241,125 @@ func _apply_overrides(overrides: Dictionary) -> void:
 		c.set(key, overrides[key])
 
 
+# ══════════════════════ VR-05b：存檔／離線結算／威望重置 ══════════════════════
+
+## 將存檔讀到嘅 state dict 套用落 GameState（`state`）同呢個 script 自己
+## 揸嘅 _lifetime_cash／_prestige_count（GameState 冇呢兩個欄位——威望
+## 門檻／存檔要用嘅「終身賺到」同「重置次數」唔屬於放置場核心數值，
+## 見 data/prestige.gd／data/save_manager.gd 嘅欄位定義）。用 get() 夾
+## 埋預設值，就算存檔缺咗某個欄位都唔會拋錯。
+func _apply_loaded_state(loaded: Dictionary) -> void:
+	state.cash = float(loaded.get("cash", 0.0))
+	state.components = float(loaded.get("components", 0.0))
+	state.eco = float(loaded.get("eco", 0.0))
+	state.miner_count = int(loaded.get("miners", 0))
+	state.miner_level = int(loaded.get("miner_level", 0))
+	state.belt_level = int(loaded.get("belt_level", 1))
+	state.refine_level = int(loaded.get("refine_level", 0))
+	_lifetime_cash = float(loaded.get("lifetime_cash", 0.0))
+	_prestige_count = int(loaded.get("prestige_count", 0))
+	_last_save_unix = float(loaded.get("last_save_unix", Time.get_unix_time_from_system()))
+
+## 反過嚟：由 GameState／_lifetime_cash／_prestige_count 砌返一份
+## SaveManager 認得嘅 state dict（欄位名／形狀睇 SaveManager.default_state()）。
+## save_state()／OfflineSettlement.settle()／Prestige.reset() 三個入口
+## 全部食呢個形狀，砌埋一份共用，唔使三處各自組一次。
+func _build_save_state() -> Dictionary:
+	return {
+		"version": SaveManager.CURRENT_VERSION,
+		"last_save_unix": Time.get_unix_time_from_system(),
+		"cash": state.cash,
+		"components": state.components,
+		"eco": state.eco,
+		"lifetime_cash": _lifetime_cash,
+		"prestige_count": _prestige_count,
+		"miners": state.miner_count,
+		"miner_level": state.miner_level,
+		"belt_level": state.belt_level,
+		"refine_level": state.refine_level,
+	}
+
+func _save_game() -> void:
+	SaveManager.save_state(_build_save_state())
+
+## 開機讀到存檔（`loaded` 係讀檔嗰刻、套用之前嘅原始 dict，帶住上次嘅
+## last_save_unix）就行 OfflineSettlement.settle()：用而家（套用完存檔
+## 之後）嘅 state.current_income_rate() 做「離線嗰刻嘅放置收入」近似
+## 值——呢個 script 冇另外記低「熄機一刻」嘅收入率，用復原返嗰刻嘅礦工／
+## 升級數值計，符合 VR-05 原本設計嘅呼叫方式（settle() 淨係唔管「呢個
+## rate 點嚟」）。結果暫存喺 _pending_offline_result，等玩家喺面板撳
+## 「收下」先真正入帳（見 _on_offline_claim_pressed()）。
+func _run_offline_settlement(loaded: Dictionary) -> void:
+	var now_unix := Time.get_unix_time_from_system()
+	var result := OfflineSettlement.settle(c, loaded, now_unix, state.current_income_rate())
+	_pending_offline_result = result
+	_show_offline_report(result)
+
+func _show_offline_report(result: Dictionary) -> void:
+	_offline_message_label.text = OfflineReport.raccoon_message(
+		result["cash_yield"], result["elapsed_secs"], c.offline_cap_secs
+	)
+	_offline_yield_label.text = "+%s" % _fmt_num(result["cash_yield"])
+	_offline_panel.visible = true
+
+## 撳「收下」：真正將 settle() 算好嘅 cash／lifetime_cash 入帳，補
+## EventLog「offline_claim」事件（data/offline_settlement.gd 留低嘅
+## 呼叫點註解），即刻多存一次檔（等離線收成都受「殺 App 資源不變」
+## 保護，唔使等落一個 30 秒 timer 先落實）。
+func _on_offline_claim_pressed() -> void:
+	if not _pending_offline_result.is_empty():
+		var new_state: Dictionary = _pending_offline_result["state"]
+		state.cash = float(new_state["cash"])
+		_lifetime_cash = float(new_state["lifetime_cash"])
+		_last_save_unix = float(new_state["last_save_unix"])
+		EventLog.log_event("offline_claim", {
+			"elapsed_secs": _pending_offline_result["elapsed_secs"],
+			"cash_yield": _pending_offline_result["cash_yield"],
+		})
+		_pending_offline_result = {}
+	_offline_panel.visible = false
+	_save_game()
+	_refresh_hud()
+
+## 「拆廠搬礦」確認面板撳「確認重置」：Prestige.reset() 已經包晒「清乜
+## 留乜」嘅邏輯（呢個 script 唔重覆去計），呢度淨係將結果搬返落 GameState
+## 同視覺（礦工 node／梯田要重起，先反映返「清零」）。
+func _do_prestige_reset() -> void:
+	var new_state := Prestige.reset(_build_save_state())
+	state.cash = float(new_state["cash"])
+	state.components = float(new_state["components"])
+	state.eco = float(new_state.get("eco", 0.0))
+	state.miner_count = int(new_state["miners"])
+	state.miner_level = int(new_state["miner_level"])
+	state.belt_level = int(new_state["belt_level"])
+	state.refine_level = int(new_state["refine_level"])
+	state.pile_debris.clear()
+	_lifetime_cash = float(new_state["lifetime_cash"])
+	_prestige_count = int(new_state["prestige_count"])
+
+	for child in _miners_root.get_children():
+		child.queue_free()
+	_rebuild_foothill_stack()
+
+	EventLog.log_event("prestige", {"prestige_count": _prestige_count})
+	_prestige_confirm_panel.visible = false
+	_save_game()
+	_refresh_hud()
+
+func _show_prestige_confirm() -> void:
+	_prestige_confirm_label.text = (
+		"拆廠搬礦：清空 Cash／Components／礦工同三條升級線，保留終身 Cash 同威望重置次數。\n重置次數 %d → %d，永久收入倍率 ×%.1f → ×%.1f。"
+		% [
+			_prestige_count, _prestige_count + 1,
+			Prestige.income_multiplier(c, _prestige_count), Prestige.income_multiplier(c, _prestige_count + 1),
+		]
+	)
+	_prestige_confirm_panel.visible = true
+
+
 func _process(delta: float) -> void:
 	var result: Dictionary = state.tick(delta)
+	_lifetime_cash += float(result["cash_gain"]) # VR-05b：終身 Cash 唔隨花費／威望重置清零，威望門檻用
 	_belt_visual_accum += float(result["fed"])
 	while _belt_visual_accum >= 1.0:
 		_belt_visual_accum -= 1.0
@@ -224,6 +399,7 @@ func _on_frenzy_ended() -> void:
 	EventLog.log_event("frenzy_end", {"eco_bonus": frenzy.eco_bonus_earned})
 	state.eco += frenzy.eco_bonus_earned
 	_frenzy_view.stop()
+	_save_game() # VR-05b：狂熱完場即存檔
 
 
 # ══════════════════════ 建場景（灰模） ══════════════════════
@@ -649,6 +825,7 @@ func _try_summon_miner() -> void:
 	_place_miner_around_foothill(miner, state.miner_count - 1)
 	_animate_mining(miner)
 	_rebuild_foothill_stack()
+	_save_game() # VR-05b：召喚即存檔
 
 ## 用戶實機回饋（round2 第 5 點）：召喚後嘅礦工「圍住山腳分佈」，唔係
 ## 全部堆喺同一個原點嘅少少 jitter。用極座標分佈喺山腳前面半圈，面朝住
@@ -760,6 +937,7 @@ func _on_pile_chunk_input(
 	var gained := state.scoop_ore(ore_key)
 	if gained <= 0.0:
 		return
+	_lifetime_cash += gained # VR-05b：手動剷都計入終身 Cash（威望門檻用）
 	area.input_ray_pickable = false # 撳中即停接輸入，播緊回饋果下唔會重複扣同一粒
 	SfxPlayer.play("pile_mine")
 	_hide_scoop_hint()
@@ -866,7 +1044,9 @@ func _build_hud() -> void:
 	# Review 意見（round 1）：資源行＋pill 行＋威望 bar＋威望字四行加埋
 	# 3×4 間距 ≈123px，仲超咗 TopBar 12%＝115px（720×960）。威望字冧入
 	# 條 bar 度（Control 疊層：slim ProgressBar + 置中 Label overlay），
-	# 由兩行縮做一行，慳返成行高度（威望重置邏輯係 VR-05，呢度只顯示）。
+	# 由兩行縮做一行，慳返成行高度。VR-05b：bar／label 依家接返
+	# _lifetime_cash／c.prestige_threshold(_prestige_count) 實際數值（見
+	# _refresh_hud()），呢度淨係擺位＋初始文字。
 	var prestige_wrap := Control.new()
 	prestige_wrap.custom_minimum_size = Vector2(0.0, 16.0)
 	top_vbox.add_child(prestige_wrap)
@@ -874,7 +1054,7 @@ func _build_hud() -> void:
 	_prestige_bar = ProgressBar.new()
 	_prestige_bar.min_value = 0.0
 	_prestige_bar.max_value = c.prestige_threshold(0)
-	_prestige_bar.value = 0.0 # 威望重置邏輯見 VR-05，呢度淨係擺位
+	_prestige_bar.value = 0.0
 	_prestige_bar.show_percentage = false
 	_prestige_bar.set_anchors_preset(Control.PRESET_FULL_RECT)
 	prestige_wrap.add_child(_prestige_bar)
@@ -888,6 +1068,14 @@ func _build_hud() -> void:
 	_prestige_label.add_theme_constant_override("outline_size", 3)
 	_prestige_label.set_anchors_preset(Control.PRESET_FULL_RECT)
 	prestige_wrap.add_child(_prestige_label)
+
+	# VR-05b：達到威望門檻先顯示嘅「拆廠搬礦」掣，平時 hidden（_refresh_hud()
+	# 接 Prestige.can_prestige() 話事），唔會常駐佔 TopBar 高度預算。
+	_prestige_button = Button.new()
+	_prestige_button.text = "拆廠搬礦"
+	_prestige_button.visible = false
+	_prestige_button.pressed.connect(_show_prestige_confirm)
+	top_vbox.add_child(_prestige_button)
 
 	# -- 開場提示：撳碎料鏟入爐——用戶實機回饋（ALTA-150），碎料太細
 	# 又冇提示，唔知撳邊度。貼喺頂 HUD 底下，中層 3D 畫面最上面，第一次
@@ -942,6 +1130,7 @@ func _build_hud() -> void:
 		if state.upgrade_belt():
 			EventLog.log_event("upgrade", {"track": "belt", "level": state.belt_level})
 			SfxPlayer.play("upgrade")
+			_save_game()
 	)
 	upgrades_row.add_child(_belt_upgrade_button)
 
@@ -952,6 +1141,7 @@ func _build_hud() -> void:
 		if state.upgrade_miner_level():
 			EventLog.log_event("upgrade", {"track": "miner", "level": state.miner_level})
 			SfxPlayer.play("upgrade")
+			_save_game()
 	)
 	upgrades_row.add_child(_miner_upgrade_button)
 
@@ -962,8 +1152,118 @@ func _build_hud() -> void:
 		if state.upgrade_refine():
 			EventLog.log_event("upgrade", {"track": "refine", "level": state.refine_level})
 			SfxPlayer.play("upgrade")
+			_save_game()
 	)
 	upgrades_row.add_child(_refine_upgrade_button)
+
+	_build_offline_panel(hud)
+	_build_prestige_confirm_panel(hud)
+
+## VR-05b：離線報告／威望確認兩個彈窗共用嘅底——scrim（擋背後撳掣）+
+## CenterContainer 置中一張深色圓角卡片，同 _make_circular_icon()／
+## _add_pill() 同一套色板（VR-06b pill／icon 風格）。回傳
+## {overlay, vbox}：overlay 預設 hidden，顯示／隱藏由呼叫方自己揸；
+## vbox 俾呼叫方塞內容。
+func _build_modal_card(hud: CanvasLayer, node_name: String) -> Dictionary:
+	var overlay := Control.new()
+	overlay.name = node_name
+	overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
+	overlay.visible = false
+	hud.add_child(overlay)
+
+	var scrim := ColorRect.new()
+	scrim.color = Color(0.0, 0.0, 0.0, 0.6)
+	scrim.set_anchors_preset(Control.PRESET_FULL_RECT)
+	scrim.mouse_filter = Control.MOUSE_FILTER_STOP # 擋住背後嘅撳掣
+	overlay.add_child(scrim)
+
+	var center := CenterContainer.new()
+	center.set_anchors_preset(Control.PRESET_FULL_RECT)
+	overlay.add_child(center)
+
+	var card := PanelContainer.new()
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.14, 0.12, 0.1, 0.95)
+	style.set_corner_radius_all(14)
+	style.content_margin_left = 22.0
+	style.content_margin_right = 22.0
+	style.content_margin_top = 18.0
+	style.content_margin_bottom = 18.0
+	card.add_theme_stylebox_override("panel", style)
+	card.custom_minimum_size = Vector2(260.0, 0.0)
+	center.add_child(card)
+
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 10)
+	card.add_child(vbox)
+
+	return {"overlay": overlay, "vbox": vbox}
+
+## VR-05b：離線結算面板——開機讀到存檔就彈（見 _run_offline_settlement()），
+## 浣熊經理文案（data/offline_report.gd）+ 收成金額 + 「收下」／「×2」
+## 兩個掣（issue：「×2」先顯示但灰，rewarded 接駁留 VR-07）。
+func _build_offline_panel(hud: CanvasLayer) -> void:
+	var modal := _build_modal_card(hud, "OfflinePanel")
+	_offline_panel = modal["overlay"]
+	var vbox: VBoxContainer = modal["vbox"]
+
+	_offline_message_label = Label.new()
+	_offline_message_label.autowrap_mode = TextServer.AUTOWRAP_WORD
+	_offline_message_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_offline_message_label.custom_minimum_size = Vector2(220.0, 0.0)
+	vbox.add_child(_offline_message_label)
+
+	var yield_row := HBoxContainer.new()
+	yield_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	vbox.add_child(yield_row)
+	yield_row.add_child(_make_circular_icon("res://assets/icons/coin.png", Color(1.0, 0.85, 0.35)))
+	_offline_yield_label = Label.new()
+	_offline_yield_label.add_theme_font_size_override("font_size", 20)
+	yield_row.add_child(_offline_yield_label)
+
+	var buttons_row := HBoxContainer.new()
+	vbox.add_child(buttons_row)
+
+	_offline_double_button = Button.new()
+	_offline_double_button.text = "×2（睇廣告）"
+	_offline_double_button.disabled = true # rewarded 廣告接駁留 VR-07，呢度淨係擺位＋停用
+	_offline_double_button.tooltip_text = "未接（VR-07）"
+	_offline_double_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	buttons_row.add_child(_offline_double_button)
+
+	_offline_claim_button = Button.new()
+	_offline_claim_button.text = "收下"
+	_offline_claim_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_offline_claim_button.pressed.connect(_on_offline_claim_pressed)
+	buttons_row.add_child(_offline_claim_button)
+
+## VR-05b：威望重置確認面板——撳「拆廠搬礦」先彈，講清楚清乜留乜同
+## 重置後嘅新倍率，避免玩家手快手震清咗都唔知。
+func _build_prestige_confirm_panel(hud: CanvasLayer) -> void:
+	var modal := _build_modal_card(hud, "PrestigeConfirmPanel")
+	_prestige_confirm_panel = modal["overlay"]
+	var vbox: VBoxContainer = modal["vbox"]
+
+	_prestige_confirm_label = Label.new()
+	_prestige_confirm_label.autowrap_mode = TextServer.AUTOWRAP_WORD
+	_prestige_confirm_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_prestige_confirm_label.custom_minimum_size = Vector2(240.0, 0.0)
+	vbox.add_child(_prestige_confirm_label)
+
+	var buttons_row := HBoxContainer.new()
+	vbox.add_child(buttons_row)
+
+	var cancel_button := Button.new()
+	cancel_button.text = "取消"
+	cancel_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	cancel_button.pressed.connect(func() -> void: _prestige_confirm_panel.visible = false)
+	buttons_row.add_child(cancel_button)
+
+	var confirm_button := Button.new()
+	confirm_button.text = "確認重置"
+	confirm_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	confirm_button.pressed.connect(_do_prestige_reset)
+	buttons_row.add_child(confirm_button)
 
 ## VR-06b：頂列資源一格——圓 icon（見 _make_circular_icon()）+ 數值
 ## label + 「+」掣（跟 issue 視覺參考：暫不接功能，未來 rewarded 廣告
@@ -1092,6 +1392,15 @@ func _refresh_hud() -> void:
 	else:
 		_frenzy_button.text = "狂熱冷卻中 %ds" % int(ceil(frenzy.cooldown_remaining))
 		_frenzy_button.disabled = true
+
+	# VR-05b：威望 bar／label／「拆廠搬礦」掣接返 _lifetime_cash 同
+	# c.prestige_threshold(_prestige_count)（之前 VR-06b 淨係擺位，固定
+	# 顯示 0）。
+	var prestige_threshold := c.prestige_threshold(_prestige_count)
+	_prestige_bar.max_value = prestige_threshold
+	_prestige_bar.value = clampf(_lifetime_cash, 0.0, prestige_threshold)
+	_prestige_label.text = "威望 %s / %s" % [_fmt_num(_lifetime_cash), _fmt_num(prestige_threshold)]
+	_prestige_button.visible = Prestige.can_prestige(c, {"lifetime_cash": _lifetime_cash, "prestige_count": _prestige_count})
 
 ## 用戶實機回饋（ALTA-150）：升級掣全部灰晒，撞唔到分清楚係「等緊
 ## 錢」定「壞咗」。夠錢就轉返正常／綠色，唔夠錢價錢轉紅色，等玩家知

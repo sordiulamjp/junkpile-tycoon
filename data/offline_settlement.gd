@@ -20,11 +20,10 @@ static func settle_offline_secs(last_save_unix: float, now_unix: float) -> float
 ## 同一份結算報告（elapsed_secs／capped_secs／cash_yield），畀 UI／浣熊經理
 ## 發糧文案用。raw_base_rate_per_sec 係離線嗰刻嘅放置收入（未計威望倍率）。
 ##
-## VR-08 備註：main.gd 而家仲未有讀檔／開機結算嘅流程（見
-## data/save_manager.gd、data/prestige.gd 同一備註），所以呢度未有
-## EventLog.log_event("offline_claim", …) 嘅呼叫點。日後接返開機讀檔／
-## 結算流程嗰陣，喺 settle() 攞到結果之後記得補一句
-## `EventLog.log_event("offline_claim", {"elapsed_secs": result["elapsed_secs"], "cash_yield": result["cash_yield"]})`。
+## VR-05b（ALTA-216）備註：main.gd 已經接咗呢個流程——開機見到有存檔
+## 就叫 settle()，彈浣熊經理發糧面板，撳「收下」先入帳同補
+## EventLog.log_event("offline_claim", …)（見 main.gd
+## _run_offline_settlement()／_on_offline_claim_pressed()）。
 static func settle(
 	constants: GameConstants,
 	state: Dictionary,
