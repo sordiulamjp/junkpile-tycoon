@@ -38,6 +38,8 @@ var rng := RandomNumberGenerator.new()
 var car: AnimatableBody3D
 var _car_mesh: MeshInstance3D
 var _car_mat: StandardMaterial3D
+var _blade_mesh: MeshInstance3D
+var _blade_mat: StandardMaterial3D
 var _car_target_x: float = 0.0
 var _stun_timer: float = 0.0
 
@@ -48,6 +50,13 @@ var _fake_debris_nodes: Array = []
 var _debris_spawn_accum: float = 0.0
 var _gears_active: Array = [] # 每個元素：{"node": Node3D, "timer": float}
 var _fps_sample_accum: float = 0.0
+
+## -- VR-06c：波池（見 constants.gd D2 部，純表現層，唔碰判分） --
+var _pool_mesh_by_tier: Dictionary = {} # tier(String) -> MultiMeshInstance3D
+var _pool_slots: Array = [] # 每個元素：{tier, local_index, pos, scale_mult, color, emissive, active}
+var _pool_kick_root: Node3D
+var _pool_kicked: Array = [] # 每個元素：{"slot": Dictionary, "node": Node3D, "timer": float}
+var _pool_kick_scan_accum: float = 0.0
 
 var _gate_materials: Array[StandardMaterial3D] = [] # ALTA-153 round2：「門亮」——狂熱先實際發光
 
@@ -68,7 +77,12 @@ func _ready() -> void:
 	_debris_root.name = "DebrisRoot"
 	add_child(_debris_root)
 
+	_pool_kick_root = Node3D.new()
+	_pool_kick_root.name = "PoolKickRoot"
+	add_child(_pool_kick_root)
+
 	_build_walls()
+	_build_ore_pool() # VR-06c：波池——鋪滿地面嘅靜態波，車場常駐，唔跟 start()/stop() 重建
 	_build_car()
 	_build_roller()
 	_build_bridge()
@@ -83,6 +97,7 @@ func start() -> void:
 	_reset_car()
 	_clear_debris()
 	_clear_gears()
+	_reset_pool_kicks()
 	_debris_spawn_accum = 0.0
 	_fps_sample_accum = 0.0
 	_set_active_visual(true) # 用戶回饋：「門亮」——狂熱先落實發光
@@ -91,6 +106,7 @@ func stop() -> void:
 	set_process(false)
 	_clear_debris()
 	_clear_gears()
+	_reset_pool_kicks() # 波池轉咗做 rigid 嗰啲一律強制轉返靜態，唔留喺車場度懸空
 	_reset_car() # 車場常駐，完場車要停返去上面「泊定」，唔好留喺爐口
 	_set_active_visual(false)
 
@@ -109,6 +125,8 @@ func _process(delta: float) -> void:
 	_spawn_tick(delta)
 	_update_fake_debris(delta)
 	_update_gears(delta)
+	_pool_kick_tick(delta)
+	_update_pool_kicks(delta)
 	_fps_sample_tick(delta)
 	if _roller_visual:
 		_roller_visual.rotate_x(delta * 4.0)
@@ -221,22 +239,44 @@ func _build_walls() -> void:
 		wall.position = Vector3(side_x, mid_y, 0.0)
 		add_child(wall)
 
+## VR-06c：卡通推土機——車身細、鏟斗大、履帶（issue 視覺參考第 2 點），
+## 代替之前純色盒仔＋四粒輪。碰撞盒故意維持原本 Vector3(0.5, 0.22, 0.4)
+## 唔改（同木橋／UPGRADE 墊／四道門觸發全部靠呢個 CollisionShape3D 撞
+## Area3D，改咗大細會連帶郁哂已經調校好嘅木橋安全闊度等數值）——呢張
+## issue 淨係換表現層，唔郁物理／判分，梯形視覺同碰撞盒刻意分開兩件事。
+const CAR_BODY_SIZE := Vector3(0.28, 0.16, 0.28)
+const CAR_BLADE_SIZE := Vector3(0.6, 0.18, 0.09)
+const CAR_TRACK_SIZE := Vector3(0.08, 0.11, 0.32)
+const CAR_TRACK_COLOR := Color(0.14, 0.14, 0.15)
+
 func _build_car() -> void:
 	car = AnimatableBody3D.new()
 	car.name = "Car"
 	car.add_to_group("frenzy_car")
 	car.sync_to_physics = true
-	_car_mesh = VisualFactory.make_metal_box(Vector3(0.5, 0.22, 0.4), Color(0.55, 0.15, 0.15))
-	_car_mat = _car_mesh.material_override
+
+	_car_mesh = VisualFactory.make_metal_box(CAR_BODY_SIZE, Color(0.38, 0.39, 0.42))
+	_car_mat = _car_mesh.material_override # _flash_car() 撞岩浆閃身用
 	car.add_child(_car_mesh)
-	# 四粒低面數輪——純裝飾，唔跟 tier 縮放／變色（見 _apply_car_tier_visual()
-	# 淨係改 _car_mesh），先至實機睇落唔會輪同車身一齊怪異咁縮放。
-	for wheel_x in [-0.19, 0.19]:
-		for wheel_z in [-0.19, 0.19]:
-			var wheel := VisualFactory.make_low_poly_cylinder(0.09, 0.06, Color(0.12, 0.12, 0.13))
-			wheel.rotation_degrees.z = 90.0
-			wheel.position = Vector3(wheel_x, -0.1, wheel_z)
-			car.add_child(wheel)
+
+	# 鏟斗擺喺車頭（-Y，車不斷向落嘅方向，見 _handle_car_descent()）、
+	# 闊過車身好多先似「鏟」；顏色由 _apply_car_tier_visual() 揸（issue：
+	# 「鏟斗鮮色（紅／黃）」，UPGRADE 逐級升先變闊，唔再係成架車等比縮放）。
+	_blade_mesh = VisualFactory.make_metal_box(CAR_BLADE_SIZE, Color(0.55, 0.15, 0.15))
+	_blade_mat = _blade_mesh.material_override
+	_blade_mesh.position = Vector3(0.0, 0.0, -(CAR_BODY_SIZE.z * 0.5 + CAR_BLADE_SIZE.z * 0.5 - 0.02))
+	car.add_child(_blade_mesh)
+
+	# 履帶——兩條低身長盒仔代替四粒輪，卡通推土機必備語言（issue 視覺
+	# 參考第 2 點）；純裝飾，唔跟 tier 變（同舊版輪一樣淨係唔郁 _car_mesh
+	# 之外嘅嘢）。
+	for side_x in [-1.0, 1.0]:
+		var track := VisualFactory.make_metal_box(CAR_TRACK_SIZE, CAR_TRACK_COLOR)
+		track.position = Vector3(
+			side_x * (CAR_BODY_SIZE.x * 0.5 + CAR_TRACK_SIZE.x * 0.5), -CAR_BODY_SIZE.y * 0.5, 0.0
+		)
+		car.add_child(track)
+
 	var col := CollisionShape3D.new()
 	var shape := BoxShape3D.new()
 	shape.size = Vector3(0.5, 0.22, 0.4)
@@ -408,10 +448,15 @@ func _on_upgrade_pad_entered(body: Node3D) -> void:
 	if frenzy.try_upgrade_pad():
 		_apply_car_tier_visual()
 
+## VR-06c：UPGRADE 墊逐級升淨係換鏟斗（issue：「UPGRADE 墊換模時鏟斗
+## 明顯變闊」）——車身／履帶唔郁，鏟斗闊度跟 tier.scale 放大（淨放大
+## X，Y／Z 唔變，先睇落係「變闊」唔係「成舊嘢變大」），顏色跟 tier.color
+## 換（鮮色紅／黃系，見 car_upgrade_tiers）。
 func _apply_car_tier_visual() -> void:
 	var tier: Dictionary = frenzy.current_tier()
-	_car_mesh.scale = Vector3.ONE * float(tier.get("scale", 1.0))
-	_car_mat.albedo_color = tier.get("color", Color(0.55, 0.15, 0.15))
+	var width_mult: float = float(tier.get("scale", 1.0))
+	_blade_mesh.scale = Vector3(width_mult, 1.0, 1.0)
+	_blade_mat.albedo_color = tier.get("color", Color(0.55, 0.15, 0.15))
 
 func _flash_car(color: Color) -> void:
 	var original: Color = _car_mat.albedo_color
@@ -517,6 +562,155 @@ func _clear_debris() -> void:
 			node.queue_free()
 	_debris_nodes.clear()
 	_fake_debris_nodes.clear()
+
+
+# ══════════════════════ 波池（VR-06c：靜態 MultiMesh 堆 + 車鏟前方轉真 rigid） ══════════════════════
+#
+# 純表現層，同上面「散幣／藍波」判分管道（_spawn_tick／_spawn_one_debris／
+# frenzy_debris group／score_item()）完全獨立、互不干擾：呢度轉出嚟嘅
+# RigidBody3D 唔加入 frenzy_debris group、唔掛 kind／passed_gates meta，
+# 所以 _on_gate_entered()／_on_roller_entered()／_on_furnace_entered() 一律
+# 唔會理佢哋，frenzy_state.gd 判分邏輯完全冇被呢部分觸碰。設計動機（issue
+# 視覺參考第 1 點）：地面成千粒細波係環境「set dressing」，車推過有波散開
+# 嘅「推堆」爽感；真正計分嘅散幣／藍波／金幣照舊由頂上落嚟畀車帶去門。
+
+func _build_ore_pool() -> void:
+	var weights: Dictionary = c.ore_pool_tier_weights
+	var total_weight := 0.0
+	for w in weights.values():
+		total_weight += float(w)
+	if total_weight <= 0.0:
+		return
+	var y_min: float = c.yard_min_y + c.ore_pool_ball_radius * 2.0
+	var y_max: float = c.car_park_max_y - c.ore_pool_ball_radius * 2.0
+	for tier: String in weights.keys():
+		var count: int = int(round(float(c.ore_pool_total_count) * float(weights[tier]) / total_weight))
+		if count <= 0:
+			continue
+		var color: Color = VisualFactory.ORE_TIER_COLOR.get(tier, Color(0.7, 0.7, 0.7))
+		var emissive: bool = tier in VisualFactory.ORE_TIER_EMISSIVE_TIERS
+		var scale_mult: float = c.ore_pool_gold_scale_mult if tier == "gold" else 1.0
+		var mmi := VisualFactory.make_ore_pool_multimesh(
+			c.ore_pool_ball_radius, color, 0.6 if emissive else 0.0, count
+		)
+		mmi.name = "OrePool_%s" % tier
+		add_child(mmi)
+		_pool_mesh_by_tier[tier] = mmi
+		for i in range(count):
+			var pos := Vector3(
+				rng.randf_range(c.yard_x_range.x, c.yard_x_range.y),
+				rng.randf_range(y_min, y_max),
+				rng.randf_range(-0.12, 0.12)
+			)
+			mmi.multimesh.set_instance_transform(
+				i, Transform3D(Basis.IDENTITY.scaled(Vector3.ONE * scale_mult), pos)
+			)
+			_pool_slots.append({
+				"tier": tier, "local_index": i, "pos": pos, "scale_mult": scale_mult,
+				"color": color, "emissive": emissive, "active": false,
+			})
+
+func _hide_pool_slot(slot: Dictionary) -> void:
+	var mmi: MultiMeshInstance3D = _pool_mesh_by_tier[slot["tier"]]
+	mmi.multimesh.set_instance_transform(
+		slot["local_index"], Transform3D(Basis.IDENTITY.scaled(Vector3.ZERO), Vector3.ZERO)
+	)
+
+## 隔 ore_pool_kick_scan_interval_secs 先掃一次（節流：3000 粒逐幀掃
+## 太浪費，車移動慢，10Hz 已經睇唔出滯後）；預算同散幣共用
+## frenzy.current_debris_cap()——幀數降級一齊拖埋波池，唔會兩條獨立
+## 曲線各顧各。最低幀數階（is_fake_physics()）直接唔轉 rigid，波池淨係
+## 保持靜態鋪滿，唔再加物理負擔。
+func _pool_kick_tick(delta: float) -> void:
+	if frenzy.is_fake_physics():
+		return
+	_pool_kick_scan_accum += delta
+	if _pool_kick_scan_accum < c.ore_pool_kick_scan_interval_secs:
+		return
+	_pool_kick_scan_accum = 0.0
+	var budget: int = frenzy.current_debris_cap() - _debris_nodes.size() - _pool_kicked.size()
+	if budget <= 0:
+		return
+	var radius_sq: float = c.ore_pool_kick_radius * c.ore_pool_kick_radius
+	var kicked := 0
+	for slot: Dictionary in _pool_slots:
+		if kicked >= budget:
+			break
+		if slot["active"]:
+			continue
+		if (slot["pos"] as Vector3).distance_squared_to(car.position) > radius_sq:
+			continue
+		_activate_pool_slot(slot)
+		kicked += 1
+
+func _activate_pool_slot(slot: Dictionary) -> void:
+	slot["active"] = true
+	_hide_pool_slot(slot)
+
+	var body := RigidBody3D.new()
+	body.mass = 0.15
+	body.gravity_scale = c.debris_gravity_scale
+	var radius: float = c.ore_pool_ball_radius * float(slot["scale_mult"])
+	var mesh := VisualFactory.make_ore_ball(radius, slot["color"], 0.6 if slot["emissive"] else 0.0)
+	body.add_child(mesh)
+	var col := CollisionShape3D.new()
+	var shape := SphereShape3D.new()
+	shape.radius = radius
+	col.shape = shape
+	body.add_child(col)
+	body.position = slot["pos"]
+	_pool_kick_root.add_child(body) # apply_central_impulse() 要求 body 已經入咗物理空間，一定要先 add_child()
+
+	# 向遠離車嘅方向加少少向上衝力，做「鏟開」嘅揚起感，唔會齋喺原地
+	# 畀重力慢慢拖落去（issue 驗收：「車推過波散開有『推堆』爽感」）。
+	var away: Vector3 = (slot["pos"] as Vector3) - car.position
+	away.y = absf(away.y) + 0.4
+	if away.length() < 0.001:
+		away = Vector3(rng.randf_range(-1.0, 1.0), 0.6, 0.0)
+	body.apply_central_impulse(away.normalized() * c.ore_pool_kick_impulse)
+
+	_pool_kicked.append({"slot": slot, "node": body, "timer": 0.0})
+
+## 離開車鏟範圍（用一個大過 kick_radius 嘅緩衝半徑，避免啱啱轉完 rigid
+## 又即刻轉返靜態嘅閃爍）、活咗夠耐、或者跌到爐口深度，三者其一就強制
+## 轉返靜態——確保「懸空」嘅時間有上限，同 _pool_kicked 嘅活躍量有上限。
+func _update_pool_kicks(delta: float) -> void:
+	var leave_radius: float = c.ore_pool_kick_radius * 1.6
+	var leave_radius_sq: float = leave_radius * leave_radius
+	for k: Dictionary in _pool_kicked.duplicate():
+		var node: Node3D = k["node"]
+		if not is_instance_valid(node):
+			_pool_kicked.erase(k)
+			continue
+		k["timer"] += delta
+		var out_of_range: bool = node.position.distance_squared_to(car.position) > leave_radius_sq
+		var expired: bool = k["timer"] >= c.ore_pool_kick_lifetime_secs
+		var past_floor: bool = node.position.y <= c.yard_min_y
+		if out_of_range or expired or past_floor:
+			_revert_pool_kick(k)
+
+func _revert_pool_kick(k: Dictionary) -> void:
+	_pool_kicked.erase(k)
+	var slot: Dictionary = k["slot"]
+	var node: Node3D = k["node"]
+	var settle_pos: Vector3 = node.position if is_instance_valid(node) else (slot["pos"] as Vector3)
+	settle_pos.x = clampf(settle_pos.x, c.yard_x_range.x, c.yard_x_range.y)
+	settle_pos.y = clampf(settle_pos.y, c.yard_min_y, c.car_park_max_y)
+	slot["pos"] = settle_pos
+	slot["active"] = false
+	var mmi: MultiMeshInstance3D = _pool_mesh_by_tier[slot["tier"]]
+	mmi.multimesh.set_instance_transform(
+		slot["local_index"],
+		Transform3D(Basis.IDENTITY.scaled(Vector3.ONE * float(slot["scale_mult"])), settle_pos)
+	)
+	if is_instance_valid(node):
+		node.queue_free()
+
+func _reset_pool_kicks() -> void:
+	for k: Dictionary in _pool_kicked.duplicate():
+		_revert_pool_kick(k)
+	_pool_kicked.clear()
+	_pool_kick_scan_accum = 0.0
 
 
 # ══════════════════════ 齒輪（狂熱期間每 gear_drop_interval_secs 一粒） ══════════════════════

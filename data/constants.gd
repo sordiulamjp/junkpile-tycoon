@@ -223,13 +223,37 @@ enum Resource3 { CASH, COMPONENTS, ECO }
 @export var frenzy_fake_physics_min_tier: int = 3 # TUNE：跌到呢一級（0=debris_rigidbody_cap，1..=frenzy_debris_degrade_steps）先轉用假物理（位置插值代替剛體）
 
 
+# ══════════════ D2. VR-06c 波池：地面 MultiMesh 礦物波（純表現層） ══════════════
+# issue 視覺參考第 1 點——靜態堆用 MultiMeshInstance3D（幾千粒零成本），淨係
+# 車鏟前方一小圈轉真 RigidBody3D（同上面 debris_rigidbody_cap 共用同一個
+# 幀數降級預算，見 frenzy_yard_view.gd _pool_kick_tick()），離開範圍轉返
+# 靜態。呢度全部純表現層數值，唔碰 score_item()／roll_spawn_kind() 呢啲
+# 判分邏輯，亦冇新增判分公式。
+@export var ore_pool_tier_weights: Dictionary = {
+	"stone": 40, "coal": 24, "copper": 16, "gold": 10, "diamond": 7, "crown": 3,
+} # TUNE：波池顏色分佈（純視覺 flavor，同 GameState 山腳礦物機率獨立，冇判分意義）
+@export var ore_pool_total_count: int = 3000        # TUNE：靜態 MultiMesh 波總粒數（issue：「成千粒」）
+@export var ore_pool_ball_radius: float = 0.05      # TUNE：普通波半徑
+@export var ore_pool_gold_scale_mult: float = 1.6   # TUNE：金波大粒過普通波（issue 明文要求，鑽／皇冠淨係自發光唔放大）
+## 波池夠密（3000 粒鋪成千粒喺成條車場 y 走廊），半徑同時活躍粒數大致
+## 成平方關係——實測（headless 單元測試量過）0.35 會一次過驚動 100+ 粒，
+## 完全唔似「一小圈」；縮到 0.15 先夾到「一嚿波集中喺車鏟附近散開」嘅
+## 手感，同時將同一時間新增嘅 rigid body 數量控制喺對 S8+ 友善嘅範圍。
+## 呢個值未過真機（呢個 runtime 冇 GPU 輸出），S8+ 實測如果唔夠 40fps
+## 應該優先縮呢個數，其次先減 ore_pool_total_count。
+@export var ore_pool_kick_radius: float = 0.15      # TUNE：車鏟前方轉做真 rigid 嘅小圈半徑
+@export var ore_pool_kick_lifetime_secs: float = 1.1 # TUNE：轉咗 rigid 幾耐之後強制轉返靜態（防止懸空太耐兼控制同時活躍量）
+@export var ore_pool_kick_scan_interval_secs: float = 0.1 # TUNE：隔幾耐掃一次車鏟附近嘅波（節流，唔使每個物理幀都掃成池）
+@export var ore_pool_kick_impulse: float = 0.6      # TUNE：轉做 rigid 嗰下向外「揚起」嘅衝力，做「推堆」爽感
+
+
 # ══════════════ E. VR-08 遠端覆寫白名單（純量 TUNE 欄位） ══════════════
 # 只有呢度列出嘅名先會俾 systems/remote_constants.gd 嘅 RemoteConstants
 # 覆寫（型別 float／int，`set()` 直接寫喺同一個個體，見上面用法註解）。
 # Dictionary／Array／Vector／Color 嘅 TUNE 欄位（ore_distribution、
 # offline_bands、yard_x_range、spike_roller_pos、spike_roller_half_extents、
 # lava_bridge_safe_x_range、upgrade_pad_pos、car_upgrade_tiers、
-# frenzy_debris_degrade_steps）呢期未支援遠端覆寫——結構化覆寫要另外
+# frenzy_debris_degrade_steps、ore_pool_tier_weights）呢期未支援遠端覆寫——結構化覆寫要另外
 # 設計 schema／夾範圍，超出呢個 issue 範圍，維持本機預設。
 #
 # ⚠️ test/test_constants_remote_tunable.gd 會掃描呢個檔案嘅 `# TUNE`
@@ -255,6 +279,9 @@ const REMOTE_TUNABLE_FIELDS: Array[String] = [
 	"gear_component_reward", "gear_pickup_window_secs", "frenzy_fps_sample_interval_secs",
 	"frenzy_fps_low_threshold", "frenzy_fps_low_streak_to_degrade",
 	"frenzy_fake_physics_min_tier",
+	"ore_pool_total_count", "ore_pool_ball_radius", "ore_pool_gold_scale_mult",
+	"ore_pool_kick_radius", "ore_pool_kick_lifetime_secs", "ore_pool_kick_scan_interval_secs",
+	"ore_pool_kick_impulse",
 ]
 
 

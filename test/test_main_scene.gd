@@ -253,6 +253,17 @@ func test_frenzy_yard_spawns_real_rigidbody_debris_over_several_frames() -> void
 	assert_true(main.frenzy.active, "30 幀之內未夠 120 秒，狂熱應該仍然生效")
 	assert_gt(main._frenzy_view._debris_nodes.size(), 0, "應該已經生咗至少一粒剛體碎料")
 
+## VR-06c：main.tscn 真係經 GameConstants 裝配咗波池（詳細行為單元測試
+## 見 test/test_frenzy_yard_view.gd 嘅獨立 FrenzyYardView）。
+func test_frenzy_yard_ore_pool_is_wired_into_main_scene() -> void:
+	var scene: PackedScene = load("res://main.tscn")
+	main = scene.instantiate()
+	add_child_autofree(main)
+
+	var view: FrenzyYardView = main._frenzy_view
+	assert_eq(view._pool_slots.size(), main.c.ore_pool_total_count, "波池數量應該貼齊 constants.gd 嘅 ore_pool_total_count")
+	assert_eq(view._pool_mesh_by_tier.size(), main.c.ore_pool_tier_weights.size())
+
 ## Review 意見（f457644 review）：_recolor_debris() 曾經假設 body 一定
 ## 係 RigidBody3D（mesh 喺 child(0)），但假物理路徑 _spawn_fake_debris()
 ## 生嘅 node 本身就係 MeshInstance3D，冇 child——藍波一過滾筒就

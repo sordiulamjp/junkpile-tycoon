@@ -86,6 +86,14 @@ const FIELD_TYPES = {
   frenzy_fps_low_threshold: 'float',
   frenzy_fps_low_streak_to_degrade: 'int',
   frenzy_fake_physics_min_tier: 'int',
+  // VR-06c：波池（純表現層，見 ../data/constants.gd D2 部）
+  ore_pool_total_count: 'int',
+  ore_pool_ball_radius: 'float',
+  ore_pool_gold_scale_mult: 'float',
+  ore_pool_kick_radius: 'float',
+  ore_pool_kick_lifetime_secs: 'float',
+  ore_pool_kick_scan_interval_secs: 'float',
+  ore_pool_kick_impulse: 'float',
 };
 
 const CORS = {

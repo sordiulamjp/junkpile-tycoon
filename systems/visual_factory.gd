@@ -39,6 +39,22 @@ const PALETTE := {
 	"lamp_warm": Color(1.0, 0.78, 0.4),
 }
 
+## VR-06c：波池礦物階色板——同 main.gd::_ore_color() 用同一套礦物階名
+## （stone／coal／copper／gold／diamond／crown，見 constants.gd
+## ore_tier_value docx 數值）同同一組數值。兩處獨立維護：main.gd 嗰個
+## 用喺山腳碎料（有判分意義嘅 ore_key），呢度用喺車場波池（純表現層，
+## 冇判分意義），刻意唔拉一個共用依賴，各自留喺自己嘅表現層檔案。
+const ORE_TIER_COLOR := {
+	"stone": Color(0.55, 0.55, 0.55),
+	"coal": Color(0.15, 0.15, 0.15),
+	"copper": Color(0.72, 0.42, 0.2),
+	"gold": Color(0.95, 0.8, 0.15),
+	"diamond": Color(0.6, 0.9, 0.95),
+	"crown": Color(0.85, 0.65, 0.95),
+}
+## 金／鑽／皇冠三階波「少少自發光」（issue 視覺參考），其餘唔發光。
+const ORE_TIER_EMISSIVE_TIERS := ["gold", "diamond", "crown"]
+
 const MINER_MODEL_PATH := "res://assets/models/character-g.glb"
 ## Kenney 機械人 glTF 企立高度實測 ≈2.7 世界單位（見 ALTA-153 留言）。
 ## 用戶實機回饋（round2 第 5 點）：礦工放大到約 0.35 世界單位高——呢個
@@ -150,6 +166,33 @@ static func make_lamp(radius: float, color: Color, emission_energy: float = 1.2)
 	mesh_instance.mesh = sphere
 	mesh_instance.material_override = flat_material(color, color, emission_energy, 0.0, 0.6)
 	return mesh_instance
+
+## VR-06c：波池粒轉真 rigid 之後嘅單粒 mesh（見 frenzy_yard_view.gd
+## _activate_pool_slot()）——同 make_lamp() 一樣係低面數圓球，呢度獨立
+## 開一個命名清晰嘅入口，實現直接複用 make_lamp()。
+static func make_ore_ball(radius: float, color: Color, emission_energy: float = 0.0) -> MeshInstance3D:
+	return make_lamp(radius, color, emission_energy)
+
+## VR-06c：波池靜態堆——一個 MultiMeshInstance3D 代表一個礦物階，幾千粒
+## 共用一個 SphereMesh + material，GPU instancing 一個 draw call畫晒
+## （issue 視覺參考：「靜態堆用 MultiMeshInstance3D，幾千粒零成本」）。
+## call site（frenzy_yard_view.gd _build_ore_pool()）逐粒 set_instance_transform()
+## 擺位；轉做 rigid 嗰陣將對應 index 嘅 transform 縮做 0（_hide_pool_slot()）
+## 令個靜態粒隱形，唔會同真 rigid 個 mesh 疊埋一齊。
+static func make_ore_pool_multimesh(radius: float, color: Color, emission_energy: float, instance_count: int) -> MultiMeshInstance3D:
+	var mmi := MultiMeshInstance3D.new()
+	var mm := MultiMesh.new()
+	mm.transform_format = MultiMesh.TRANSFORM_3D
+	var sphere := SphereMesh.new()
+	sphere.radius = radius
+	sphere.height = radius * 2.0
+	sphere.radial_segments = 8
+	sphere.rings = 4
+	mm.mesh = sphere
+	mm.instance_count = maxi(instance_count, 0)
+	mmi.multimesh = mm
+	mmi.material_override = flat_material(color, color, emission_energy, 0.0, 0.6)
+	return mmi
 
 
 # ══════════════════════ 礦工：Kenney CC0 機械人 glTF ══════════════════════
