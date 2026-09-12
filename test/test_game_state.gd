@@ -105,6 +105,23 @@ func test_miner_level_multiplies_ore_rate() -> void:
 	assert_almost_eq(s.miner_ore_rate(), base_rate * pow(s.c.miner_level_speed_mult, 3), EPS)
 
 
+# ── 觸發嗰刻放置收入（VR-04 狂熱收益基準用）───────────────
+
+func test_current_income_rate_is_zero_without_miners() -> void:
+	assert_almost_eq(s.current_income_rate(), 0.0, EPS)
+
+func test_current_income_rate_matches_steady_state_tick_rate() -> void:
+	s.miner_count = 1
+	var per_sec: float = s.tick(1.0)["cash_gain"]
+	s.cash = 0.0
+	assert_almost_eq(s.current_income_rate(), per_sec, EPS)
+
+func test_current_income_rate_is_clamped_by_belt_capacity() -> void:
+	s.miner_count = 100 # 出礦量遠超 Lv1 帶產能上限
+	var expected: float = s.belt_capacity() * s.average_ore_value("foothill") * s.refine_multiplier()
+	assert_almost_eq(s.current_income_rate(), expected, EPS)
+
+
 # ── 手動 scoop：已 belted 碎料不可 scoop ────────────────
 
 func test_scoop_first_on_empty_pile_is_zero() -> void:

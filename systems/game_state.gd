@@ -161,6 +161,14 @@ func scoop_ore(ore_key: String) -> float:
 	return value
 
 
+## 觸發嗰刻嘅放置收入（Cash/s），穩態值——同 tick() 用同一條夾帶產能
+## 上限嘅公式，但唔帶 delta，俾 VR-04 狂熱計「收益基準＝放置收入 ×5 ×120s」用。
+func current_income_rate() -> float:
+	var mined_rate: float = float(miner_count) * miner_ore_rate()
+	var fed_rate: float = minf(mined_rate, belt_capacity())
+	return fed_rate * average_ore_value("foothill") * refine_multiplier()
+
+
 # ══════════════════════ 每幀模擬：礦工 → 帶（上限）→ 爐 → Cash ══════════════════════
 
 ## 推進一幀。礦工自動出礦，受帶產能上限夾住（帶未升級就會有 overflow，

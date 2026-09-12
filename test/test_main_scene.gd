@@ -99,6 +99,64 @@ func test_mountain_top_at_full_miner_cap_still_in_mid_band() -> void:
 		cam, main._site_to_world(Vector2(main.c.site_foothill_pos.x, top_y)), viewport_h, "MountainTopAtCap"
 	)
 
+# ── VR-04：狂熱車場觸發／收尾煙霧測試 ─────────────────────
+# headless 冇真實觸控，唔測跟指／碰撞判分（留返俾實機），呢度淨係
+# 保證觸發流程、場景切換、幾十幀 tick 落嚟唔會拋 error。
+
+func test_frenzy_button_disabled_during_first_cooldown() -> void:
+	var scene: PackedScene = load("res://main.tscn")
+	main = scene.instantiate()
+	add_child_autofree(main)
+	assert_true(main._frenzy_button.disabled)
+	assert_string_contains(main._frenzy_button.text, "冷卻")
+
+func test_try_start_frenzy_swaps_placement_field_for_frenzy_yard() -> void:
+	var scene: PackedScene = load("res://main.tscn")
+	main = scene.instantiate()
+	add_child_autofree(main)
+
+	main.frenzy.cooldown_remaining = 0.0
+	main._try_start_frenzy()
+
+	assert_true(main.frenzy.active)
+	assert_false(main._placement_root.visible)
+	assert_true(main._frenzy_view.visible)
+
+func test_frenzy_ticks_for_full_duration_without_error_then_restores_placement() -> void:
+	var scene: PackedScene = load("res://main.tscn")
+	main = scene.instantiate()
+	add_child_autofree(main)
+
+	main.frenzy.cooldown_remaining = 0.0
+	main._try_start_frenzy()
+
+	var elapsed := 0.0
+	while elapsed < main.c.frenzy_duration_secs + 1.0:
+		main._process(0.5)
+		elapsed += 0.5
+
+	assert_false(main.frenzy.active)
+	assert_true(main._placement_root.visible)
+	assert_false(main._frenzy_view.visible)
+	assert_almost_eq(main.frenzy.cooldown_remaining, main.c.frenzy_cooldown_secs, 1.0)
+
+## 真係俾 SceneTree 行幾十個引擎幀（唔係手動 call _process()），等
+## FrenzyYardView._process() 自己嘅生成／車巡航／幀數取樣真正跑到，
+## 揸實幾十粒真 RigidBody3D 剛體物理落嚟都唔應該有 error。
+func test_frenzy_yard_spawns_real_rigidbody_debris_over_several_frames() -> void:
+	var scene: PackedScene = load("res://main.tscn")
+	main = scene.instantiate()
+	add_child_autofree(main)
+
+	main.frenzy.cooldown_remaining = 0.0
+	main._try_start_frenzy()
+
+	for i in range(30):
+		await get_tree().process_frame
+
+	assert_true(main.frenzy.active, "30 幀之內未夠 120 秒，狂熱應該仍然生效")
+	assert_gt(main._frenzy_view._debris_nodes.size(), 0, "應該已經生咗至少一粒剛體碎料")
+
 func test_summoned_miner_and_pile_debris_land_in_camera_mid_band() -> void:
 	var scene: PackedScene = load("res://main.tscn")
 	main = scene.instantiate()

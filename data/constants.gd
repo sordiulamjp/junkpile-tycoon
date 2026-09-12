@@ -110,7 +110,7 @@ enum Resource3 { CASH, COMPONENTS, ECO }
 ## -- 主戰車 / 碎片 --
 @export var car_capacity: int = 30          # TUNE
 @export var car_speed: float = 3.0          # TUNE
-@export var debris_rigidbody_cap: int = 150 # TUNE：待 VR-04 實測
+@export var debris_rigidbody_cap: int = 300 # TUNE：VR-04 實機（S8+，bench/fps_bench.tscn）100/200/300 平均 60.8/60.8fps、最低 58–59fps 全部 ≥40fps 門檻，見留言報告
 @export var ai_driver_eff: float = 0.4      # TUNE：AI 司機效率，差過玩家（docx 只講質性描述）
 
 ## -- 溢滿條 --
@@ -144,6 +144,71 @@ enum Resource3 { CASH, COMPONENTS, ECO }
 
 @export var pile_debris_spawn_interval_secs: float = 2.5 # TUNE：山腳每幾耐生一粒可剷碎料
 @export var belt_visual_travel_secs: float = 3.0          # TUNE：帶上碎料由 BELT_HEAD 行到 SMELTER 嘅視覺時間
+
+
+# ══════════════ D. VR-04 狂熱車場：物件／關卡數值（全部 TUNE） ══════════════
+# docx 對呢張只有質性描述（跟指、剷斗剛體堆、刺滾筒、UPGRADE 墊、窄岩浆＋
+# 木橋，見附件），冇實數；場地座標／gates／frenzy_* 已經喺 A5／B 部定咗，
+# 呢度淨係補返場景擺位同物件數值。跟 gate_y／gates／car_park_max_y 同一個
+# 世界座標系（同放置場共用一個 3D world，門盡頭即係 smelter_pos 附近）。
+
+## -- 車場範圍 --
+## 設計取態（docx 冇實數，淨係質性描述，見 frenzy_yard_view.gd 開頭
+## 註解）：car_park_max_y 讀做「車 y 嘅上限」，車由呢度開始不斷向落
+## （+car_descent_speed）掃落成個車場，中途經過滾筒／木橋／四道門，
+## 去到 yard_min_y 一輪completed 就返回頂再落——即「不斷落嚟緊嘅
+## 剷斗」，唔係揸住車留喺頂。呢個先解釋到點解木橋／滾筒都要車親身
+## 經過（唔即死＝車跌落岩浆唔會令狂熱完場，只加溢滿）。
+@export var yard_x_range: Vector2 = Vector2(-1.1, 2.3) # TUNE：跟指橫向可去嘅範圍，包晒四道門 x
+@export var yard_min_y: float = -1.9                   # TUNE：車場最深（近爐前），碎料過咗呢度即入爐兌現
+@export var yard_spawn_y: float = 0.02                 # TUNE：車＋碎料初始生成 y（< car_park_max_y）
+@export var car_descent_speed: float = 0.4             # TUNE：車向落嘅巡航速度，去到 yard_min_y 即刻返頂再落
+
+## -- 散幣／藍波（車場入面被推嘅剛體） --
+@export var scrap_coin_value: float = 2.0      # TUNE：散幣基礎值
+@export var scrap_barrel_value: float = 1.0    # TUNE：藍波基礎值（未過刺滾筒），故意平過散幣
+@export var scrap_gold_value: float = 6.0      # TUNE：藍波過咗刺滾筒轉做金幣之後嘅值
+@export var barrel_spawn_ratio: float = 0.35   # TUNE：生成池入面藍波佔比，其餘係散幣
+@export var debris_spawn_interval_secs: float = 0.08 # TUNE：狂熱期間隔幾耐生一粒新碎料（未撞 cap 先生）
+@export var debris_fake_fall_speed: float = 1.4      # TUNE：假物理（位置插值）落速，低階機用嚟代替剛體
+@export var debris_gravity_scale: float = 0.12       # TUNE：實機 playtest 發現預設重力（9.8）跌 spawn_y→yard_min_y 成個車場淨使 <1s，車追唔切；夾細落速等剛體有時間畀車撞／過滾筒／過門
+
+## -- 刺滾筒（藍波 → 金幣） --
+@export var spike_roller_pos: Vector2 = Vector2(0.65, -0.5)            # TUNE
+@export var spike_roller_half_extents: Vector3 = Vector3(0.5, 0.3, 0.25) # TUNE
+
+## -- 窄岩浆 + 木橋（車跌落唔即死，只加溢滿；溢滿上限見 A1 trash_meter_cap） --
+@export var lava_bridge_y: float = -0.78                        # TUNE
+@export var lava_bridge_safe_x_range: Vector2 = Vector2(-0.22, 0.22) # TUNE：木橋安全闊度
+@export var lava_fall_overflow_amount: float = 6.0              # TUNE：跌一次溢滿條加幾多
+@export var lava_fall_stun_secs: float = 0.6                    # TUNE：跌落之後車短暫定住先返回橋面
+
+## -- UPGRADE 墊（即換模型，灰模用色塊／大細分身分，冇實際換 mesh） --
+@export var upgrade_pad_pos: Vector2 = Vector2(-0.9, -0.95) # TUNE
+@export var upgrade_pad_rearm_secs: float = 6.0             # TUNE：同一墊重複觸發嘅冷卻
+@export var car_upgrade_tiers: Array[Dictionary] = [
+	{"name": "拖拉機", "scale": 1.0, "speed_mult": 1.0, "push_mult": 1.0, "color": Color(0.55, 0.15, 0.15)},
+	{"name": "剷泥車", "scale": 1.15, "speed_mult": 1.15, "push_mult": 1.3, "color": Color(0.75, 0.55, 0.1)},
+	{"name": "裝甲車", "scale": 1.3, "speed_mult": 1.3, "push_mult": 1.7, "color": Color(0.35, 0.55, 0.75)},
+] # TUNE：UPGRADE 墊逐級升嘅三級
+
+## -- 齒輪（狂熱期間每 gear_drop_interval_secs 一粒，只計玩家親手攔截） --
+@export var gear_component_reward: float = 1.0   # TUNE：每粒齒輪兌 Components
+@export var gear_pickup_window_secs: float = 4.0 # TUNE：粒齒輪冇喺呢段時間內截到就消失，唔計分
+
+## -- 幀數自動降級 --
+## S8+ 實機 bench/fps_bench.tscn 報告（見留言）：100/200/300 個碎片
+## 剛體平均 fps 分別係 57.6／60.8／60.8，最低 fps 58–59（100 嗰組首
+## 1 秒 warmup 之後見過一次 1.0fps 嘅離群值，懷疑係首次生成嗰刻嘅
+## GC／shader compile 一次性 hitch，200／300 兩組冇再見過，唔計入
+## 「持續」低幀）。三組全部遠高於 40fps 門檻，所以 debris_rigidbody_cap
+## 定 300（見上面）；降級梯度留返做真正落場（HUD／belt tween／齒輪／
+## 滾筒轉動一齊跑）嗰陣嘅安全網，唔係跟返 bench 嗰三個純剛體數。
+@export var frenzy_fps_sample_interval_secs: float = 1.0 # TUNE：隔幾耐取樣一次 fps
+@export var frenzy_fps_low_threshold: float = 40.0       # TUNE：docx 驗收線（< 40fps 自動減粒子／碎片）
+@export var frenzy_fps_low_streak_to_degrade: int = 2    # TUNE：連續幾多次低於門檻先降級，避免單幀抖動
+@export var frenzy_debris_degrade_steps: Array[int] = [200, 100, 50] # TUNE：debris_rigidbody_cap（tier 0＝300）之後逐級降嘅上限
+@export var frenzy_fake_physics_min_tier: int = 3 # TUNE：跌到呢一級（0=debris_rigidbody_cap，1..=frenzy_debris_degrade_steps）先轉用假物理（位置插值代替剛體）
 
 
 # ══════════════════════════ 計算方法 ══════════════════════════
