@@ -682,3 +682,93 @@ func test_prestige_reset_updates_income_multiplier_and_hud() -> void:
 		"HUD 威望門檻應該跟返新嘅 prestige_count 算"
 	)
 	assert_false(main._prestige_button.visible, "重置完未再夠新門檻，掣應該收返")
+
+	# Review 意見（round 1）：確認面板講「永久收入倍率 ×1.0 → ×1.5」，實際
+	# 即時收入（current_income_rate()／tick()）一定要食返呢個倍率，唔淨係
+	# HUD 門檻／文字講吓。
+	main.state.miner_count = 4
+	main.state.belt_level = 6
+	var rate_with_bonus: float = main.state.current_income_rate()
+	main.state.income_multiplier = 1.0
+	var rate_without_bonus: float = main.state.current_income_rate()
+	main.state.income_multiplier = Prestige.income_multiplier(main.c, main._prestige_count)
+	assert_gt(rate_without_bonus, 0.0, "測試前提：呢個礦工／帶配置應該有非零放置收入")
+	assert_almost_eq(
+		rate_with_bonus, rate_without_bonus * 1.5, 0.01,
+		"重置一次之後，即時放置收入應該實際 ×1.5（唔係淨係 HUD 文字話 ×1.5）"
+	)
+
+## 驗收「殺 App 重開見到礦工」：_build_world() 淨係起空嘅 _miners_root，
+## 之前淨靠 _try_summon_miner() 先會生礦工 node——讀存檔冇行過呢條 path，
+## 殺 App 重開 HUD 話「礦工 3/12」但山腳一隻機械人都冇（Review 意見）。
+func test_loaded_save_respawns_miner_visuals() -> void:
+	var seed_state := SaveManager.default_state()
+	seed_state["miners"] = 3
+	SaveManager.save_state(seed_state)
+
+	var scene: PackedScene = load("res://main.tscn")
+	main = scene.instantiate()
+	add_child_autofree(main)
+
+	assert_eq(main.state.miner_count, 3)
+	assert_eq(main._miners_root.get_child_count(), 3, "讀返嚟嘅礦工數應該一齊生返晒啲 node，唔係得個空 root")
+
+## 驗收「威望門檻計埋狂熱收入」：FrenzyYardView._score_and_free() 過爐嗰陣
+## 直接加落 state.cash（唔經 GameState.tick()／scoop_ore()），Review 意見：
+## _on_frenzy_ended() 冧咗補 frenzy.cash_earned 落 _lifetime_cash 會令
+## 威望進度條漏計狂熱嗰份（放置收入 ×5 ×120s，唔係小數目）。
+func test_frenzy_cash_earned_counts_toward_lifetime_cash() -> void:
+	var scene: PackedScene = load("res://main.tscn")
+	main = scene.instantiate()
+	add_child_autofree(main)
+
+	main.frenzy.cooldown_remaining = 0.0
+	main._try_start_frenzy()
+	# 模擬狂熱期間過爐賺咗 500（同 frenzy_yard_view.gd._score_and_free()
+	# 嘅實際行為一致：cash 同 frenzy.cash_earned 一齊加）。
+	main.frenzy.cash_earned = 500.0
+	main.state.cash += 500.0
+	var lifetime_before: float = main._lifetime_cash
+
+	main._on_frenzy_ended()
+
+	assert_almost_eq(
+		main._lifetime_cash, lifetime_before + 500.0, 0.01, "狂熱賺嘅 Cash 應該計入終身 Cash（威望門檻）"
+	)
+
+## 迴歸測試：main.gd 讀檔套用 state.income_multiplier 嗰下，一定要喺攞
+## OfflineSettlement.settle() 用嗰個 raw rate 之後先做——唔係就
+## Prestige.income_multiplier() 會喺 main.gd 度乘一次、settle() 入面又
+## 再乘一次，變咗 ×2.25（1.5²）唔係 issue 要求嘅 ×1.5。用同一份存檔
+## （淨係 prestige_count 唔同）比較兩次離線結算金額嚟斷言冇計多咗。
+func test_offline_settlement_does_not_double_apply_prestige_multiplier() -> void:
+	var base_last_save: float = Time.get_unix_time_from_system() - 3600.0
+	var scene: PackedScene = load("res://main.tscn")
+
+	var no_reset := SaveManager.default_state()
+	no_reset["last_save_unix"] = base_last_save
+	no_reset["miners"] = 3
+	no_reset["belt_level"] = 5
+	no_reset["prestige_count"] = 0
+	SaveManager.save_state(no_reset)
+	main = scene.instantiate()
+	add_child_autofree(main)
+	var yield_no_reset: float = main._pending_offline_result["cash_yield"]
+	main.free()
+
+	var one_reset := SaveManager.default_state()
+	one_reset["last_save_unix"] = base_last_save
+	one_reset["miners"] = 3
+	one_reset["belt_level"] = 5
+	one_reset["prestige_count"] = 1
+	SaveManager.save_state(one_reset)
+	main = scene.instantiate()
+	add_child_autofree(main)
+	var yield_one_reset: float = main._pending_offline_result["cash_yield"]
+
+	assert_gt(yield_no_reset, 0.0, "測試前提：冇威望都應該有離線收成")
+	var expected: float = yield_no_reset * 1.5
+	assert_almost_eq(
+		yield_one_reset, expected, expected * 0.02,
+		"重置一次嘅離線結算應該啱啱 ×1.5（如果 income_multiplier 喺 main.gd 度計多咗一次，呢度會變咗 ×2.25）"
+	)

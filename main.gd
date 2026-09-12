@@ -155,11 +155,21 @@ func _ready() -> void:
 	# 已經睇到啱嘅數值。離線結算面板要等 _build_hud() 起完先彈（見底）。
 	var save_exists := FileAccess.file_exists(SaveManager.SAVE_PATH)
 	var loaded_state: Dictionary = {}
+	var offline_raw_rate := 0.0
 	if save_exists:
 		loaded_state = SaveManager.load_state()
 		_apply_loaded_state(loaded_state)
+		# VR-05b review fix：呢一刻 state.income_multiplier 仲係預設 1.0
+		# （下一行先 set），current_income_rate() 攞到嘅係未計威望嘅 raw
+		# rate。一定要喺套用威望倍率之前攞——OfflineSettlement.settle()
+		# 自己會再用 loaded_state 嘅 prestige_count 乘多一次
+		# Prestige.income_multiplier()，如果呢度已經包埋倍率就會計多次
+		# （見 _run_offline_settlement()）。
+		offline_raw_rate = state.current_income_rate()
+		state.income_multiplier = Prestige.income_multiplier(c, _prestige_count)
 
 	_build_world()
+	_spawn_loaded_miners() # VR-05b review fix：讀檔補返已召喚礦工嘅 node（新玩家 miner_count=0，冧一世都唔會行）
 	_build_hud()
 
 	_frenzy_view = FrenzyYardView.new(c, state, frenzy)
@@ -191,10 +201,11 @@ func _ready() -> void:
 
 	# VR-05b：離線結算要等 HUD（連埋離線面板本身）起晒先可以彈，所以擺
 	# _ready() 最尾。用返上面讀檔嗰刻嘅 loaded_state（未套用之前嘅原始
-	# 存檔，帶住上次嘅 last_save_unix），OfflineSettlement.settle() 自己
-	# 計「經過咗幾耐」。
+	# 存檔，帶住上次嘅 last_save_unix）同埋套用威望倍率之前攞低嘅
+	# offline_raw_rate，OfflineSettlement.settle() 自己計「經過咗幾耐」
+	# 同套威望倍率。
 	if save_exists:
-		_run_offline_settlement(loaded_state)
+		_run_offline_settlement(loaded_state, offline_raw_rate)
 
 
 ## VR-05b：退到背景／關閉視窗一定要存檔（唔係殺 App 嗰一刻嘅進度會冚
@@ -283,15 +294,18 @@ func _save_game() -> void:
 	SaveManager.save_state(_build_save_state())
 
 ## 開機讀到存檔（`loaded` 係讀檔嗰刻、套用之前嘅原始 dict，帶住上次嘅
-## last_save_unix）就行 OfflineSettlement.settle()：用而家（套用完存檔
-## 之後）嘅 state.current_income_rate() 做「離線嗰刻嘅放置收入」近似
-## 值——呢個 script 冇另外記低「熄機一刻」嘅收入率，用復原返嗰刻嘅礦工／
-## 升級數值計，符合 VR-05 原本設計嘅呼叫方式（settle() 淨係唔管「呢個
-## rate 點嚟」）。結果暫存喺 _pending_offline_result，等玩家喺面板撳
-## 「收下」先真正入帳（見 _on_offline_claim_pressed()）。
-func _run_offline_settlement(loaded: Dictionary) -> void:
+## last_save_unix）就行 OfflineSettlement.settle()：用復原返嗰刻嘅礦工／
+## 升級數值計嘅「離線嗰刻嘅放置收入」近似值——呢個 script 冇另外記低
+## 「熄機一刻」嘅收入率，符合 VR-05 原本設計嘅呼叫方式（settle() 淨係
+## 唔管「呢個 rate 點嚟」）。`raw_rate` 一定要係未計威望倍率嗰個（`_ready()`
+## 讀檔嗰刻、套用 state.income_multiplier 之前攞低），因為 settle() 自己
+## 會再用 `loaded` 嘅 prestige_count 乘一次 Prestige.income_multiplier()
+## ——傳個已經計咗威望嘅 rate 落嚟會令威望倍率計多次。結果暫存喺
+## _pending_offline_result，等玩家喺面板撳「收下」先真正入帳（見
+## _on_offline_claim_pressed()）。
+func _run_offline_settlement(loaded: Dictionary, raw_rate: float) -> void:
 	var now_unix := Time.get_unix_time_from_system()
-	var result := OfflineSettlement.settle(c, loaded, now_unix, state.current_income_rate())
+	var result := OfflineSettlement.settle(c, loaded, now_unix, raw_rate)
 	_pending_offline_result = result
 	_show_offline_report(result)
 
@@ -302,19 +316,25 @@ func _show_offline_report(result: Dictionary) -> void:
 	_offline_yield_label.text = "+%s" % _fmt_num(result["cash_yield"])
 	_offline_panel.visible = true
 
-## 撳「收下」：真正將 settle() 算好嘅 cash／lifetime_cash 入帳，補
-## EventLog「offline_claim」事件（data/offline_settlement.gd 留低嘅
-## 呼叫點註解），即刻多存一次檔（等離線收成都受「殺 App 資源不變」
-## 保護，唔使等落一個 30 秒 timer 先落實）。
+## 撳「收下」：真正將 settle() 算好嘅 cash_yield 入帳，補 EventLog
+## 「offline_claim」事件（data/offline_settlement.gd 留低嘅呼叫點註解），
+## 即刻多存一次檔（等離線收成都受「殺 App 資源不變」保護，唔使等落一個
+## 30 秒 timer 先落實）。
+##
+## Review 意見：唔可以直接 `state.cash = new_state["cash"]` 覆寫——面板
+## 開住嗰陣 `_process()` 照樣 tick 緊，state.cash 可能已經比 settle()
+## 嗰刻嘅快照多咗少少（玩家繼續放置收入），覆寫會冚走呢部分。改用
+## `+= cash_yield`（只加離線嗰份），唔理面板開住幾耐都唔會流失緊行緊嘅
+## 實時收入。
 func _on_offline_claim_pressed() -> void:
 	if not _pending_offline_result.is_empty():
-		var new_state: Dictionary = _pending_offline_result["state"]
-		state.cash = float(new_state["cash"])
-		_lifetime_cash = float(new_state["lifetime_cash"])
-		_last_save_unix = float(new_state["last_save_unix"])
+		var cash_yield: float = _pending_offline_result["cash_yield"]
+		state.cash += cash_yield
+		_lifetime_cash += cash_yield
+		_last_save_unix = float(_pending_offline_result["state"]["last_save_unix"])
 		EventLog.log_event("offline_claim", {
 			"elapsed_secs": _pending_offline_result["elapsed_secs"],
-			"cash_yield": _pending_offline_result["cash_yield"],
+			"cash_yield": cash_yield,
 		})
 		_pending_offline_result = {}
 	_offline_panel.visible = false
@@ -336,6 +356,9 @@ func _do_prestige_reset() -> void:
 	state.pile_debris.clear()
 	_lifetime_cash = float(new_state["lifetime_cash"])
 	_prestige_count = int(new_state["prestige_count"])
+	# VR-05b review fix：即時收入（tick()／current_income_rate()）要即刻
+	# 食返新嘅威望倍率，唔淨係 HUD 門檻／確認面板嘅文字講吓。
+	state.income_multiplier = Prestige.income_multiplier(c, _prestige_count)
 
 	for child in _miners_root.get_children():
 		child.queue_free()
@@ -398,6 +421,11 @@ func _try_start_frenzy() -> void:
 func _on_frenzy_ended() -> void:
 	EventLog.log_event("frenzy_end", {"eco_bonus": frenzy.eco_bonus_earned})
 	state.eco += frenzy.eco_bonus_earned
+	# VR-05b review fix：狂熱過爐嘅 Cash 由 FrenzyYardView._score_and_free()
+	# 直接加落 state.cash（唔經 GameState.tick()／scoop_ore()），冇呢句嘅話
+	# 呢部分永遠唔會計入 _lifetime_cash，威望進度條會少計成截（狂熱係
+	# 放置收入 ×5 ×120s，唔係小數目）。
+	_lifetime_cash += frenzy.cash_earned
 	_frenzy_view.stop()
 	_save_game() # VR-05b：狂熱完場即存檔
 
@@ -811,21 +839,41 @@ func _add_tier_clutter(box_size: Vector3, box_pos: Vector3) -> void:
 ## 圍住山腳分佈嘅半徑——純美術造型常數（見 _place_miner_around_foothill()）。
 const MINER_RING_RADIUS := 0.5
 
-func _try_summon_miner() -> void:
-	if not state.summon_miner():
-		return
+## 生一隻機械人礦工 node 落 _miners_root，圍住山腳擺好位＋開始敲擊動畫。
+## `_try_summon_miner()`（單粒，召喚嗰刻）同 `_spawn_loaded_miners()`
+## （開機讀存檔，一次過補晒已經召喚落嘅幾隻）共用，避免兩處各自維護一份
+## 「點樣起一隻礦工」嘅邏輯。
+func _spawn_miner_visual(index: int) -> void:
 	# VR-06：機械人 glTF（CREDITS.md）origin 喺腳底（y=0），同舊盒仔置中
 	# 唔同，企喺 y=0.1 貼地；盒仔 fallback 個樣會企得稍為浮啲，接受。
 	var miner := VisualFactory.make_miner()
-	miner.name = "Miner%d" % state.miner_count
+	miner.name = "Miner%d" % (index + 1)
 	# 一定要先 add_child() 先至叫 _place_miner_around_foothill()／
 	# _animate_mining()——`look_at()` 同 `create_tween()` 兩個都要求個
 	# node 已經喺 scene tree 入面（唔係就 engine 拋 "!is_inside_tree()"）。
 	_miners_root.add_child(miner)
-	_place_miner_around_foothill(miner, state.miner_count - 1)
+	_place_miner_around_foothill(miner, index)
 	_animate_mining(miner)
+
+func _try_summon_miner() -> void:
+	if not state.summon_miner():
+		return
+	_spawn_miner_visual(state.miner_count - 1)
 	_rebuild_foothill_stack()
 	_save_game() # VR-05b：召喚即存檔
+
+## VR-05b review fix：開機讀到存檔已經有嘅礦工要即刻補返晒啲 node——
+## `_build_world()` 淨係起空嘅 `_miners_root`，之前淨靠
+## `_try_summon_miner()` 先會生 node，讀檔冇行過呢條 path，殺 App 重開
+## HUD 話「礦工 3/12」但山腳一隻機械人都冇（實機驗收會即刻見到）。梯田
+## 已經開採嘅色（`_rebuild_foothill_stack()`）唔使呢度理——`_build_world()`
+## 起 `_foothill_root` 嗰陣已經讀緊 `state.miner_count`（讀檔喺
+## `_build_world()` 之前套用），淨係缺咗礦工 node 本身。新玩家
+## state.miner_count＝0，呢個 loop 冧一世都唔會行，可以每次都照叫，唔使
+## 額外 if save_exists 判斷。
+func _spawn_loaded_miners() -> void:
+	for i in range(state.miner_count):
+		_spawn_miner_visual(i)
 
 ## 用戶實機回饋（round2 第 5 點）：召喚後嘅礦工「圍住山腳分佈」，唔係
 ## 全部堆喺同一個原點嘅少少 jitter。用極座標分佈喺山腳前面半圈，面朝住
