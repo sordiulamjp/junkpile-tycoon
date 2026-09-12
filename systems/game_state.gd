@@ -18,6 +18,14 @@ var miner_level: int = 0     # 礦工等級（無上限），速度 ×c.miner_le
 var belt_level: int = 1      # 帶等級，1~c.belt_level_cap（Lv10 封頂）
 var refine_level: int = 0    # 精煉等級（無上限），礦值 ×c.refine_value_mult／級
 
+## VR-05b（ALTA-216 review）：威望重置嘅永久收入倍率（data/prestige.gd
+## Prestige.income_multiplier()）。呢度純粹係一個外部套落嚟嘅乘數欄位，
+## 唔係新嘅數值調參——公式／基礎數值全部仲係 constants.gd／呢個檔案本身
+## 嘅其他方法計，main.gd 負責喺 _prestige_count 改變嗰陣 set() 呢個欄位
+## （見 main.gd _ready()／_do_prestige_reset()）。預設 1.0＝冇威望加成，
+## 唔影響任何冇顯式 set 過呢個欄位嘅舊呼叫方／測試。
+var income_multiplier: float = 1.0
+
 ## 山腳未撿嘅碎料（等緊玩家手動 scoop）；同帶上面嘅碎料係兩個獨立池，
 ## 已經送咗上帶嘅唔會再入返呢個 array——即「已 belted 碎料不可 scoop」。
 var pile_debris: Array[String] = []
@@ -164,10 +172,15 @@ func scoop_ore(ore_key: String) -> float:
 
 ## 觸發嗰刻嘅放置收入（Cash/s），穩態值——同 tick() 用同一條夾帶產能
 ## 上限嘅公式，但唔帶 delta，俾 VR-04 狂熱計「收益基準＝放置收入 ×5 ×120s」用。
+## VR-05b review：連 income_multiplier（威望倍率）都計埋，同 tick() 一致
+## ——main.gd 讀呢個做「威望重置前」嘅 raw rate 嗰刻，income_multiplier
+## 仲係預設 1.0（未 set），所以呢個 * income_multiplier 對嗰個呼叫點冇
+## 額外效果，唔會累到離線結算（OfflineSettlement.settle() 自己嗰份威望
+## 倍率）計多次，詳見 main.gd _ready() 嘅註解。
 func current_income_rate() -> float:
 	var mined_rate: float = float(miner_count) * miner_ore_rate()
 	var fed_rate: float = minf(mined_rate, belt_capacity())
-	return fed_rate * average_ore_value("foothill") * refine_multiplier()
+	return fed_rate * average_ore_value("foothill") * refine_multiplier() * income_multiplier
 
 
 # ══════════════════════ 每幀模擬：礦工 → 帶（上限）→ 爐 → Cash ══════════════════════
@@ -180,7 +193,7 @@ func tick(delta: float) -> Dictionary:
 	var fed := minf(mined, cap)
 	var overflow := maxf(mined - fed, 0.0)
 	var ore_value := average_ore_value("foothill")
-	var cash_gain := fed * ore_value * refine_multiplier()
+	var cash_gain := fed * ore_value * refine_multiplier() * income_multiplier
 	var eco_gain := fed * c.eco_gain_hazard_per_item
 	cash += cash_gain
 	eco += eco_gain
