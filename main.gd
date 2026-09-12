@@ -32,6 +32,7 @@ const PILE_CHUNK_TAP_HIT_SIZE := 0.4
 
 var c: GameConstants
 var state: GameState
+var frenzy: FrenzyState
 var rng := RandomNumberGenerator.new()
 
 var _belt_visual_accum: float = 0.0
@@ -39,10 +40,12 @@ var _pile_spawn_timer: Timer
 
 # -- 3D 節點 --
 var _world: Node3D
+var _placement_root: Node3D # VR-04：狂熱期間成個放置場收埋，畀車場借同一個 camera
 var _foothill_root: Node3D
 var _miners_root: Node3D
 var _pile_root: Node3D
 var _belt_items_root: Node3D
+var _frenzy_view: FrenzyYardView
 
 # -- HUD 節點 --
 var _lock_label: Label
@@ -55,17 +58,23 @@ var _summon_button: Button
 var _belt_upgrade_button: Button
 var _miner_upgrade_button: Button
 var _refine_upgrade_button: Button
+var _frenzy_button: Button
 
 
 func _ready() -> void:
 	c = GameConstants.new()
 	state = GameState.new(c)
+	frenzy = FrenzyState.new(c)
 	rng.randomize()
 
 	get_viewport().physics_object_picking = true
 
 	_build_world()
 	_build_hud()
+
+	_frenzy_view = FrenzyYardView.new(c, state, frenzy)
+	_frenzy_view.name = "FrenzyYard"
+	_world.add_child(_frenzy_view)
 
 	_pile_spawn_timer = Timer.new()
 	_pile_spawn_timer.wait_time = c.pile_debris_spawn_interval_secs
@@ -82,7 +91,28 @@ func _process(delta: float) -> void:
 	while _belt_visual_accum >= 1.0:
 		_belt_visual_accum -= 1.0
 		_spawn_belt_visual_item()
+
+	var events: Dictionary = frenzy.tick(delta)
+	if events["gear_spawn"]:
+		_frenzy_view.spawn_gear()
+	if events["ended"]:
+		_on_frenzy_ended()
+
 	_refresh_hud()
+
+
+# ══════════════════════ VR-04：狂熱車場觸發 ══════════════════════
+
+func _try_start_frenzy() -> void:
+	if not frenzy.start(state.current_income_rate()):
+		return
+	_placement_root.visible = false
+	_frenzy_view.start()
+
+func _on_frenzy_ended() -> void:
+	state.eco += frenzy.eco_bonus_earned
+	_frenzy_view.stop()
+	_placement_root.visible = true
 
 
 # ══════════════════════ 建場景（灰模） ══════════════════════
@@ -162,10 +192,16 @@ func _build_world() -> void:
 	light.rotation_degrees = Vector3(-50.0, -30.0, 0.0)
 	_world.add_child(light)
 
+	# VR-04：放置場成組收埋喺呢個 root 底下，狂熱期間 toggle
+	# visible 就成組隱藏／還原，唔使逐個節點記低顯示狀態。
+	_placement_root = Node3D.new()
+	_placement_root.name = "PlacementField"
+	_world.add_child(_placement_root)
+
 	_foothill_root = Node3D.new()
 	_foothill_root.name = "Foothill"
 	_foothill_root.position = _site_to_world(c.site_foothill_pos)
-	_world.add_child(_foothill_root)
+	_placement_root.add_child(_foothill_root)
 	_rebuild_foothill_stack()
 
 	var belt_track := _make_box(
@@ -175,17 +211,17 @@ func _build_world() -> void:
 	var belt_mid := (c.belt_head_pos + c.smelter_pos) * 0.5
 	belt_track.position = _site_to_world(belt_mid)
 	belt_track.look_at_from_position(belt_track.position, _site_to_world(c.smelter_pos), Vector3.UP)
-	_world.add_child(belt_track)
+	_placement_root.add_child(belt_track)
 
 	var smelter := _make_box(Vector3(0.5, 0.5, 0.5), Color(0.75, 0.35, 0.1))
 	smelter.name = "Smelter"
 	smelter.position = _site_to_world(c.smelter_pos, 0.25)
-	_world.add_child(smelter)
+	_placement_root.add_child(smelter)
 
 	var warehouse := _make_box(Vector3(0.6, 0.45, 0.45), Color(0.2, 0.4, 0.65))
 	warehouse.name = "Warehouse"
 	warehouse.position = _site_to_world(c.warehouse_pos, 0.22)
-	_world.add_child(warehouse)
+	_placement_root.add_child(warehouse)
 
 	# 礦工／山腳碎料嘅本地座標係「相對山腳」嘅少少 jitter；root 本身要
 	# 擺喺 site_foothill_pos，唔係就會全部跌喺世界原點（同底部 HUD
@@ -194,16 +230,16 @@ func _build_world() -> void:
 	_miners_root = Node3D.new()
 	_miners_root.name = "MinersRoot"
 	_miners_root.position = _site_to_world(c.site_foothill_pos)
-	_world.add_child(_miners_root)
+	_placement_root.add_child(_miners_root)
 
 	_pile_root = Node3D.new()
 	_pile_root.name = "PileRoot"
 	_pile_root.position = _site_to_world(c.site_foothill_pos)
-	_world.add_child(_pile_root)
+	_placement_root.add_child(_pile_root)
 
 	_belt_items_root = Node3D.new()
 	_belt_items_root.name = "BeltItemsRoot"
-	_world.add_child(_belt_items_root)
+	_placement_root.add_child(_belt_items_root)
 
 ## 廢料山（往上長）：山腳一個底座 + 每召喚一個礦工加一層方塊，
 ## 視覺上表達「開採緊、堆越嚟越高」。上限同召喚上限一致（12）。
@@ -382,6 +418,11 @@ func _build_hud() -> void:
 	_summon_button.pressed.connect(_try_summon_miner)
 	bottom_vbox.add_child(_summon_button)
 
+	# VR-04：免費觸發，冷卻／倒數文案喺 _refresh_hud() 更新。
+	_frenzy_button = Button.new()
+	_frenzy_button.pressed.connect(_try_start_frenzy)
+	bottom_vbox.add_child(_frenzy_button)
+
 	var upgrades_row := HBoxContainer.new()
 	bottom_vbox.add_child(upgrades_row)
 
@@ -420,6 +461,16 @@ func _refresh_hud() -> void:
 
 	_refine_upgrade_button.text = "精煉 Lv%d → 升級 %s" % [state.refine_level, _fmt_num(state.next_refine_level_cost())]
 	_refine_upgrade_button.disabled = state.cash < state.next_refine_level_cost()
+
+	if frenzy.active:
+		_frenzy_button.text = "狂熱中 %ds" % int(ceil(frenzy.time_remaining))
+		_frenzy_button.disabled = true
+	elif frenzy.can_start():
+		_frenzy_button.text = "狂熱！（免費）"
+		_frenzy_button.disabled = false
+	else:
+		_frenzy_button.text = "狂熱冷卻中 %ds" % int(ceil(frenzy.cooldown_remaining))
+		_frenzy_button.disabled = true
 
 ## 大數字縮寫成 K/M/B，HUD 底 22% 高度先放得落。
 func _fmt_num(n: float) -> String:

@@ -153,15 +153,24 @@ enum Resource3 { CASH, COMPONENTS, ECO }
 # 世界座標系（同放置場共用一個 3D world，門盡頭即係 smelter_pos 附近）。
 
 ## -- 車場範圍 --
+## 設計取態（docx 冇實數，淨係質性描述，見 frenzy_yard_view.gd 開頭
+## 註解）：car_park_max_y 讀做「車 y 嘅上限」，車由呢度開始不斷向落
+## （+car_descent_speed）掃落成個車場，中途經過滾筒／木橋／四道門，
+## 去到 yard_min_y 一輪completed 就返回頂再落——即「不斷落嚟緊嘅
+## 剷斗」，唔係揸住車留喺頂。呢個先解釋到點解木橋／滾筒都要車親身
+## 經過（唔即死＝車跌落岩浆唔會令狂熱完場，只加溢滿）。
 @export var yard_x_range: Vector2 = Vector2(-1.1, 2.3) # TUNE：跟指橫向可去嘅範圍，包晒四道門 x
 @export var yard_min_y: float = -1.9                   # TUNE：車場最深（近爐前），碎料過咗呢度即入爐兌現
 @export var yard_spawn_y: float = 0.02                 # TUNE：車＋碎料初始生成 y（< car_park_max_y）
+@export var car_descent_speed: float = 0.4             # TUNE：車向落嘅巡航速度，去到 yard_min_y 即刻返頂再落
 
 ## -- 散幣／藍波（車場入面被推嘅剛體） --
 @export var scrap_coin_value: float = 2.0      # TUNE：散幣基礎值
 @export var scrap_barrel_value: float = 1.0    # TUNE：藍波基礎值（未過刺滾筒），故意平過散幣
 @export var scrap_gold_value: float = 6.0      # TUNE：藍波過咗刺滾筒轉做金幣之後嘅值
 @export var barrel_spawn_ratio: float = 0.35   # TUNE：生成池入面藍波佔比，其餘係散幣
+@export var debris_spawn_interval_secs: float = 0.08 # TUNE：狂熱期間隔幾耐生一粒新碎料（未撞 cap 先生）
+@export var debris_fake_fall_speed: float = 1.4      # TUNE：假物理（位置插值）落速，低階機用嚟代替剛體
 
 ## -- 刺滾筒（藍波 → 金幣） --
 @export var spike_roller_pos: Vector2 = Vector2(0.65, -0.5)            # TUNE
