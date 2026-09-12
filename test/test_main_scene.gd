@@ -157,6 +157,30 @@ func test_frenzy_yard_spawns_real_rigidbody_debris_over_several_frames() -> void
 	assert_true(main.frenzy.active, "30 幀之內未夠 120 秒，狂熱應該仍然生效")
 	assert_gt(main._frenzy_view._debris_nodes.size(), 0, "應該已經生咗至少一粒剛體碎料")
 
+## Review 意見（f457644 review）：_recolor_debris() 曾經假設 body 一定
+## 係 RigidBody3D（mesh 喺 child(0)），但假物理路徑 _spawn_fake_debris()
+## 生嘅 node 本身就係 MeshInstance3D，冇 child——藍波一過滾筒就
+## get_child(0) 越界 + 對 null 存取 material_override，SCRIPT ERROR。
+## headless 都行到，唔使實機先重現／驗證。
+func test_fake_physics_debris_recolors_across_roller_without_error() -> void:
+	var scene: PackedScene = load("res://main.tscn")
+	main = scene.instantiate()
+	add_child_autofree(main)
+
+	main.frenzy.cooldown_remaining = 0.0
+	main._try_start_frenzy()
+	main.frenzy.debris_tier = main.c.frenzy_fake_physics_min_tier
+	assert_true(main.frenzy.is_fake_physics())
+
+	var roller_pos := Vector3(main.c.spike_roller_pos.x, main.c.spike_roller_pos.y, 0.0)
+	main._frenzy_view._spawn_fake_debris("barrel", roller_pos)
+	var node: Node3D = main._frenzy_view._fake_debris_nodes.back()
+	assert_eq(node.get_child_count(), 0, "假物理 node 本身就係 MeshInstance3D，冇 child")
+
+	main._frenzy_view._update_fake_debris(0.016)
+
+	assert_eq(node.get_meta("kind"), "gold", "藍波過咗滾筒應該轉咗做金幣（唔係停留喺 barrel）")
+
 func test_summoned_miner_and_pile_debris_land_in_camera_mid_band() -> void:
 	var scene: PackedScene = load("res://main.tscn")
 	main = scene.instantiate()
