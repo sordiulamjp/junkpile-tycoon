@@ -21,6 +21,15 @@ extends Node3D
 const FOOTHILL_BASE_HEIGHT := 0.3
 const FOOTHILL_TIER_HEIGHT := 0.16
 
+## 山腳碎料嘅 tap 拾取範圍——刻意獨立於 0.12 嘅視覺盒仔尺寸（ALTA-195，
+## 實機驗收見 Reviewer 喺 ALTA-150 嘅提醒）。720×960 下依家個相機要一次
+## 框晒山腳到山頂長到盡（12 層），令 1 世界單位≈107px，跟視覺尺寸嘅
+## Area3D 淨得 ~13px 闊——遠細過 44px 呢類慣常 tap 目標下限，實機撳唔中。
+## 呢度冇改鏡頭（12 層山高仍然要一次框晒，中層帶／爐／倉先唔會跌出
+## 畫面），淨係將拾取形狀獨立放大到 ~43px（0.4 世界單位），視覺盒仔
+## 大細不變。
+const PILE_CHUNK_TAP_HIT_SIZE := 0.4
+
 var c: GameConstants
 var state: GameState
 var rng := RandomNumberGenerator.new()
@@ -253,7 +262,7 @@ func _spawn_pile_visual(ore_key: String) -> void:
 	area.input_ray_pickable = true
 	var col := CollisionShape3D.new()
 	var shape := BoxShape3D.new()
-	shape.size = Vector3(0.12, 0.12, 0.12)
+	shape.size = Vector3.ONE * PILE_CHUNK_TAP_HIT_SIZE
 	col.shape = shape
 	area.add_child(col)
 	chunk.add_child(area)
