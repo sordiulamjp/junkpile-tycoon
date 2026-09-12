@@ -8,7 +8,8 @@
 - 出 APK（VM headless，第一次或者 `android/` 冇嘢要加 `--install-android-build-template`）：
   `godot --headless --install-android-build-template --export-debug "Android" build/junkpile-tycoon.apk`
 - `addons/admob/`：Poing Studios AdMob plugin（MIT，[poingstudios/godot-admob-plugin](https://github.com/poingstudios/godot-admob-plugin)），已驗證對準 Godot 4.7.2；`ads/ad_manager.gd`
-  包裝 UMP 同意表格 + 一個 rewarded 測試廣告位，`ads/ad_test.tscn` 依家係 `run/main_scene`（ALTA-154
-  驗證用，VR-03 灰模做完應該搬返 `main.tscn`）
+  包裝 UMP 同意表格 + 一個 rewarded 測試廣告位。`ads/ad_test.tscn`（ALTA-154 驗證畫面，測試
+  rewarded 廣告用）冇搶 `run/main_scene`——依家淨係想睇/測就用 Godot editor 開個 scene 撳
+  F6（Run Current Scene），或者出 APK 前臨時將 `run/main_scene` 改去佢
 
 設計總帳同 PLAN 見 Multica 父 issue。
