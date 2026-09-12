@@ -331,6 +331,9 @@ func test_foothill_shows_full_terrace_before_any_miner_summoned() -> void:
 ## 完全睇唔到）。改咗擺喺山腳前面地面一圈、半徑大過梯田最闊嘅底座
 ## 之後，呢個測試斷言生成位一定喺呢個安全半徑範圍入面（唔淨係查
 ## PrismMesh size，仲要查實際擺位冇陷落梯田幾何）。
+## Review 意見（round2 修正二）：直接用同 Reviewer 一樣嘅「bounding box
+## 包含判定」量度——碎料本身嘅擺位一定要喺全部 12 層梯田嘅 box 範圍
+## 以外，先算「睇得見」（唔係淨係查半徑呢個間接指標）。
 func test_pile_debris_spawns_outside_terrace_footprint() -> void:
 	var scene: PackedScene = load("res://main.tscn")
 	main = scene.instantiate()
@@ -341,12 +344,45 @@ func test_pile_debris_spawns_outside_terrace_footprint() -> void:
 
 	assert_gt(main._pile_root.get_child_count(), 0, "應該生咗至少一粒碎料")
 	for chunk: Node3D in main._pile_root.get_children():
-		var flat_radius: float = Vector2(chunk.position.x, chunk.position.z).length()
-		assert_gte(
-			flat_radius, main.PILE_CHUNK_RING_RADIUS_MIN,
-			"碎料嘅擺位半徑應該大過梯田底座嘅半闊，唔會陷落去梯田幾何入面"
+		for tier: Node3D in main._foothill_root.get_children():
+			if not (tier is MeshInstance3D and tier.mesh is BoxMesh and tier.position.y > 0.0):
+				continue
+			var box_size: Vector3 = tier.mesh.size
+			var rel: Vector3 = chunk.position - tier.position
+			var inside: bool = absf(rel.x) <= box_size.x * 0.5 \
+				and absf(rel.y) <= box_size.y * 0.5 and absf(rel.z) <= box_size.z * 0.5
+			assert_false(inside, "碎料唔應該陷落 %s 個 box 入面" % tier.name)
+
+## Review 意見（round2 修正二）：修正一擺喺山腳前面一圈之後，headless
+## 用車場自己嘅 screen-Y 守衛公式（`frenzy_yard_view.gd` 嗰句）量度
+## 300 粒，發現 78% 螢幕位置其實跌咗落車場個範圍之下——即係狂熱期間
+## 撳中呢啲碎料一樣會拖埋車，「唔會連車拖埋」嗰個保護對大部分碎料
+## 已經失效。呢個測試直接攞 `_spawn_pile_visual()` 出嚟嘅碎料，用
+## 同一條 unproject_position 公式量度，斷言個螢幕 Y 一定留喺車場最頂
+## 行之上（Reviewer 原話：「測試應該攞一粒實際 `_spawn_pile_visual()`
+## 出嚟嘅碎料嘅 `unproject_position` 去撳」）。
+func test_pile_debris_screen_position_stays_above_yard_guard_row() -> void:
+	var scene: PackedScene = load("res://main.tscn")
+	main = scene.instantiate()
+	add_child_autofree(main)
+
+	var cam: Camera3D = main.get_node("World/Camera3D")
+	var viewport_h: float = main.get_viewport().get_visible_rect().size.y
+	var yard_mid_x: float = (main.c.yard_x_range.x + main.c.yard_x_range.y) * 0.5
+	# 同 frenzy_yard_view.gd _unhandled_input() 嘅守衛一模一樣條式。
+	var guard_y: float = cam.unproject_position(Vector3(yard_mid_x, main.c.car_park_max_y, 0.0)).y \
+		- viewport_h * 0.02
+
+	for i in range(20):
+		main._on_pile_spawn_timeout()
+
+	assert_gt(main._pile_root.get_child_count(), 0, "應該生咗至少一粒碎料")
+	for chunk: Node3D in main._pile_root.get_children():
+		var screen_y: float = cam.unproject_position(chunk.global_position).y
+		assert_lt(
+			screen_y, guard_y,
+			"碎料嘅螢幕位置一定要留喺車場最頂行之上，狂熱期間撳中先唔會連車都拖埋"
 		)
-		assert_true(chunk.position.z >= 0.0, "碎料應該喺前半弧（z ≥ 0），唔會俾梯田擋住")
 
 ## 第 5 點：召喚幾個礦工之後應該企喺山腳前面半圈唔同角度（圍住山腳
 ## 分佈），唔係全部黐晒喺同一個原點嘅少少 jitter；亦都要面向山腳（唔

@@ -570,6 +570,17 @@ func _build_canyon_walls() -> void:
 				facet.rotation.y = rng.randf_range(-0.4, 0.4) + (0.0 if side < 0.0 else PI)
 				wall_root.add_child(facet)
 
+## 第 i 層梯田嘅盒仔大細／local 中心 y——同時俾 `_rebuild_foothill_stack()`
+## 同 `_spawn_pile_visual()` 用，抽出嚟避免兩處各自
+## hardcode 一份數字後日後改一邊唔記得改埋另一邊（round2 修正二嘅 bug
+## 根源之一就係碎料生成位冇跟返呢兩條式，見下面果個函式嘅註解）。
+func _tier_box_size(tier_index: int) -> Vector3:
+	var t: float = float(tier_index) / float(maxi(c.miner_summon_cap, 1))
+	return Vector3(0.95 - t * 0.55, FOOTHILL_TIER_HEIGHT, 0.65 - t * 0.35)
+
+func _tier_center_y(tier_index: int) -> float:
+	return FOOTHILL_BASE_HEIGHT + float(tier_index) * FOOTHILL_TIER_HEIGHT
+
 ## 廢料山（12 層梯田常駐）：用戶實機回饋（round2 第 3 點）——一開場就
 ## 要見到成座 12 層梯田（唔係得個地台，靠日後召喚先一層層現），先夠
 ## 「有排開採」嘅份量。層數固定用 miner_summon_cap（同
@@ -589,12 +600,11 @@ func _rebuild_foothill_stack() -> void:
 	var total_tiers: int = c.miner_summon_cap
 	var mined_tiers: int = state.miner_count
 	for i in range(total_tiers):
-		var t: float = float(i) / float(maxi(total_tiers, 1))
 		var mined: bool = i < mined_tiers
 		var tier_color: Color = VisualFactory.PALETTE["cave_light"] if mined else VisualFactory.PALETTE["cave"]
-		var box_size := Vector3(0.95 - t * 0.55, FOOTHILL_TIER_HEIGHT, 0.65 - t * 0.35)
+		var box_size := _tier_box_size(i)
 		var box := VisualFactory.make_flat_box(box_size, tier_color)
-		box.position = Vector3(0.0, FOOTHILL_BASE_HEIGHT + float(i) * FOOTHILL_TIER_HEIGHT, 0.0)
+		box.position = Vector3(0.0, _tier_center_y(i), 0.0)
 		_foothill_root.add_child(box)
 		if mined and i % 2 == 0:
 			_add_tier_clutter(box_size, box.position)
@@ -694,21 +704,37 @@ func _on_pile_spawn_timeout() -> void:
 		return
 	_spawn_pile_visual(ore_key)
 
-## Review 意見（round2 修正）：舊生成位（y=0.55、z∈±0.3）喺 12 層梯田
+## Review 意見（round2 修正一）：舊生成位（y=0.55、z∈±0.3）喺 12 層梯田
 ## 未常駐嗰陣係安全嘅（企喺個地台頂嘅半空度），而家梯田由開場就長到
 ## 盡，嗰個位啱啱好陷咗入 tier1／2 個 box 入面（headless 量度 300 粒有
-## 105 粒完全睇唔到）。改做擺喺山腳地面前排一圈（同
-## _place_miner_around_foothill() 一樣揀 z ≥ 0 前半弧，先唔會俾梯田
-## 幾何擋住），半徑刻意大過梯田最闊嘅底座（半闊 0.55），確保成粒碎料
-## 都企喺梯田幾何範圍以外嘅地面。
-const PILE_CHUNK_RING_RADIUS_MIN := 0.65
-const PILE_CHUNK_RING_RADIUS_MAX := 0.95
+## 105 粒完全睇唔到）。
+##
+## Review 意見（round2 修正二）：修正一改咗擺喺山腳地面前排一圈（+Z
+## 去到 0.95），冇再陷落梯田，但呢個俯視相機（pitch −57.5°）之下 +Z
+## 會將螢幕位置推落去車場個範圍（headless 量度 300 粒有 233 粒跌咗落
+## 車場跟指守衛之下，狂熱期間撳中會連車都拖埋）——一味郁 Z 去避開梯田
+## 幾何，先係跌落車場範圍嘅根源。
+##
+## 改用「揸實一層 tier 嘅高度＋淨係用嗰層自己嘅前面緣」代替：揀一層
+## PILE_CHUNK_MIN_TIER~MAX_TIER 之間嘅梯田（用 _compute_camera_frame()
+## 同一套相機、實測呢個範圍嘅螢幕位置穩陣噉留喺山腳帶，見 round2 修正
+## 二留言），企喺嗰層自己中心 y（唔會撞第啲層，因為每層 y 範圍唔重疊），
+## x 揀喺嗰層闊度以內（睇落似擺喺層面），z 淨係推出嗰一層自己嘅半深
+## （比成隻山嘅最闊半徑細好多）加少少邊——先可以同時做到「唔陷落」＋
+## 「唔跌落車場螢幕範圍」。
+const PILE_CHUNK_MIN_TIER := 5
+const PILE_CHUNK_MAX_TIER := 9
+const PILE_CHUNK_FRONT_CLEARANCE_MIN := 0.06
+const PILE_CHUNK_FRONT_CLEARANCE_MAX := 0.16
 
 func _spawn_pile_visual(ore_key: String) -> void:
 	var chunk := VisualFactory.make_ore_chunk(PILE_CHUNK_VISUAL_SIZE, _ore_color(ore_key))
-	var angle: float = rng.randf_range(-PI * 0.5, PI * 0.5)
-	var radius: float = rng.randf_range(PILE_CHUNK_RING_RADIUS_MIN, PILE_CHUNK_RING_RADIUS_MAX)
-	chunk.position = Vector3(sin(angle) * radius, 0.08, cos(angle) * radius)
+	var max_tier: int = mini(PILE_CHUNK_MAX_TIER, c.miner_summon_cap - 1)
+	var tier_index: int = rng.randi_range(PILE_CHUNK_MIN_TIER, maxi(max_tier, PILE_CHUNK_MIN_TIER))
+	var box_size := _tier_box_size(tier_index)
+	var x: float = rng.randf_range(-box_size.x * 0.4, box_size.x * 0.4)
+	var z: float = box_size.z * 0.5 + rng.randf_range(PILE_CHUNK_FRONT_CLEARANCE_MIN, PILE_CHUNK_FRONT_CLEARANCE_MAX)
+	chunk.position = Vector3(x, _tier_center_y(tier_index), z)
 	chunk.rotation.y = rng.randf_range(0.0, TAU)
 
 	var area := Area3D.new()
