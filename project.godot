@@ -1,18 +1,35 @@
 ; Engine configuration file.
+; It's best edited using the editor UI and not directly,
+; since the parameters that go here are not all obvious.
+;
+; Format:
+;   [section] ; section goes between []
+;   param=value ; assign values to parameters
+
 config_version=5
 
 [application]
+
 config/name="Junkpile Tycoon"
-run/main_scene="res://main.tscn"
+run/main_scene="res://ads/ad_test.tscn"
 config/features=PackedStringArray("4.7", "GL Compatibility")
 
+[autoload]
+
+AdManager="*res://ads/ad_manager.gd"
+
 [display]
+
 window/size/viewport_width=720
 window/size/viewport_height=960
 window/handheld/orientation=1
 
+[editor_plugins]
+
+enabled=PackedStringArray("res://addons/admob/plugin.cfg")
+
 [rendering]
+
 renderer/rendering_method="gl_compatibility"
 renderer/rendering_method.mobile="gl_compatibility"
-
 textures/vram_compression/import_etc2_astc=true
