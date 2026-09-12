@@ -170,11 +170,18 @@ static func make_miner() -> Node3D:
 ## Kenney Game Icons（白底 PNG，見 CREDITS.md）／自製 icon 讀成
 ## TextureRect，用 `modulate` 上色，HUD 用嚟代替純文字標籤。搵唔到就
 ## 留白（TextureRect 冇 texture 唔會 crash），唔會累成個 HUD build 唔到。
+##
+## Review 意見（ALTA-214 round 1）：冧咗 `expand_mode` 就會維持預設
+## `EXPAND_KEEP_SIZE`——`custom_minimum_size` 淨係下限，TextureRect 實際
+## 最細仍然係貼圖原生大細（coin／eco_leaf 128px，其餘 icon 50px），令
+## 「size」參數形同虛設，頂 HUD 資源列因而爆框。加 `EXPAND_IGNORE_SIZE`
+## 令貼圖原生大細唔再頂住 layout minimum size，`size` 先真係話事。
 static func make_icon(path: String, size: float = 22.0, tint: Color = Color.WHITE) -> TextureRect:
 	var rect := TextureRect.new()
 	if ResourceLoader.exists(path):
 		rect.texture = load(path)
 	rect.custom_minimum_size = Vector2(size, size)
+	rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	rect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	rect.modulate = tint
 	return rect
