@@ -12,9 +12,17 @@ func before_each() -> void:
 	s = GameState.new()
 
 
+# ── 開場資金（ALTA-150 實機回饋）───────────────────────────
+
+func test_new_game_state_starts_with_starting_cash() -> void:
+	assert_almost_eq(s.cash, s.c.starting_cash, EPS)
+	assert_true(s.cash >= s.next_miner_cost(), "開場 Cash 應該即刻夠買第一個礦工")
+
+
 # ── 礦工召喚 ─────────────────────────────────────────────
 
 func test_summon_miner_fails_without_enough_cash() -> void:
+	s.cash = 0.0 # 開場 Cash＝starting_cash（ALTA-150），呢度測嘅係「唔夠錢」個案，要手動夾低
 	assert_false(s.summon_miner())
 	assert_eq(s.miner_count, 0)
 
@@ -84,7 +92,7 @@ func test_tick_clamps_to_belt_capacity_and_reports_overflow() -> void:
 
 func test_tick_increases_cash_and_eco() -> void:
 	s.miner_count = 1
-	assert_eq(s.cash, 0.0)
+	s.cash = 0.0 # 開場 Cash＝starting_cash（ALTA-150），呢度淨係想測 tick() 本身有冇加錢
 	s.tick(1.0)
 	assert_gt(s.cash, 0.0)
 	assert_gt(s.eco, 0.0)
@@ -125,10 +133,12 @@ func test_current_income_rate_is_clamped_by_belt_capacity() -> void:
 # ── 手動 scoop：已 belted 碎料不可 scoop ────────────────
 
 func test_scoop_first_on_empty_pile_is_zero() -> void:
+	s.cash = 0.0 # 開場 Cash＝starting_cash（ALTA-150），呢度淨係想測空 pile 唔應該郁到 cash
 	assert_almost_eq(s.scoop_first(), 0.0, EPS)
 	assert_eq(s.cash, 0.0)
 
 func test_spawn_pile_debris_then_scoop_first_credits_cash_and_drains_pile() -> void:
+	s.cash = 0.0 # 開場 Cash＝starting_cash（ALTA-150），呢度想測 scoop 加嘅金額，夾低方便斷言
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 1
 	var ore_key := s.spawn_pile_debris(rng, "foothill")

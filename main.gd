@@ -8,11 +8,14 @@ extends Node3D
 ## 輸入轉接（tap-to-scoop）；核心數值邏輯全部喺 systems/game_state.gd，
 ## 方便 GUT 獨立測試（見 test/test_game_state.gd）。
 ##
-## 座標：docx 場地座標 (x, y) 直接當世界單位用，y 向上（山向上長）；
-## 相機用正交、望向 -Z，畫面淨用 (world.x, world.y)，Z 淨係俾盒仔有少少
-## 立體厚度（冇透視變形）。screen_kx／screen_ky／screen_cy（docx）決定
-## 正交相機嘅視野縮放同垂直置中，令山腳／帶／爐喺 3:4 直版入面啱晒
-## HUD 12/66/22 版面。
+## 座標：docx 場地座標 (x, y) 直接當世界單位用，y 向上（山向上長），Z
+## 俾盒仔少少立體厚度。相機用正交，跟 docx §6 斜視 pitch/yaw 約
+## −55°／45°（screen_camera_pitch_deg／screen_camera_yaw_deg，用戶實機
+## 回饋 ALTA-150：正面平視令方塊變 2D 色塊），令 BoxMesh 睇得出側面/立
+## 體感（配 DirectionalLight3D 陰影）。size／位置由 _compute_camera_frame()
+## 直接由場地座標反推，保證山腳／帶／爐／倉喺 3:4 直版入面啱晒 HUD
+## 12/66/22 版面（screen_kx／screen_ky／screen_cy 冇再用，留喺
+## constants.gd）。
 
 ## 山腳堆疊嘅盒仔尺寸——純美術造型，唔係遊戲數值，所以留喺呢度做
 ## script const（唔屬於 constants.gd 嘅「數值」，但相機取景要用嚟計算
@@ -29,6 +32,11 @@ const FOOTHILL_TIER_HEIGHT := 0.16
 ## 畫面），淨係將拾取形狀獨立放大到 ~43px（0.4 世界單位），視覺盒仔
 ## 大細不變。
 const PILE_CHUNK_TAP_HIT_SIZE := 0.4
+
+## 山腳碎料嘅視覺盒仔尺寸——用戶實機回饋（ALTA-150）：原本 0.12 太細
+## （~10px），睇唔到、都冇提示點撳，放大到最少 0.25（tap 形狀
+## PILE_CHUNK_TAP_HIT_SIZE 已經係 0.4，呢個純粹係美術造型，冇改拾取）。
+const PILE_CHUNK_VISUAL_SIZE := 0.25
 
 var c: GameConstants
 var state: GameState
@@ -59,6 +67,8 @@ var _belt_upgrade_button: Button
 var _miner_upgrade_button: Button
 var _refine_upgrade_button: Button
 var _frenzy_button: Button
+var _scoop_hint_label: Label # 開場提示「撳碎料鏟入爐」，第一次剷完就收起（ALTA-150 實機回饋）
+var _scoop_hint_shown: bool = false
 
 
 func _ready() -> void:
@@ -128,45 +138,67 @@ func _site_to_world(v: Vector2, z: float = 0.0) -> Vector3:
 	return Vector3(v.x, v.y, z)
 
 ## 由實際場地座標（山腳／帶頭／爐／倉，加山頂長到盡嘅高度）反推正交
-## 相機嘅 size／中心，令呢啲物件嘅螢幕 Y 比例落喺 hud_top~1-hud_bottom
+## 相機嘅 size／位置，令呢啲物件嘅螢幕 Y 比例落喺 hud_top~1-hud_bottom
 ## 之間（中層 66% 果段），唔會俾頂／底 HUD 遮咗。
 ##
+## 相機依家跟 docx §6 斜視咗（screen_camera_pitch_deg／screen_camera_yaw_deg，
+## 用戶實機回饋 ALTA-150：正面平視令 BoxMesh 睇落係死板 2D 色塊），唔再係
+## 望向 -Z 嘅平面投影，所以「世界 x/y＝螢幕 x/y」呢個假設唔再成立。做法：
+## 將關鍵場地點轉去相機自己嘅本地座標系（basis 轉置＝world→local，
+## 因為 basis 係正交矩陣），喺嗰個座標系度做返同上一版一樣嘅 bounding-box
+## 反推（size／置中），再將反推出嚟嘅本地座標轉返做世界座標畀 cam.position。
+##
 ## 上一版單憑 docx 嘅 screen_kx／screen_ky／screen_cy 三個數推導鏡頭
-## size／中心，撞出帶／爐／倉全部跌出畫面（Review 意見，見 ALTA-150）。
-## 原 Canvas 工程／docx 冇留低呢三個數點樣換算做正交相機參數嘅公式，
-## 淨憑估好易再撞第二次；而家改為直接由場地座標反推，保證幾個關鍵
-## 節點實跌喺中層帶入面。screen_kx／screen_ky／screen_cy 冇再用喺呢個
-## function（留喺 constants.gd 等後續搵返原公式或者遠端設定接手）。
+## size／中心，撞出帶／爐／倉全部跌出畫面；原 Canvas 工程／docx 冇留低
+## 呢三個數點樣換算做正交相機參數嘅公式，淨憑估好易再撞第二次——而家
+## 一律由場地座標反推，保證幾個關鍵節點實跌喺中層帶入面。screen_kx／
+## screen_ky／screen_cy 冇再用喺呢個 function（留喺 constants.gd 等後續
+## 搵返原公式或者遠端設定接手）。
 func _compute_camera_frame() -> Dictionary:
-	var pts: Array[Vector2] = [c.site_foothill_pos, c.belt_head_pos, c.smelter_pos, c.warehouse_pos]
-	var min_x: float = pts[0].x
-	var max_x: float = pts[0].x
-	var min_y: float = pts[0].y
-	var max_y: float = pts[0].y
-	for p in pts:
-		min_x = minf(min_x, p.x)
-		max_x = maxf(max_x, p.x)
-		min_y = minf(min_y, p.y)
-		max_y = maxf(max_y, p.y)
+	var basis := Basis.from_euler(
+		Vector3(deg_to_rad(c.screen_camera_pitch_deg), deg_to_rad(c.screen_camera_yaw_deg), 0.0)
+	)
+	var basis_t := basis.transposed() # 正交矩陣嘅轉置＝反矩陣，world→local
 
-	# 山頂會隨召喚礦工長到最盡（miner_summon_cap 層），連埋預留返
-	# 少少邊界，保證由 0 個礦工到 12 個礦工都留喺中層帶入面。
-	var mountain_top: float = c.site_foothill_pos.y + FOOTHILL_BASE_HEIGHT \
+	# 山頂會隨召喚礦工長到最盡（miner_summon_cap 層），連山腳 x 一齊入 pts。
+	var mountain_top_y: float = c.site_foothill_pos.y + FOOTHILL_BASE_HEIGHT \
 		+ float(c.miner_summon_cap) * FOOTHILL_TIER_HEIGHT
-	max_y = maxf(max_y, mountain_top)
-	max_y += 0.3   # 山頂／礦工盒仔留白
-	min_y -= 0.5   # 倉腳留白
-	min_x -= 0.5
-	max_x += 0.5
+	var world_pts: Array[Vector3] = [
+		_site_to_world(c.site_foothill_pos),
+		_site_to_world(Vector2(c.site_foothill_pos.x, mountain_top_y)),
+		_site_to_world(c.belt_head_pos),
+		_site_to_world(c.smelter_pos, 0.25),
+		_site_to_world(c.warehouse_pos, 0.22),
+	]
+
+	var min_lx: float = INF
+	var max_lx: float = -INF
+	var min_ly: float = INF
+	var max_ly: float = -INF
+	var max_lz: float = -INF
+	for p in world_pts:
+		var l: Vector3 = basis_t * p
+		min_lx = minf(min_lx, l.x)
+		max_lx = maxf(max_lx, l.x)
+		min_ly = minf(min_ly, l.y)
+		max_ly = maxf(max_ly, l.y)
+		max_lz = maxf(max_lz, l.z)
+
+	max_ly += 0.3   # 山頂／礦工盒仔留白
+	min_ly -= 0.5   # 倉腳留白
+	min_lx -= 0.5
+	max_lx += 0.5
 
 	var top_frac: float = c.hud_top / 100.0
 	var bottom_frac: float = 1.0 - (c.hud_bottom / 100.0)
 
-	var size: float = (max_y - min_y) / (bottom_frac - top_frac)
-	var world_cy: float = max_y - size * (0.5 - top_frac)
-	var world_cx: float = (min_x + max_x) * 0.5
+	var size: float = (max_ly - min_ly) / (bottom_frac - top_frac)
+	var local_cx: float = (min_lx + max_lx) * 0.5
+	var local_cy: float = max_ly - size * (0.5 - top_frac)
+	var local_cz: float = max_lz + 10.0 # 相機沿住自己嘅 -forward 退後喺場景後面
 
-	return {"size": size, "cx": world_cx, "cy": world_cy}
+	var cam_pos: Vector3 = basis.x * local_cx + basis.y * local_cy + basis.z * local_cz
+	return {"size": size, "position": cam_pos}
 
 func _make_box(size: Vector3, color: Color) -> MeshInstance3D:
 	var mesh_instance := MeshInstance3D.new()
@@ -187,16 +219,21 @@ func _build_world() -> void:
 	cam.name = "Camera3D"
 	cam.projection = Camera3D.PROJECTION_ORTHOGONAL
 	cam.keep_aspect = Camera3D.KEEP_HEIGHT # size＝視野「高度」，唔受畫面闊度影響
+	# docx §6：斜視 2.5D（用戶實機回饋 ALTA-150，正面平視令方塊變 2D 色塊）。
+	cam.rotation_degrees = Vector3(c.screen_camera_pitch_deg, c.screen_camera_yaw_deg, 0.0)
 	var frame := _compute_camera_frame()
 	cam.size = frame["size"]
-	cam.position = Vector3(frame["cx"], frame["cy"], 10.0)
-	cam.rotation = Vector3.ZERO # 望向 -Z
+	cam.position = frame["position"]
 	cam.current = true
 	_world.add_child(cam)
 
 	var light := DirectionalLight3D.new()
 	light.name = "DirectionalLight3D"
 	light.rotation_degrees = Vector3(-50.0, -30.0, 0.0)
+	# 用戶實機回饋（ALTA-150）：斜視之後 BoxMesh 要睇得出側面／立體感，
+	# 加返淡陰影（低 energy／唔太重手，避免灰模睇落太暗）。
+	light.shadow_enabled = true
+	light.light_energy = 1.1
 	_world.add_child(light)
 
 	# VR-04：放置場成組收埋喺呢個 root 底下，狂熱期間 toggle
@@ -298,7 +335,7 @@ func _on_pile_spawn_timeout() -> void:
 	_spawn_pile_visual(ore_key)
 
 func _spawn_pile_visual(ore_key: String) -> void:
-	var chunk := _make_box(Vector3(0.12, 0.12, 0.12), _ore_color(ore_key))
+	var chunk := _make_box(Vector3.ONE * PILE_CHUNK_VISUAL_SIZE, _ore_color(ore_key))
 	chunk.position = Vector3(rng.randf_range(-0.4, 0.4), 0.55, rng.randf_range(-0.3, 0.3))
 
 	var area := Area3D.new()
@@ -311,19 +348,35 @@ func _spawn_pile_visual(ore_key: String) -> void:
 	chunk.add_child(area)
 	# 未 belted 先接 tap handler；一入帶（_spawn_belt_visual_item）嘅盒仔
 	# 完全冇 Area3D，結構上就已經保證「已 belted 碎料不可 scoop」。
-	area.input_event.connect(_on_pile_chunk_input.bind(chunk, ore_key))
+	area.input_event.connect(_on_pile_chunk_input.bind(chunk, area, ore_key))
 
 	_pile_root.add_child(chunk)
 
 func _on_pile_chunk_input(
 	_camera: Node, event: InputEvent, _pos: Vector3, _normal: Vector3, _shape_idx: int,
-	chunk: Node3D, ore_key: String
+	chunk: Node3D, area: Area3D, ore_key: String
 ) -> void:
 	if not (event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT):
 		return
 	var gained := state.scoop_ore(ore_key)
-	if gained > 0.0:
-		chunk.queue_free()
+	if gained <= 0.0:
+		return
+	area.input_ray_pickable = false # 撳中即停接輸入，播緊回饋果下唔會重複扣同一粒
+	_hide_scoop_hint()
+	_play_scoop_feedback(chunk)
+
+## 用戶實機回饋（ALTA-150）：撳中冇任何回饋，唔知有冇撳中。撳中即放大
+## 閃一閃先消失，等玩家見到「撳咗嘢」。
+func _play_scoop_feedback(chunk: Node3D) -> void:
+	var tw := create_tween()
+	tw.tween_property(chunk, "scale", Vector3.ONE * 1.6, 0.08).set_trans(Tween.TRANS_BACK)
+	tw.tween_callback(chunk.queue_free)
+
+func _hide_scoop_hint() -> void:
+	if _scoop_hint_shown:
+		return
+	_scoop_hint_shown = true
+	_scoop_hint_label.visible = false
 
 func _ore_color(ore_key: String) -> Color:
 	match ore_key:
@@ -395,6 +448,21 @@ func _build_hud() -> void:
 	_prestige_label.text = "威望 0 / %s" % _fmt_num(c.prestige_threshold(0))
 	top_vbox.add_child(_prestige_label)
 
+	# -- 開場提示：撳碎料鏟入爐——用戶實機回饋（ALTA-150），碎料太細
+	# 又冇提示，唔知撳邊度。貼喺頂 HUD 底下，中層 3D 畫面最上面，第一次
+	# 剷成功就收起（_hide_scoop_hint()），唔會長期擋畫面。 --
+	_scoop_hint_label = Label.new()
+	_scoop_hint_label.text = "撳碎料鏟入爐"
+	_scoop_hint_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_scoop_hint_label.add_theme_color_override("font_color", Color(1.0, 1.0, 1.0, 0.9))
+	_scoop_hint_label.add_theme_color_override("font_outline_color", Color(0.0, 0.0, 0.0, 0.8))
+	_scoop_hint_label.add_theme_constant_override("outline_size", 4)
+	_scoop_hint_label.set_anchors_preset(Control.PRESET_TOP_WIDE)
+	_scoop_hint_label.anchor_top = top_frac
+	_scoop_hint_label.anchor_bottom = top_frac
+	_scoop_hint_label.offset_top = 4.0
+	hud.add_child(_scoop_hint_label)
+
 	# -- 底：三資源 + 召喚 + 三條升級線 --
 	var bottom_bar := Control.new()
 	bottom_bar.name = "BottomBar"
@@ -454,20 +522,33 @@ func _refresh_hud() -> void:
 	_eco_label.text = "Eco %s" % _fmt_num(state.eco)
 
 	_summon_button.text = "召喚礦工 (%d/%d)" % [state.miner_count, c.miner_summon_cap]
-	_summon_button.disabled = not state.can_summon_miner() or state.cash < state.next_miner_cost()
+	if state.can_summon_miner():
+		var affordable := state.cash >= state.next_miner_cost()
+		_summon_button.disabled = not affordable
+		_set_afford_color(_summon_button, affordable)
+	else:
+		_summon_button.disabled = true
+		_clear_afford_color(_summon_button) # 撞召喚上限，唔係等錢，維持預設灰色
 
 	if state.can_upgrade_belt():
+		var affordable := state.cash >= state.next_belt_cost()
 		_belt_upgrade_button.text = "帶 Lv%d → 升級 %s" % [state.belt_level, _fmt_num(state.next_belt_cost())]
-		_belt_upgrade_button.disabled = state.cash < state.next_belt_cost()
+		_belt_upgrade_button.disabled = not affordable
+		_set_afford_color(_belt_upgrade_button, affordable)
 	else:
 		_belt_upgrade_button.text = "帶 Lv%d（封頂）" % state.belt_level
 		_belt_upgrade_button.disabled = true
+		_clear_afford_color(_belt_upgrade_button) # 封頂，唔係等錢
 
+	var miner_lv_affordable := state.cash >= state.next_miner_level_cost()
 	_miner_upgrade_button.text = "礦工 Lv%d → 升級 %s" % [state.miner_level, _fmt_num(state.next_miner_level_cost())]
-	_miner_upgrade_button.disabled = state.cash < state.next_miner_level_cost()
+	_miner_upgrade_button.disabled = not miner_lv_affordable
+	_set_afford_color(_miner_upgrade_button, miner_lv_affordable)
 
+	var refine_affordable := state.cash >= state.next_refine_level_cost()
 	_refine_upgrade_button.text = "精煉 Lv%d → 升級 %s" % [state.refine_level, _fmt_num(state.next_refine_level_cost())]
-	_refine_upgrade_button.disabled = state.cash < state.next_refine_level_cost()
+	_refine_upgrade_button.disabled = not refine_affordable
+	_set_afford_color(_refine_upgrade_button, refine_affordable)
 
 	if frenzy.active:
 		_frenzy_button.text = "狂熱中 %ds" % int(ceil(frenzy.time_remaining))
@@ -478,6 +559,18 @@ func _refresh_hud() -> void:
 	else:
 		_frenzy_button.text = "狂熱冷卻中 %ds" % int(ceil(frenzy.cooldown_remaining))
 		_frenzy_button.disabled = true
+
+## 用戶實機回饋（ALTA-150）：升級掣全部灰晒，撞唔到分清楚係「等緊
+## 錢」定「壞咗」。夠錢就轉返正常／綠色，唔夠錢價錢轉紅色，等玩家知
+## 道等緊儲夠錢，唔係壞咗。（撞上限／封頂嘅掣唔叫呢個，維持預設灰色。）
+func _set_afford_color(btn: Button, affordable: bool) -> void:
+	var color := Color(0.4, 0.9, 0.4) if affordable else Color(0.95, 0.35, 0.3)
+	btn.add_theme_color_override("font_color", color)
+	btn.add_theme_color_override("font_disabled_color", color)
+
+func _clear_afford_color(btn: Button) -> void:
+	btn.remove_theme_color_override("font_color")
+	btn.remove_theme_color_override("font_disabled_color")
 
 ## 大數字縮寫成 K/M/B，HUD 底 22% 高度先放得落。
 func _fmt_num(n: float) -> String:
