@@ -345,3 +345,63 @@ func test_upgrade_buttons_color_by_affordability() -> void:
 		main._belt_upgrade_button.get_theme_color("font_color"), Color(0.4, 0.9, 0.4),
 		"夠錢應該綠色"
 	)
+
+
+# ── Review 意見（ALTA-214 round 1）：頂 HUD 爆框 + 右上方掣冚住 Eco
+# 「+」掣 ─────────────────────────────────────────
+# 兩個根因：(1) VisualFactory.make_icon() 冧咗 expand_mode，貼圖原生
+# 大細（coin/eco_leaf 128px）頂住 layout minimum size，令「圓 icon」
+# 實際脹到 136px；(2) 右上設定／任務掣之前用獨立 Control 疊喺
+# resources_row 度，同 Eco 格「+」掣重疊。呢兩個測試直接量 Control
+# rect，日後 icon／HUD 排法改壞咗會即刻抓到，唔使等人手截圖先發現。
+
+func test_top_hud_resource_icon_follows_requested_size_not_texture_size() -> void:
+	var scene: PackedScene = load("res://main.tscn")
+	main = scene.instantiate()
+	add_child_autofree(main)
+
+	var resources_row: Control = null
+	for c in main.get_node("HUD/TopBar").get_children():
+		if c is VBoxContainer:
+			resources_row = c.get_child(0)
+	# coin.png／eco_leaf.png 係 128×128，冧咗 expand_mode 就會令成行爆到
+	# 136px 高（見 review）；修完應該貼返 _make_circular_icon() 嘅
+	# custom_minimum_size（32），唔會俾貼圖原生大細頂爆。
+	assert_lt(resources_row.size.y, 60.0, "資源行唔應該俾貼圖原生大細（128px）頂爆")
+
+func test_top_hud_corner_buttons_do_not_overlap_resource_row() -> void:
+	var scene: PackedScene = load("res://main.tscn")
+	main = scene.instantiate()
+	add_child_autofree(main)
+
+	var top_vbox: VBoxContainer = null
+	for c in main.get_node("HUD/TopBar").get_children():
+		if c is VBoxContainer:
+			top_vbox = c
+	var resources_row: Control = top_vbox.get_child(0)
+	var status_row: Control = top_vbox.get_child(1)
+	var resources_rect := Rect2(resources_row.position, resources_row.size)
+	var status_rect := Rect2(status_row.position, status_row.size)
+	assert_false(
+		resources_rect.intersects(status_rect),
+		"右上設定／任務掣（status_row 尾）唔應該同資源行（Eco「+」掣所在）疊埋"
+	)
+
+## 資源行＋pill 行（連右上兩掣）＋威望 bar 整個頂 HUD vbox 內容高度應該
+## 留喺 TopBar 12% 預算之內（720×960＝115.2px），唔可以爆晒去中層帶。
+## 用 ProjectSettings 讀設計解像度（唔用 get_viewport().get_visible_rect()——
+## GUT 跑測試嗰陣個 viewport 可能唔係實際 720×960，`top_vbox.size.y`
+## 淨係由子節點嘅固定 pixel minimum size 決定、唔隨 viewport 縮放，
+## 同一個隨 viewport 縮放嘅預算比較先有意義）。
+func test_top_hud_content_height_fits_within_hud_top_budget() -> void:
+	var scene: PackedScene = load("res://main.tscn")
+	main = scene.instantiate()
+	add_child_autofree(main)
+
+	var top_vbox: VBoxContainer = null
+	for c in main.get_node("HUD/TopBar").get_children():
+		if c is VBoxContainer:
+			top_vbox = c
+	var design_viewport_h: float = ProjectSettings.get_setting("display/window/size/viewport_height")
+	var budget_px: float = main.c.hud_top / 100.0 * design_viewport_h
+	assert_lt(top_vbox.size.y, budget_px, "頂 HUD 內容總高度應該喺 hud_top 預算之內")

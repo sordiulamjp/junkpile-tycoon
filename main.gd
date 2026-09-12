@@ -638,9 +638,10 @@ func _build_hud() -> void:
 	var bottom_frac: float = c.hud_bottom / 100.0
 
 	# -- 頂：VR-06b 跟 issue 視覺參考重排——第一行三資源（圓 icon +
-	# 數字 + 「+」掣，暫不接功能）、第二行「礦工 n/12」pill ＋「山腳／
-	# 中層鎖住」pill、右上設定／任務兩個方掣（先做外觀）；威望進度
-	# （VR-05 重置邏輯，呢度只顯示）擺第三行。 --
+	# 數字 + 「+」掣，暫不接功能）、第二行左「礦工 n/12」pill ＋中
+	# 「山腳／中層鎖住」pill ＋右設定／任務兩個方掣（先做外觀，同一行
+	# flow，唔用疊層）；第三行威望進度（VR-05 重置邏輯，呢度只顯示，
+	# 字冧入 slim bar 度慳位，見 round 1 review）。 --
 	var top_bar := Control.new()
 	top_bar.name = "TopBar"
 	top_bar.set_anchors_preset(Control.PRESET_TOP_WIDE)
@@ -663,6 +664,11 @@ func _build_hud() -> void:
 	_components_label = _add_top_resource_slot(resources_row, "res://assets/icons/gear.png", Color(0.75, 0.78, 0.85))
 	_eco_label = _add_top_resource_slot(resources_row, "res://assets/icons/eco_leaf.png", Color(0.55, 0.85, 0.5))
 
+	# Review 意見（ALTA-214 round 1）：右上設定／任務掣之前用獨立
+	# `corner_row` 疊喺 top_bar 上面（PRESET_TOP_WIDE），同 resources_row
+	# 嗰行（EXPAND_FILL 佔晒全闊）疊埋一齊，Eco 格嘅「+」掣被冚住。
+	# 改法：兩個掣搬入 status_row 尾（同一行 flow，唔再疊層），中間加
+	# 一個 EXPAND_FILL 嘅 spacer 將 pill 推左、掣推右，唔會再撞。
 	var status_row := HBoxContainer.new()
 	top_vbox.add_child(status_row)
 	_miner_count_label = _add_pill(status_row, "礦工 0/%d" % c.miner_summon_cap, "")
@@ -670,26 +676,39 @@ func _build_hud() -> void:
 	# K/M 縮寫（嗰個係俾底部窄 HUD 用）。
 	_lock_label = _add_pill(status_row, "鎖住 · %s" % _fmt_int_commas(c.unlock_price("mid")), "res://assets/icons/locked.png")
 
+	var status_spacer := Control.new()
+	status_spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	status_row.add_child(status_spacer)
+
 	# 右上：設定／任務兩個方掣——issue 話「先做外觀」，暫時冇接任何功能。
-	var corner_row := HBoxContainer.new()
-	corner_row.alignment = BoxContainer.ALIGNMENT_END
-	corner_row.set_anchors_preset(Control.PRESET_TOP_WIDE)
-	top_bar.add_child(corner_row)
-	corner_row.add_child(_make_square_icon_button("res://assets/icons/gear.png"))
-	corner_row.add_child(_make_square_icon_button("res://assets/icons/star.png"))
+	status_row.add_child(_make_square_icon_button("res://assets/icons/gear.png"))
+	status_row.add_child(_make_square_icon_button("res://assets/icons/star.png"))
+
+	# Review 意見（round 1）：資源行＋pill 行＋威望 bar＋威望字四行加埋
+	# 3×4 間距 ≈123px，仲超咗 TopBar 12%＝115px（720×960）。威望字冧入
+	# 條 bar 度（Control 疊層：slim ProgressBar + 置中 Label overlay），
+	# 由兩行縮做一行，慳返成行高度（威望重置邏輯係 VR-05，呢度只顯示）。
+	var prestige_wrap := Control.new()
+	prestige_wrap.custom_minimum_size = Vector2(0.0, 16.0)
+	top_vbox.add_child(prestige_wrap)
 
 	_prestige_bar = ProgressBar.new()
 	_prestige_bar.min_value = 0.0
 	_prestige_bar.max_value = c.prestige_threshold(0)
 	_prestige_bar.value = 0.0 # 威望重置邏輯見 VR-05，呢度淨係擺位
-	top_vbox.add_child(_prestige_bar)
+	_prestige_bar.show_percentage = false
+	_prestige_bar.set_anchors_preset(Control.PRESET_FULL_RECT)
+	prestige_wrap.add_child(_prestige_bar)
 
-	var prestige_row := HBoxContainer.new()
-	top_vbox.add_child(prestige_row)
-	prestige_row.add_child(VisualFactory.make_icon("res://assets/icons/star.png", 18.0, Color(0.85, 0.65, 0.95)))
 	_prestige_label = Label.new()
 	_prestige_label.text = "威望 0 / %s" % _fmt_num(c.prestige_threshold(0))
-	prestige_row.add_child(_prestige_label)
+	_prestige_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_prestige_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_prestige_label.add_theme_font_size_override("font_size", 11)
+	_prestige_label.add_theme_color_override("font_outline_color", Color(0.0, 0.0, 0.0, 0.8))
+	_prestige_label.add_theme_constant_override("outline_size", 3)
+	_prestige_label.set_anchors_preset(Control.PRESET_FULL_RECT)
+	prestige_wrap.add_child(_prestige_label)
 
 	# -- 開場提示：撳碎料鏟入爐——用戶實機回饋（ALTA-150），碎料太細
 	# 又冇提示，唔知撳邊度。貼喺頂 HUD 底下，中層 3D 畫面最上面，第一次
