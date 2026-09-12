@@ -152,17 +152,7 @@ func _handle_car_descent(delta: float) -> void:
 	car.position.x = frenzy.car_x
 
 
-# ══════════════════════ 建場景（灰模，跟 VR-03 用 BoxMesh 砌） ══════════════════════
-
-func _make_box(size: Vector3, color: Color) -> MeshInstance3D:
-	var mesh_instance := MeshInstance3D.new()
-	var box := BoxMesh.new()
-	box.size = size
-	mesh_instance.mesh = box
-	var mat := StandardMaterial3D.new()
-	mat.albedo_color = color
-	mesh_instance.material_override = mat
-	return mesh_instance
+# ══════════════════════ 建場景（VR-06：美術經 VisualFactory 出，見 CREDITS.md） ══════════════════════
 
 func _make_area(size: Vector3) -> Area3D:
 	var area := Area3D.new()
@@ -184,7 +174,7 @@ func _build_walls() -> void:
 		shape.size = Vector3(0.2, height, 1.0)
 		col.shape = shape
 		wall.add_child(col)
-		var visual := _make_box(Vector3(0.2, height, 1.0), Color(0.25, 0.25, 0.28, 0.5))
+		var visual := VisualFactory.make_flat_box(Vector3(0.2, height, 1.0), VisualFactory.PALETTE["wall"])
 		wall.add_child(visual)
 		wall.position = Vector3(side_x, mid_y, 0.0)
 		add_child(wall)
@@ -194,9 +184,17 @@ func _build_car() -> void:
 	car.name = "Car"
 	car.add_to_group("frenzy_car")
 	car.sync_to_physics = true
-	_car_mesh = _make_box(Vector3(0.5, 0.22, 0.4), Color(0.55, 0.15, 0.15))
+	_car_mesh = VisualFactory.make_metal_box(Vector3(0.5, 0.22, 0.4), Color(0.55, 0.15, 0.15))
 	_car_mat = _car_mesh.material_override
 	car.add_child(_car_mesh)
+	# 四粒低面數輪——純裝飾，唔跟 tier 縮放／變色（見 _apply_car_tier_visual()
+	# 淨係改 _car_mesh），先至實機睇落唔會輪同車身一齊怪異咁縮放。
+	for wheel_x in [-0.19, 0.19]:
+		for wheel_z in [-0.19, 0.19]:
+			var wheel := VisualFactory.make_low_poly_cylinder(0.09, 0.06, Color(0.12, 0.12, 0.13))
+			wheel.rotation_degrees.z = 90.0
+			wheel.position = Vector3(wheel_x, -0.1, wheel_z)
+			car.add_child(wheel)
 	var col := CollisionShape3D.new()
 	var shape := BoxShape3D.new()
 	shape.size = Vector3(0.5, 0.22, 0.4)
@@ -211,7 +209,13 @@ func _build_roller() -> void:
 	area.position = Vector3(c.spike_roller_pos.x, c.spike_roller_pos.y, 0.0)
 	area.body_entered.connect(_on_roller_entered)
 	add_child(area)
-	_roller_visual = _make_box(c.spike_roller_half_extents * 2.0, Color(0.5, 0.5, 0.55))
+	# 圓柱代替盒仔：`_process()` 度嘅 `rotate_x()` 先會睇落似真係喺轉緊
+	# 嘅刺滾筒（盒仔轉落嚟成塊嘢喺度打滾，唔似滾筒）。
+	var extents := c.spike_roller_half_extents * 2.0
+	_roller_visual = VisualFactory.make_low_poly_cylinder(
+		maxf(extents.y, extents.z) * 0.5, extents.x, VisualFactory.PALETTE["gear_metal"], 10
+	)
+	_roller_visual.rotation_degrees.z = 90.0
 	_roller_visual.position = area.position
 	add_child(_roller_visual)
 
@@ -226,11 +230,14 @@ func _build_bridge() -> void:
 
 	var safe_width: float = c.lava_bridge_safe_x_range.y - c.lava_bridge_safe_x_range.x
 	var safe_mid: float = (c.lava_bridge_safe_x_range.x + c.lava_bridge_safe_x_range.y) * 0.5
-	var bridge_mesh := _make_box(Vector3(safe_width, 0.05, 0.5), Color(0.45, 0.3, 0.15))
+	var bridge_mesh := VisualFactory.make_flat_box(Vector3(safe_width, 0.05, 0.5), VisualFactory.PALETTE["bridge_wood"])
 	bridge_mesh.position = Vector3(safe_mid, c.lava_bridge_y, 0.0)
 	add_child(bridge_mesh)
 
-	var lava_mesh := _make_box(Vector3(width, 0.04, 0.5), Color(0.85, 0.25, 0.05))
+	# 岩浆：加發光，睇落有少少熱感（純裝飾，唔影響 _on_bridge_entered 判定）。
+	var lava_mesh := VisualFactory.make_metal_box(
+		Vector3(width, 0.04, 0.5), VisualFactory.PALETTE["lava"], VisualFactory.PALETTE["lava"], 0.8
+	)
 	lava_mesh.position = Vector3(mid_x, c.lava_bridge_y - 0.03, 0.0)
 	add_child(lava_mesh)
 
@@ -245,7 +252,7 @@ func _build_gates() -> void:
 		area.body_entered.connect(_on_gate_entered.bind(gate_id))
 		add_child(area)
 
-		var plate := _make_box(Vector3(0.5, 0.04, 0.6), _gate_color(float(gate.get("mult", 1.0))))
+		var plate := VisualFactory.make_flat_box(Vector3(0.5, 0.04, 0.6), _gate_color(float(gate.get("mult", 1.0))))
 		plate.position = area.position
 		add_child(plate)
 
@@ -277,7 +284,9 @@ func _build_upgrade_pad() -> void:
 	area.position = Vector3(c.upgrade_pad_pos.x, c.upgrade_pad_pos.y, 0.0)
 	area.body_entered.connect(_on_upgrade_pad_entered)
 	add_child(area)
-	var visual := _make_box(Vector3(0.45, 0.05, 0.45), Color(0.2, 0.8, 0.9))
+	var visual := VisualFactory.make_metal_box(
+		Vector3(0.45, 0.05, 0.45), Color(0.2, 0.8, 0.9), Color(0.2, 0.8, 0.9), 0.8
+	)
 	visual.position = area.position
 	add_child(visual)
 
@@ -292,6 +301,7 @@ func _on_roller_entered(body: Node3D) -> void:
 	if new_kind != kind:
 		body.set_meta("kind", new_kind)
 		_recolor_debris(body, new_kind)
+		SfxPlayer.play("roller_hit")
 
 func _on_bridge_entered(body: Node3D) -> void:
 	if not frenzy.active or body != car:
@@ -301,6 +311,7 @@ func _on_bridge_entered(body: Node3D) -> void:
 		_stun_timer = c.lava_fall_stun_secs
 		car.position.y = c.lava_bridge_y + 0.05
 		_flash_car(Color(1.0, 0.25, 0.2))
+		SfxPlayer.play("lava_fall")
 
 func _on_gate_entered(body: Node3D, gate_id: String) -> void:
 	if not (frenzy.active and body.is_in_group("frenzy_debris")):
@@ -310,6 +321,7 @@ func _on_gate_entered(body: Node3D, gate_id: String) -> void:
 		return
 	passed.append(gate_id)
 	body.set_meta("passed_gates", passed)
+	SfxPlayer.play("gate_pass", -6.0)
 
 func _on_furnace_entered(body: Node3D) -> void:
 	if not (frenzy.active and body.is_in_group("frenzy_debris")):
@@ -322,6 +334,7 @@ func _score_and_free(body: Node3D) -> void:
 	var awarded: float = frenzy.score_item(frenzy.base_value_for_kind(kind), passed)
 	game_state.cash += awarded
 	debris_scored.emit(awarded)
+	SfxPlayer.play("furnace_feed", -6.0)
 	_debris_nodes.erase(body)
 	_fake_debris_nodes.erase(body)
 	if is_instance_valid(body):
@@ -354,8 +367,8 @@ func _debris_color(kind: String) -> Color:
 		_: return Color(0.85, 0.7, 0.2) # coin
 
 ## 真剛體嘅 body 係 RigidBody3D，MeshInstance3D 掛喺 child(0)；假物理
-## 嗰邊 _spawn_fake_debris() 直接用 _make_box() 個 MeshInstance3D 做
-## node 本身，冇 child——兩種情況都要兼容（Reviewer 意見：漏咗呢個
+## 嗰邊 _spawn_fake_debris() 直接用 VisualFactory 出嘅 MeshInstance3D
+## 做 node 本身，冇 child——兩種情況都要兼容（Reviewer 意見：漏咗呢個
 ## case，藍波喺假物理路徑一過滾筒就 get_child(0) 越界 + null 存取）。
 func _recolor_debris(body: Node3D, kind: String) -> void:
 	var mesh: MeshInstance3D = body if body is MeshInstance3D else body.get_child(0)
@@ -388,7 +401,7 @@ func _spawn_real_debris(kind: String, pos: Vector3) -> void:
 	body.set_meta("passed_gates", [])
 	body.mass = 0.2
 	body.gravity_scale = c.debris_gravity_scale
-	var mesh := _make_box(DEBRIS_SIZE, _debris_color(kind))
+	var mesh := VisualFactory.make_low_poly_cylinder(DEBRIS_SIZE.x * 0.5, DEBRIS_SIZE.y * 0.7, _debris_color(kind))
 	body.add_child(mesh)
 	var col := CollisionShape3D.new()
 	var shape := BoxShape3D.new()
@@ -402,7 +415,7 @@ func _spawn_real_debris(kind: String, pos: Vector3) -> void:
 ## 低階機自動降級到底之後嘅假物理：冇 RigidBody3D，位置插值直落，
 ## 逐幀手動夾門／滾筒／爐嘅範圍（見 _update_fake_debris）。
 func _spawn_fake_debris(kind: String, pos: Vector3) -> void:
-	var node := _make_box(DEBRIS_SIZE, _debris_color(kind))
+	var node := VisualFactory.make_low_poly_cylinder(DEBRIS_SIZE.x * 0.5, DEBRIS_SIZE.y * 0.7, _debris_color(kind))
 	node.set_meta("kind", kind)
 	node.set_meta("passed_gates", [])
 	node.position = pos
@@ -448,7 +461,7 @@ func _clear_debris() -> void:
 
 func spawn_gear() -> void:
 	var x: float = rng.randf_range(c.yard_x_range.x, c.yard_x_range.y)
-	var gear := _make_box(Vector3(0.16, 0.16, 0.16), Color(0.8, 0.85, 0.2))
+	var gear := VisualFactory.make_low_poly_cylinder(0.1, 0.1, Color(0.8, 0.85, 0.2), 8, 0.7)
 	gear.name = "Gear"
 	gear.position = Vector3(x, c.yard_spawn_y, 0.15)
 	add_child(gear)
@@ -479,6 +492,7 @@ func _on_gear_caught(body: Node3D, gear: Node3D) -> void:
 		return
 	var reward: float = frenzy.register_gear_catch()
 	game_state.components += reward
+	SfxPlayer.play("gear_catch")
 	for g: Dictionary in _gears_active.duplicate():
 		if g["node"] == gear:
 			_gears_active.erase(g)
