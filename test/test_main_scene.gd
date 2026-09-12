@@ -264,6 +264,31 @@ func test_frenzy_yard_ore_pool_is_wired_into_main_scene() -> void:
 	assert_eq(view._pool_slots.size(), main.c.ore_pool_total_count, "波池數量應該貼齊 constants.gd 嘅 ore_pool_total_count")
 	assert_eq(view._pool_mesh_by_tier.size(), main.c.ore_pool_tier_weights.size())
 
+## Review 意見（round 1）：鏟斗曾經擺喺 -Z（車尾／背向前進方向），實機
+## 睇落似「鏟斗拖喺車後面」。車不斷向 -Y 落（_handle_car_descent()），
+## 用真相機（斜視 pitch）投影嚟驗證：鏟斗嘅螢幕 Y 應該喺車身之後（即
+## 螢幕 Y 更大，同「向 -Y 前行嘅點」同一邊），唔可以喺車身之前（螢幕
+## Y 更細）。
+func test_car_blade_projects_ahead_in_direction_of_travel_not_behind() -> void:
+	var scene: PackedScene = load("res://main.tscn")
+	main = scene.instantiate()
+	add_child_autofree(main)
+
+	var view: FrenzyYardView = main._frenzy_view
+	var cam: Camera3D = main.get_node("World/Camera3D")
+	var body_screen_y: float = cam.unproject_position(view.car.global_transform * Vector3.ZERO).y
+	var blade_screen_y: float = cam.unproject_position(view.car.global_transform * view._blade_mesh.position).y
+	var ahead_screen_y: float = cam.unproject_position(view.car.global_transform * Vector3(0.0, -0.2, 0.0)).y
+
+	assert_gt(
+		blade_screen_y, body_screen_y,
+		"鏟斗應該投影喺車身之後（-Y 前進方向嗰邊，螢幕 Y 更大），唔可以掛喺車尾"
+	)
+	assert_true(
+		(blade_screen_y - body_screen_y) * (ahead_screen_y - body_screen_y) > 0.0,
+		"鏟斗同「向 -Y 前行嘅點」應該喺車身嘅同一邊"
+	)
+
 ## Review 意見（f457644 review）：_recolor_debris() 曾經假設 body 一定
 ## 係 RigidBody3D（mesh 喺 child(0)），但假物理路徑 _spawn_fake_debris()
 ## 生嘅 node 本身就係 MeshInstance3D，冇 child——藍波一過滾筒就

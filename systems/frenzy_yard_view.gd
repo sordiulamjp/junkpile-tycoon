@@ -245,7 +245,7 @@ func _build_walls() -> void:
 ## Area3D，改咗大細會連帶郁哂已經調校好嘅木橋安全闊度等數值）——呢張
 ## issue 淨係換表現層，唔郁物理／判分，梯形視覺同碰撞盒刻意分開兩件事。
 const CAR_BODY_SIZE := Vector3(0.28, 0.16, 0.28)
-const CAR_BLADE_SIZE := Vector3(0.6, 0.18, 0.09)
+const CAR_BLADE_SIZE := Vector3(0.6, 0.09, 0.2)
 const CAR_TRACK_SIZE := Vector3(0.08, 0.11, 0.32)
 const CAR_TRACK_COLOR := Color(0.14, 0.14, 0.15)
 
@@ -262,9 +262,13 @@ func _build_car() -> void:
 	# 鏟斗擺喺車頭（-Y，車不斷向落嘅方向，見 _handle_car_descent()）、
 	# 闊過車身好多先似「鏟」；顏色由 _apply_car_tier_visual() 揸（issue：
 	# 「鏟斗鮮色（紅／黃）」，UPGRADE 逐級升先變闊，唔再係成架車等比縮放）。
+	# Review 意見（round 1）：舊版擺咗喺 -Z（車尾／背向前進方向），
+	# headless unproject_position() 量過鏟斗投影喺車身上方——依家改擺
+	# -Y（車身底下，向落嘅方向），Y 係「厚度」（伸出去 body 底之外一截），
+	# Z 同車身一樣深，唔再伸出去 Z 方向。
 	_blade_mesh = VisualFactory.make_metal_box(CAR_BLADE_SIZE, Color(0.55, 0.15, 0.15))
 	_blade_mat = _blade_mesh.material_override
-	_blade_mesh.position = Vector3(0.0, 0.0, -(CAR_BODY_SIZE.z * 0.5 + CAR_BLADE_SIZE.z * 0.5 - 0.02))
+	_blade_mesh.position = Vector3(0.0, -(CAR_BODY_SIZE.y * 0.5 + CAR_BLADE_SIZE.y * 0.5 - 0.02), 0.0)
 	car.add_child(_blade_mesh)
 
 	# 履帶——兩條低身長盒仔代替四粒輪，卡通推土機必備語言（issue 視覺
@@ -661,12 +665,15 @@ func _activate_pool_slot(slot: Dictionary) -> void:
 	body.position = slot["pos"]
 	_pool_kick_root.add_child(body) # apply_central_impulse() 要求 body 已經入咗物理空間，一定要先 add_child()
 
-	# 向遠離車嘅方向加少少向上衝力，做「鏟開」嘅揚起感，唔會齋喺原地
-	# 畀重力慢慢拖落去（issue 驗收：「車推過波散開有『推堆』爽感」）。
+	# Review 意見（round 1）：舊版將 Y 分量夾做「一定向上」，等於將粒波
+	# 撞入車自己個碰撞盒（kick_radius 0.15 細過車盒半高／半闊），headless
+	# trace 見到個衝力即刻畀 depenetration 食晒。鏟斗擺喺車身底（-Y）之後，
+	# 呢度改為向側／向下（遠離車盒），先真係推得開，唔會撞返自己車身。
 	var away: Vector3 = (slot["pos"] as Vector3) - car.position
-	away.y = absf(away.y) + 0.4
-	if away.length() < 0.001:
-		away = Vector3(rng.randf_range(-1.0, 1.0), 0.6, 0.0)
+	away.y = -absf(away.y) - 0.3
+	if Vector2(away.x, away.z).length() < 0.001:
+		away.x = rng.randf_range(-1.0, 1.0)
+		away.z = rng.randf_range(-1.0, 1.0)
 	body.apply_central_impulse(away.normalized() * c.ore_pool_kick_impulse)
 
 	_pool_kicked.append({"slot": slot, "node": body, "timer": 0.0})
