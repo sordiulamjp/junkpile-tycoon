@@ -6,9 +6,13 @@ extends GutTest
 
 var main: Node
 
+func before_each() -> void:
+	RemoteConstants.clear_cache()
+
 func after_each() -> void:
 	if is_instance_valid(main):
 		main.free()
+	RemoteConstants.clear_cache()
 
 func test_scene_loads_and_ticks_without_error() -> void:
 	var scene: PackedScene = load("res://main.tscn")
@@ -253,6 +257,21 @@ func test_starting_cash_covers_first_miner_purchase() -> void:
 
 	main._try_summon_miner()
 	assert_eq(main.state.miner_count, 1, "開場 Cash 應該可以直接撳掣買到第一個礦工")
+
+## VR-08 Review 修正：starting_cash 喺 GameState._init() 就已經俾讀走，
+## 純靠 _ready() 尾段先背景 fetch 嚟 set() 落 c 係唔會生效嘅（每次重開都
+## 一樣）。要證明「改遠端 JSON 後 App 重開即生效」對呢類欄位都成立，
+## 一定要喺構造 GameState 之前就套用返 cache——呢個測試模擬「上次已經
+## 成功 fetch 過一份 cache」，斷言重開（即呢次場景載入）即刻食到新值。
+func test_cached_remote_override_applies_before_game_state_init() -> void:
+	RemoteConstants.write_cache({"starting_cash": 777.0})
+
+	var scene: PackedScene = load("res://main.tscn")
+	main = scene.instantiate()
+	add_child_autofree(main)
+
+	assert_almost_eq(main.c.starting_cash, 777.0, 0.001, "c 本身要覆寫咗")
+	assert_almost_eq(main.state.cash, 777.0, 0.001, "GameState._init() 讀 c.starting_cash 嗰刻已經要係新值")
 
 ## 2. 相機視角：跟 docx §6 斜視（pitch/yaw），唔再係正面平視（rotation=0）
 ## 令 BoxMesh 變 2D 色塊。

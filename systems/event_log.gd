@@ -23,8 +23,10 @@ const EVENT_TYPES := [
 
 
 ## 寫一行事件：{ts, version, type, data}。ts 用 unix 秒（Time.get_unix_time_from_system()），
-## version 對應 Godot 專案版本（暫定 1，出版本時提升）。壞唔到：讀／寫檔失敗都靜靜哋
-## 吞（跟 SaveManager 一樣，log 系統本身唔可以搞到遊戲行為受影響）。
+## version 讀 project.godot 嘅 `application/config/version`（出新版記得同
+## export_presets.cfg 嘅 version/name 一齊改，兩處冇自動同步；冇設就 fallback
+## 做 1，唔會拋錯）。壞唔到：讀／寫檔失敗都靜靜哋吞（跟 SaveManager 一樣，
+## log 系統本身唔可以搞到遊戲行為受影響）。
 static func log_event(type: String, data: Dictionary = {}) -> void:
 	var entry := {
 		"ts": Time.get_unix_time_from_system(),

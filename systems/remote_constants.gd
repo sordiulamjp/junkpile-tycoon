@@ -45,3 +45,45 @@ static func apply_overrides(base: GameConstants, overrides: Dictionary) -> GameC
 	for key: String in overrides:
 		result.set(key, overrides[key])
 	return result
+
+
+# ══════════════ 本機 cache：「App 重開即生效」要靠佢，唔淨係靠背景 fetch ══════════════
+# Review 意見（ALTA-155）：main.gd 開機順序係 `c = GameConstants.new()` →
+# 起 GameState／FrenzyState／pile timer → 世界／HUD 起晒之後先背景 fetch。
+# 有幾個 TUNE 欄位喺 GameState/FrenzyState._init() 或者 Timer.wait_time
+# 果陣已經俾讀走（starting_cash、frenzy_first_cooldown_secs、
+# pile_debris_spawn_interval_secs），background fetch 嗰陣先 set() 落 `c`
+# 已經太遲——就算改咗遠端 JSON、重開幾多次呢幾個欄位都唔會生效。
+#
+# 解法：每次 fetch 成功（包括伺服器話「而家冇任何覆寫」嗰種空結果）就將
+# sanitize 好嘅 overrides 寫落 user:// 做 cache；下次開機 main.gd 喺
+# `c = GameConstants.new()` 之後、構造任何讀 `c` 嘅物件之前，就同步讀返
+# cache 套用落 `c`——咁樣所有白名單欄位（包括呢三個）先至真正「重開即
+# 生效」，離線都用返上次成功攞到嘅值。
+const CACHE_PATH := "user://remote_constants_cache.json"
+
+## 讀返上次成功 fetch 存低嘅 overrides（冇 cache／讀壞都回傳空 Dictionary，
+## 唔會拋錯）。讀返嚟嗰陣會再 sanitize 一次——cache 檔案本身壞咗／俾人手
+## 改壞都唔會套用到壞值，同網絡嗰條 fallback 路一致嘅企位。
+static func read_cache() -> Dictionary:
+	if not FileAccess.file_exists(CACHE_PATH):
+		return {}
+	var file := FileAccess.open(CACHE_PATH, FileAccess.READ)
+	if file == null:
+		return {}
+	var text := file.get_as_text()
+	file.close()
+	return sanitize_overrides(JSON.parse_string(text))
+
+## 存低呢次成功 fetch 攞到嘅 overrides（可以係空 Dictionary——代表伺服器
+## 而家冇任何覆寫，下次開機應該用返純本機預設，唔係維持舊 cache）。
+static func write_cache(overrides: Dictionary) -> void:
+	var file := FileAccess.open(CACHE_PATH, FileAccess.WRITE)
+	if file == null:
+		return
+	file.store_string(JSON.stringify(overrides))
+	file.close()
+
+static func clear_cache() -> void:
+	if FileAccess.file_exists(CACHE_PATH):
+		DirAccess.remove_absolute(CACHE_PATH)
