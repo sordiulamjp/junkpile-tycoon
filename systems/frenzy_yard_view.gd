@@ -373,6 +373,7 @@ func _spawn_real_debris(kind: String, pos: Vector3) -> void:
 	body.set_meta("kind", kind)
 	body.set_meta("passed_gates", [])
 	body.mass = 0.2
+	body.gravity_scale = c.debris_gravity_scale
 	var mesh := _make_box(DEBRIS_SIZE, _debris_color(kind))
 	body.add_child(mesh)
 	var col := CollisionShape3D.new()

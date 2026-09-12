@@ -171,6 +171,7 @@ enum Resource3 { CASH, COMPONENTS, ECO }
 @export var barrel_spawn_ratio: float = 0.35   # TUNE：生成池入面藍波佔比，其餘係散幣
 @export var debris_spawn_interval_secs: float = 0.08 # TUNE：狂熱期間隔幾耐生一粒新碎料（未撞 cap 先生）
 @export var debris_fake_fall_speed: float = 1.4      # TUNE：假物理（位置插值）落速，低階機用嚟代替剛體
+@export var debris_gravity_scale: float = 0.12       # TUNE：實機 playtest 發現預設重力（9.8）跌 spawn_y→yard_min_y 成個車場淨使 <1s，車追唔切；夾細落速等剛體有時間畀車撞／過滾筒／過門
 
 ## -- 刺滾筒（藍波 → 金幣） --
 @export var spike_roller_pos: Vector2 = Vector2(0.65, -0.5)            # TUNE
