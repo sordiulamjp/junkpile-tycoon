@@ -24,8 +24,9 @@ func test_scene_loads_and_ticks_without_error() -> void:
 	for i in range(5):
 		main._process(0.1)
 
-	# 未召喚礦工，行幾幀都唔應該有 error 或者變負錢。
-	assert_almost_eq(main.state.cash, 0.0, 0.001)
+	# 未召喚礦工，行幾幀都唔應該再郁 Cash（開場 Cash＝starting_cash，
+	# ALTA-150 實機回饋：唔再係 0，見下面 test_starting_cash_covers_first_miner）。
+	assert_almost_eq(main.state.cash, main.c.starting_cash, 0.001)
 
 func test_summon_first_miner_updates_hud_and_pile() -> void:
 	var scene: PackedScene = load("res://main.tscn")
@@ -196,3 +197,83 @@ func test_summoned_miner_and_pile_debris_land_in_camera_mid_band() -> void:
 	var chunk: Node3D = main._pile_root.get_child(0)
 	_assert_in_mid_band(cam, miner.global_position, viewport_h, "Miner")
 	_assert_in_mid_band(cam, chunk.global_position, viewport_h, "PileDebrisChunk")
+
+
+# ── 用戶實機回饋回歸測試（ALTA-150，2026-09-12 Windows Godot playtest）───
+# 四點：開場經濟、相機視角、碎料視覺／回饋、掣顏色。
+
+## 1. 開場經濟：開場 Cash 要即刻夠買第一個礦工（唔使剷幾粒碎料先夠），
+## 令「~20s 第一個礦工」嘅首節腳本撳得到。
+func test_starting_cash_covers_first_miner_purchase() -> void:
+	var scene: PackedScene = load("res://main.tscn")
+	main = scene.instantiate()
+	add_child_autofree(main)
+
+	assert_almost_eq(main.state.cash, main.c.starting_cash, 0.001)
+	assert_true(main.state.cash >= main.state.next_miner_cost(), "開場 Cash 應該即刻夠買第一個礦工")
+
+	main._try_summon_miner()
+	assert_eq(main.state.miner_count, 1, "開場 Cash 應該可以直接撳掣買到第一個礦工")
+
+## 2. 相機視角：跟 docx §6 斜視（pitch/yaw），唔再係正面平視（rotation=0）
+## 令 BoxMesh 變 2D 色塊。
+func test_camera_is_tilted_not_front_on() -> void:
+	var scene: PackedScene = load("res://main.tscn")
+	main = scene.instantiate()
+	add_child_autofree(main)
+
+	var cam: Camera3D = main.get_node("World/Camera3D")
+	assert_almost_eq(cam.rotation_degrees.x, main.c.screen_camera_pitch_deg, 0.01)
+	assert_almost_eq(cam.rotation_degrees.y, main.c.screen_camera_yaw_deg, 0.01)
+	assert_ne(cam.rotation_degrees, Vector3.ZERO, "相機唔應該再係正面平視")
+
+## 3. 碎料視覺：盒仔放大到至少 0.25 世界單位，撳中有回饋（放大 tween）
+## 先消失（唔係即刻 free），開場提示第一次剷完就收起。
+func test_pile_chunk_visual_size_and_tap_feedback() -> void:
+	var scene: PackedScene = load("res://main.tscn")
+	main = scene.instantiate()
+	add_child_autofree(main)
+
+	assert_gte(main.PILE_CHUNK_VISUAL_SIZE, 0.25)
+
+	main._on_pile_spawn_timeout()
+	var chunk: MeshInstance3D = main._pile_root.get_child(0)
+	assert_eq((chunk.mesh as BoxMesh).size, Vector3.ONE * main.PILE_CHUNK_VISUAL_SIZE)
+
+	assert_true(main._scoop_hint_label.visible, "未撳過，提示應該仲顯示緊")
+
+	var area: Area3D = chunk.get_child(0)
+	var ore_key: String = main.state.pile_debris[0]
+	var click := InputEventMouseButton.new()
+	click.pressed = true
+	click.button_index = MOUSE_BUTTON_LEFT
+	main._on_pile_chunk_input(null, click, Vector3.ZERO, Vector3.ZERO, 0, chunk, area, ore_key)
+
+	assert_true(main._scoop_hint_shown, "撳中之後提示應該收埋")
+	assert_false(main._scoop_hint_label.visible)
+	# 撳中即刻仍然存在（播緊放大回饋嘅 tween），唔係即刻 free 冇回饋。
+	assert_true(is_instance_valid(chunk), "撳中一刻應該仲有回饋動畫，唔係即刻消失")
+	assert_false(area.input_ray_pickable, "播緊回饋嗰下應該停晒接輸入，唔會重複扣同一粒")
+
+## 4. 掣顏色：唔夠錢嘅升級掣價錢紅色，夠錢綠色，等玩家知道等緊錢
+## 唔係壞咗；撞上限／封頂嘅掣維持預設（唔叫呢個顏色）。
+func test_upgrade_buttons_color_by_affordability() -> void:
+	var scene: PackedScene = load("res://main.tscn")
+	main = scene.instantiate()
+	add_child_autofree(main)
+
+	main.state.cash = 0.0
+	main._refresh_hud()
+	assert_true(main._belt_upgrade_button.disabled)
+	assert_eq(
+		main._belt_upgrade_button.get_theme_color("font_disabled_color"), Color(0.95, 0.35, 0.3),
+		"唔夠錢應該紅色"
+	)
+
+	main.state.cash = main.state.next_belt_cost()
+	main._refresh_hud()
+	assert_false(main._belt_upgrade_button.disabled)
+	assert_eq(
+		main._belt_upgrade_button.get_theme_color("font_color"), Color(0.4, 0.9, 0.4),
+		"夠錢應該綠色"
+	)

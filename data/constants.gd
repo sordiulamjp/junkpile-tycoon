@@ -38,6 +38,11 @@ enum Resource3 { CASH, COMPONENTS, ECO }
 @export var screen_kx: float = 0.82  # docx
 @export var screen_ky: float = 0.40  # docx
 @export var screen_cy: float = 0.52  # docx
+## docx §6：正交相機約 55°／45°，即斜視 2.5D——用戶實機回饋（ALTA-150）
+## 見場景之前用 rotation=0（正面平視），BoxMesh 睇落係死板 2D 色塊，
+## 冚返呢兩個角度先睇到盒仔側面／立體感。
+@export var screen_camera_pitch_deg: float = -55.0 # docx
+@export var screen_camera_yaw_deg: float = 45.0    # docx
 @export var hud_top: int = 12    # docx
 @export var hud_mid: int = 66    # docx
 @export var hud_bottom: int = 22 # docx
@@ -76,6 +81,12 @@ enum Resource3 { CASH, COMPONENTS, ECO }
 ## -- 礦工：召喚（上限 miner_summon_cap） --
 @export var miner_cost_base: float = 15.0 # TUNE：召喚第 n 隻 = base × mult^(n-1)
 @export var miner_cost_mult: float = 1.4  # TUNE
+
+## 開場資金——用戶實機回饋（ALTA-150，2026-09-12）：開場 Cash 0 < 第一個
+## 礦工價 15，冇初始礦工之下要撳好多下碎料先買到，違反首節腳本
+## 「~20s 第一個礦工」。改為開場 Cash 直接等如第一個礦工價，令玩家一
+## 開場撳「召喚礦工」就買得到，20 秒內完成首次購買。
+@export var starting_cash: float = miner_cost_base # TUNE
 
 ## -- 礦工等級（無上限線，取代舊版召喚價曲線嘅定位）--
 @export var miner_level_cost_base: float = 25.0  # TUNE：第 n 級價 = base × mult^n

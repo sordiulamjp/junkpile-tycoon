@@ -24,6 +24,7 @@ var pile_debris: Array[String] = []
 
 func _init(constants: GameConstants = null) -> void:
 	c = constants if constants != null else GameConstants.new()
+	cash = c.starting_cash # ALTA-150 實機回饋：開場即夠買第一個礦工
 
 
 # ══════════════════════ 礦工：召喚 ══════════════════════
