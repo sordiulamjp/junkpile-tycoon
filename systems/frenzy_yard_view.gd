@@ -290,6 +290,18 @@ func _build_upgrade_pad() -> void:
 	visual.position = area.position
 	add_child(visual)
 
+	# VR-06b：地上大字代替彈窗——同倍數門嘅 Label3D 一樣做法（issue 視覺
+	# 參考：「地上 SELL／UPGRADE 墊…用地上大字 + 價錢，唔用彈窗」；呢個
+	# 墊本身冇 Cash 價錢（免費踩過就升級，見 FrenzyState.try_upgrade_pad()），
+	# 所以淨顯示墊名）。
+	var label := Label3D.new()
+	label.text = "UPGRADE"
+	label.position = area.position + Vector3(0.0, 0.18, 0.0)
+	label.pixel_size = 0.003
+	label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	label.modulate = Color(0.75, 0.95, 1.0)
+	add_child(label)
+
 
 # ══════════════════════ Area3D 事件：刺滾筒／窄岩浆／倍數門／爐／UPGRADE 墊 ══════════════════════
 

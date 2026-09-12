@@ -19,13 +19,24 @@ const PALETTE := {
 	"cave_light": Color(0.5, 0.44, 0.36),
 	"belt": Color(0.35, 0.35, 0.38),
 	"furnace_body": Color(0.16, 0.34, 0.58),
-	"furnace_glow": Color(1.0, 0.55, 0.15),
+	# VR-06b：色板刻意同 IZM 參考唔同——暖色洞穴之下，爐口改用藍火做
+	# 對比（issue 視覺參考 ALTA-153 留言：「爐口藍火對比」），代替 VR-06
+	# 嗰陣嘅橙光。
+	"furnace_glow": Color(0.25, 0.55, 0.95),
 	"warehouse_body": Color(0.2, 0.4, 0.65),
 	"warehouse_roof": Color(0.14, 0.28, 0.46),
 	"lava": Color(0.85, 0.25, 0.05),
 	"bridge_wood": Color(0.45, 0.3, 0.15),
 	"gear_metal": Color(0.6, 0.62, 0.66),
 	"wall": Color(0.25, 0.25, 0.28, 0.5),
+	# VR-06b：峽谷岩壁（faceted rock）+ 地面——暖色洞穴，同 furnace_glow
+	# 嘅冷藍火成對比色（見上）。
+	"canyon_wall": Color(0.42, 0.28, 0.16),
+	"canyon_wall_dark": Color(0.24, 0.15, 0.09),
+	"ground_warm": Color(0.36, 0.32, 0.28),
+	"ground_tread": Color(0.28, 0.25, 0.22),
+	"entrance_eave": Color(0.5, 0.3, 0.15),
+	"lamp_warm": Color(1.0, 0.78, 0.4),
 }
 
 const MINER_MODEL_PATH := "res://assets/models/character-g.glb"
@@ -106,6 +117,33 @@ static func make_ore_chunk(size: float, color: Color) -> MeshInstance3D:
 	prism.left_to_right = 0.5
 	mesh_instance.mesh = prism
 	mesh_instance.material_override = flat_material(color, Color(0, 0, 0), 0.0, 0.15, 0.5)
+	return mesh_instance
+
+## VR-06b：低多邊形切面岩壁——一嚿楔形（PrismMesh）代表一塊岩石切面，
+## `skew` 揸 `left_to_right`（0~1）令每嚿唔對稱，加埋 call site 嘅隨機
+## 旋轉／大細 jitter 先砌到「唔規則切面」感，唔靠貼圖（issue 視覺參考：
+## faceted rock，flat shading，冇貼圖）。
+static func make_rock_facet(size: Vector3, color: Color, skew: float = 0.5) -> MeshInstance3D:
+	var mesh_instance := MeshInstance3D.new()
+	var prism := PrismMesh.new()
+	prism.size = size
+	prism.left_to_right = clampf(skew, 0.0, 1.0)
+	mesh_instance.mesh = prism
+	mesh_instance.material_override = flat_material(color, Color(0, 0, 0), 0.0, 0.05, 0.95)
+	return mesh_instance
+
+## VR-06b：礦道入口嘅「一盞燈」——低面數圓球，帶少少自發光，擺喺熔爐／
+## 倉嘅屋簷邊做暖色燈籠感（issue 視覺參考：「方形入口 + 屋簷 + 一盞燈」
+## 語言，用自己色）。
+static func make_lamp(radius: float, color: Color, emission_energy: float = 1.2) -> MeshInstance3D:
+	var mesh_instance := MeshInstance3D.new()
+	var sphere := SphereMesh.new()
+	sphere.radius = radius
+	sphere.height = radius * 2.0
+	sphere.radial_segments = 8
+	sphere.rings = 4
+	mesh_instance.mesh = sphere
+	mesh_instance.material_override = flat_material(color, color, emission_energy, 0.0, 0.6)
 	return mesh_instance
 
 

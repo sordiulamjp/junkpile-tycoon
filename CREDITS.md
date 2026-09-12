@@ -56,4 +56,9 @@ PrismMesh／CSG）現砌，flat-shaded 材質，冇貼圖——跟 issue 講明�
 CSG／ArrayMesh 砌，flat-shading 下效果一致」。色板見 `visual_factory.gd` 頂部 `PALETTE`
 常數，對應 docx 概念圖（洞穴啡／廢料灰啡／熔爐藍＋橙光／岩浆橙紅／礦物階色／齒輪金屬灰／皇冠紫）。
 
+VR-06b（ALTA-214，鏡頭改透視 + 峽谷岩壁環境 + HUD 排法）：峽谷岩壁（`make_rock_facet()`）、
+地面／車轍紋、熔爐倉嘅屋簷＋燈（`make_lamp()`）同一套做法自製，冇新第三方素材；爐口色由橙
+改藍火（`furnace_glow`）純色板調整。HUD 右上設定／任務兩個方掣（先做外觀，未接功能）重用現有
+`assets/icons/gear.png`／`star.png`（已喺上面圖示表列出，CC0），冇加新檔案。
+
 App icon（`assets/icon.png`）：自製，唔涉及第三方素材。
