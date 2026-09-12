@@ -266,8 +266,11 @@ func test_camera_is_tilted_not_front_on() -> void:
 	assert_almost_eq(cam.rotation_degrees.y, main.c.screen_camera_yaw_deg, 0.01)
 	assert_ne(cam.rotation_degrees, Vector3.ZERO, "相機唔應該再係正面平視")
 
-## 3. 碎料視覺：盒仔放大到至少 0.25 世界單位，撳中有回饋（放大 tween）
+## 3. 碎料視覺：放大到至少 0.25 世界單位，撳中有回饋（放大 tween）
 ## 先消失（唔係即刻 free），開場提示第一次剷完就收起。
+## VR-06 換皮：碎料由 BoxMesh 改用 VisualFactory 出嘅楔形 PrismMesh
+## （睇落似粒石／礦），呢度斷言跟返 VisualFactory.make_ore_chunk()
+## 嘅 size 換算公式，唔係話呢粒嘢一定要係盒仔。
 func test_pile_chunk_visual_size_and_tap_feedback() -> void:
 	var scene: PackedScene = load("res://main.tscn")
 	main = scene.instantiate()
@@ -277,7 +280,9 @@ func test_pile_chunk_visual_size_and_tap_feedback() -> void:
 
 	main._on_pile_spawn_timeout()
 	var chunk: MeshInstance3D = main._pile_root.get_child(0)
-	assert_eq((chunk.mesh as BoxMesh).size, Vector3.ONE * main.PILE_CHUNK_VISUAL_SIZE)
+	var prism := chunk.mesh as PrismMesh
+	assert_not_null(prism, "VR-06 碎料視覺應該係 VisualFactory.make_ore_chunk() 出嘅 PrismMesh")
+	assert_eq(prism.size, Vector3(main.PILE_CHUNK_VISUAL_SIZE, main.PILE_CHUNK_VISUAL_SIZE * 1.3, main.PILE_CHUNK_VISUAL_SIZE))
 
 	assert_true(main._scoop_hint_label.visible, "未撳過，提示應該仲顯示緊")
 
