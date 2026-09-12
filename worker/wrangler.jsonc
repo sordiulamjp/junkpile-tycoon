@@ -1,0 +1,20 @@
+// Junkpile Tycoon 遠端 constants worker 嘅 Cloudflare Workers Builds 設定。
+// 淨係接咗 Workers Builds 做 git push 自動部署（見 README.md「部署」）先
+// 使用得著呢個檔案——手動喺 dashboard 貼 code 完全唔需要佢。
+//
+// binding 嘅 id 係資源識別碼，唔係機密，可以 commit；真正機密（ADMIN_KEY
+// 嘅值）永遠淨係喺 Cloudflare dashboard 度，唔會出現喺呢個 repo。
+{
+  "name": "junkpile-tycoon-constants",
+  "main": "worker.js",
+  "compatibility_date": "2026-09-01",
+  // 用 workers.dev 子網域對外提供服務；帳戶要先喺 dashboard（Workers &
+  // Pages > Overview）登記一次子網域，之後部署先成功。
+  "workers_dev": true,
+  "observability": { "enabled": true },
+  "kv_namespaces": [
+    // 喺 Storage & Databases > KV 開好 namespace（見 README.md 第 2 步）
+    // 之後，將 "id" 換做嗰個 namespace 嘅 id。
+    { "binding": "CONSTANTS", "id": "REPLACE_WITH_KV_NAMESPACE_ID" }
+  ]
+}

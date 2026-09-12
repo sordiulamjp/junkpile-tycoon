@@ -59,6 +59,7 @@ var rng := RandomNumberGenerator.new()
 
 var _belt_visual_accum: float = 0.0
 var _pile_spawn_timer: Timer
+var _remote_constants_loader: RemoteConstantsLoader # VR-08
 
 # -- 3D 節點 --
 var _world: Node3D
@@ -108,6 +109,29 @@ func _ready() -> void:
 
 	_refresh_hud()
 
+	# VR-08：本機事件 log + 遠端 constants 覆寫，見 systems/event_log.gd／
+	# systems/remote_constants_loader.gd。呢兩樣都喺世界／HUD 起晒之後
+	# 先做，唔會拖慢開場（背景 fetch，攞唔到就繼續用本機預設）。
+	EventLog.log_event("session_start")
+	_start_remote_constants_fetch()
+
+
+## 開機背景攞遠端 constants 覆寫；成功就直接 set() 落現有嘅 `c`（同一個
+## Resource 個體，state／frenzy／_frenzy_view 全部揸緊呢個 reference，
+## 唔使逐個傳過），失敗就乜都唔做（維持本機預設）。
+func _start_remote_constants_fetch() -> void:
+	_remote_constants_loader = RemoteConstantsLoader.new()
+	add_child(_remote_constants_loader)
+	_remote_constants_loader.finished.connect(_on_remote_constants_loaded)
+	_remote_constants_loader.start()
+
+func _on_remote_constants_loaded(overrides: Dictionary, _source: String) -> void:
+	if overrides.is_empty():
+		return
+	for key: String in overrides:
+		c.set(key, overrides[key])
+	_refresh_hud() # 有覆寫升級價／狂熱數值等 → HUD 顯示緊嘅價錢即刻反映新值
+
 
 func _process(delta: float) -> void:
 	var result: Dictionary = state.tick(delta)
@@ -128,8 +152,10 @@ func _process(delta: float) -> void:
 # ══════════════════════ VR-04：狂熱車場觸發 ══════════════════════
 
 func _try_start_frenzy() -> void:
-	if not frenzy.start(state.current_income_rate()):
+	var income_rate := state.current_income_rate()
+	if not frenzy.start(income_rate):
 		return
+	EventLog.log_event("frenzy_start", {"income_rate": income_rate})
 	SfxPlayer.play("frenzy_start")
 	_placement_root.visible = false
 	# Review 意見：淨係隱藏 _placement_root 唔會關咗山腳碎料 Area3D 嘅
@@ -141,6 +167,7 @@ func _try_start_frenzy() -> void:
 	_frenzy_view.start()
 
 func _on_frenzy_ended() -> void:
+	EventLog.log_event("frenzy_end", {"eco_bonus": frenzy.eco_bonus_earned})
 	state.eco += frenzy.eco_bonus_earned
 	_frenzy_view.stop()
 	_placement_root.visible = true
@@ -548,6 +575,7 @@ func _build_hud() -> void:
 	_style_upgrade_button(_belt_upgrade_button, "res://assets/icons/arrowRight.png")
 	_belt_upgrade_button.pressed.connect(func() -> void:
 		if state.upgrade_belt():
+			EventLog.log_event("upgrade", {"track": "belt", "level": state.belt_level})
 			SfxPlayer.play("upgrade")
 	)
 	upgrades_row.add_child(_belt_upgrade_button)
@@ -557,6 +585,7 @@ func _build_hud() -> void:
 	_style_upgrade_button(_miner_upgrade_button, "res://assets/icons/plus.png")
 	_miner_upgrade_button.pressed.connect(func() -> void:
 		if state.upgrade_miner_level():
+			EventLog.log_event("upgrade", {"track": "miner", "level": state.miner_level})
 			SfxPlayer.play("upgrade")
 	)
 	upgrades_row.add_child(_miner_upgrade_button)
@@ -566,6 +595,7 @@ func _build_hud() -> void:
 	_style_upgrade_button(_refine_upgrade_button, "res://assets/icons/wrench.png")
 	_refine_upgrade_button.pressed.connect(func() -> void:
 		if state.upgrade_refine():
+			EventLog.log_event("upgrade", {"track": "refine", "level": state.refine_level})
 			SfxPlayer.play("upgrade")
 	)
 	upgrades_row.add_child(_refine_upgrade_button)

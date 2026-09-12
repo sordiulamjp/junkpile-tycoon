@@ -7,9 +7,10 @@ class_name GameConstants
 ##   docx = docx 已定案數值／行為，唔准改
 ##   TUNE = docx 冇寫，Coder 定嘅預設值；上架後遠端設定（VR-08）可覆寫
 ##
-## 用法：GameConstants.new() 攞預設值。遠端設定覆寫時載入同結構嘅
-## GameConstants 執行個體（例如覆寫過 @export 欄位嘅 .tres），所有取值／
-## 計算一律經由呢個個體嘅方法或屬性，唔好假設呢度係常數（const）唔會變。
+## 用法：GameConstants.new() 攞預設值。遠端設定覆寫（VR-08，見
+## systems/remote_constants.gd + worker/）淨係將 REMOTE_TUNABLE_FIELDS
+## 白名單入面嘅欄位用 set() 覆寫喺同一個個體度，所有取值／計算一律經由
+## 呢個個體嘅方法或屬性，唔好假設呢度係常數（const）唔會變。
 
 const SAVE_KEY := "junkpile-save-v1" # docx：存檔鍵（原 vein-rush-save-v1 改名）
 
@@ -220,6 +221,41 @@ enum Resource3 { CASH, COMPONENTS, ECO }
 @export var frenzy_fps_low_streak_to_degrade: int = 2    # TUNE：連續幾多次低於門檻先降級，避免單幀抖動
 @export var frenzy_debris_degrade_steps: Array[int] = [200, 100, 50] # TUNE：debris_rigidbody_cap（tier 0＝300）之後逐級降嘅上限
 @export var frenzy_fake_physics_min_tier: int = 3 # TUNE：跌到呢一級（0=debris_rigidbody_cap，1..=frenzy_debris_degrade_steps）先轉用假物理（位置插值代替剛體）
+
+
+# ══════════════ E. VR-08 遠端覆寫白名單（純量 TUNE 欄位） ══════════════
+# 只有呢度列出嘅名先會俾 systems/remote_constants.gd 嘅 RemoteConstants
+# 覆寫（型別 float／int，`set()` 直接寫喺同一個個體，見上面用法註解）。
+# Dictionary／Array／Vector／Color 嘅 TUNE 欄位（ore_distribution、
+# offline_bands、yard_x_range、spike_roller_pos、spike_roller_half_extents、
+# lava_bridge_safe_x_range、upgrade_pad_pos、car_upgrade_tiers、
+# frenzy_debris_degrade_steps）呢期未支援遠端覆寫——結構化覆寫要另外
+# 設計 schema／夾範圍，超出呢個 issue 範圍，維持本機預設。
+#
+# ⚠️ test/test_constants_remote_tunable.gd 會掃描呢個檔案嘅 `# TUNE`
+# 純量欄位，同呢個名單逐一對數——加／刪一個純量 TUNE 欄位都要同步改呢度，
+# 唔係就測試會 fail（防止漏咗白名單或者漏咗清走已刪走嘅欄位）。
+const REMOTE_TUNABLE_FIELDS: Array[String] = [
+	"ore_rate_per_miner", "miner_cost_base", "miner_cost_mult", "starting_cash",
+	"miner_level_cost_base", "miner_level_cost_mult", "miner_level_speed_mult",
+	"belt_cap_lv1", "belt_step", "belt_level_cap", "belt_cost_base", "belt_cost_mult",
+	"refine_cost_base", "refine_cost_mult", "refine_value_mult", "frenzy_duration_secs",
+	"frenzy_mult", "frenzy_cooldown_secs", "frenzy_first_cooldown_secs",
+	"gear_drop_interval_secs", "frenzy_manual_eff", "eco_gain_hazard_per_item",
+	"eco_gain_perfect_sort_bonus", "eco_gain_daily_goal_bonus", "car_capacity", "car_speed",
+	"debris_rigidbody_cap", "ai_driver_eff", "trash_meter_decay_per_sec",
+	"offline_cap_secs", "offline_min_gap_secs", "unlock_mid_price", "unlock_upper_price",
+	"prestige_base", "prestige_growth", "prestige_bonus_per_reset",
+	"rewarded_offline_x2_per_day", "rewarded_extra_frenzy_per_day",
+	"pile_debris_spawn_interval_secs", "belt_visual_travel_secs", "yard_min_y",
+	"yard_spawn_y", "car_descent_speed", "scrap_coin_value", "scrap_barrel_value",
+	"scrap_gold_value", "barrel_spawn_ratio", "debris_spawn_interval_secs",
+	"debris_fake_fall_speed", "debris_gravity_scale", "lava_bridge_y",
+	"lava_fall_overflow_amount", "lava_fall_stun_secs", "upgrade_pad_rearm_secs",
+	"gear_component_reward", "gear_pickup_window_secs", "frenzy_fps_sample_interval_secs",
+	"frenzy_fps_low_threshold", "frenzy_fps_low_streak_to_degrade",
+	"frenzy_fake_physics_min_tier",
+]
 
 
 # ══════════════════════════ 計算方法 ══════════════════════════

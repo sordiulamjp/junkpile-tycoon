@@ -9,6 +9,10 @@ class_name SaveManager
 ## 讀檔時經 _migrate() 由舊版本一路陞級到 CURRENT_VERSION。新增/改動存檔
 ## 欄位時，CURRENT_VERSION += 1，並喺 _migrate() 加一段新嘅 `if version < N`
 ## 分支嚟補齊／轉換欄位——唔好改舊分支嘅邏輯，保證舊存檔一路陞級落嚟都啱。
+##
+## VR-08 備註：main.gd 而家仲未有喺開機／退出叫 load_state()／save_state()
+## （見 data/offline_settlement.gd、data/prestige.gd 同一備註）——嗰段
+## 遊戲流程接駁仲未起，超出 VR-08 範圍。
 
 const SAVE_PATH := "user://save-v1.json"
 const CURRENT_VERSION := 1
