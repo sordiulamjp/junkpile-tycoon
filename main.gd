@@ -14,6 +14,13 @@ extends Node3D
 ## 正交相機嘅視野縮放同垂直置中，令山腳／帶／爐喺 3:4 直版入面啱晒
 ## HUD 12/66/22 版面。
 
+## 山腳堆疊嘅盒仔尺寸——純美術造型，唔係遊戲數值，所以留喺呢度做
+## script const（唔屬於 constants.gd 嘅「數值」，但相機取景要用嚟計算
+## 山頂最高會去到邊，所以抽出嚟同 _rebuild_foothill_stack() 共用，
+## 避免兩處各自 hardcode 一份出現唔一致）。
+const FOOTHILL_BASE_HEIGHT := 0.3
+const FOOTHILL_TIER_HEIGHT := 0.16
+
 var c: GameConstants
 var state: GameState
 var rng := RandomNumberGenerator.new()
@@ -74,6 +81,47 @@ func _process(delta: float) -> void:
 func _site_to_world(v: Vector2, z: float = 0.0) -> Vector3:
 	return Vector3(v.x, v.y, z)
 
+## 由實際場地座標（山腳／帶頭／爐／倉，加山頂長到盡嘅高度）反推正交
+## 相機嘅 size／中心，令呢啲物件嘅螢幕 Y 比例落喺 hud_top~1-hud_bottom
+## 之間（中層 66% 果段），唔會俾頂／底 HUD 遮咗。
+##
+## 上一版單憑 docx 嘅 screen_kx／screen_ky／screen_cy 三個數推導鏡頭
+## size／中心，撞出帶／爐／倉全部跌出畫面（Review 意見，見 ALTA-150）。
+## 原 Canvas 工程／docx 冇留低呢三個數點樣換算做正交相機參數嘅公式，
+## 淨憑估好易再撞第二次；而家改為直接由場地座標反推，保證幾個關鍵
+## 節點實跌喺中層帶入面。screen_kx／screen_ky／screen_cy 冇再用喺呢個
+## function（留喺 constants.gd 等後續搵返原公式或者遠端設定接手）。
+func _compute_camera_frame() -> Dictionary:
+	var pts: Array[Vector2] = [c.site_foothill_pos, c.belt_head_pos, c.smelter_pos, c.warehouse_pos]
+	var min_x: float = pts[0].x
+	var max_x: float = pts[0].x
+	var min_y: float = pts[0].y
+	var max_y: float = pts[0].y
+	for p in pts:
+		min_x = minf(min_x, p.x)
+		max_x = maxf(max_x, p.x)
+		min_y = minf(min_y, p.y)
+		max_y = maxf(max_y, p.y)
+
+	# 山頂會隨召喚礦工長到最盡（miner_summon_cap 層），連埋預留返
+	# 少少邊界，保證由 0 個礦工到 12 個礦工都留喺中層帶入面。
+	var mountain_top: float = c.site_foothill_pos.y + FOOTHILL_BASE_HEIGHT \
+		+ float(c.miner_summon_cap) * FOOTHILL_TIER_HEIGHT
+	max_y = maxf(max_y, mountain_top)
+	max_y += 0.3   # 山頂／礦工盒仔留白
+	min_y -= 0.5   # 倉腳留白
+	min_x -= 0.5
+	max_x += 0.5
+
+	var top_frac: float = c.hud_top / 100.0
+	var bottom_frac: float = 1.0 - (c.hud_bottom / 100.0)
+
+	var size: float = (max_y - min_y) / (bottom_frac - top_frac)
+	var world_cy: float = max_y - size * (0.5 - top_frac)
+	var world_cx: float = (min_x + max_x) * 0.5
+
+	return {"size": size, "cx": world_cx, "cy": world_cy}
+
 func _make_box(size: Vector3, color: Color) -> MeshInstance3D:
 	var mesh_instance := MeshInstance3D.new()
 	var box := BoxMesh.new()
@@ -92,12 +140,12 @@ func _build_world() -> void:
 	var cam := Camera3D.new()
 	cam.name = "Camera3D"
 	cam.projection = Camera3D.PROJECTION_ORTHOGONAL
-	# screen_ky 決定正交相機視野嘅垂直縮放；screen_cy 決定畫面中心對應
-	# 嘅世界 Y，令山腳到帶／爐嘅範圍啱晒 3:4 直版嘅中層（HUD mid 66%）。
-	cam.size = 1.0 / c.screen_ky
-	var world_cy: float = c.screen_cy / c.screen_ky
-	cam.position = Vector3(0.0, world_cy, 10.0)
+	cam.keep_aspect = Camera3D.KEEP_HEIGHT # size＝視野「高度」，唔受畫面闊度影響
+	var frame := _compute_camera_frame()
+	cam.size = frame["size"]
+	cam.position = Vector3(frame["cx"], frame["cy"], 10.0)
 	cam.rotation = Vector3.ZERO # 望向 -Z
+	cam.current = true
 	_world.add_child(cam)
 
 	var light := DirectionalLight3D.new()
@@ -130,12 +178,18 @@ func _build_world() -> void:
 	warehouse.position = _site_to_world(c.warehouse_pos, 0.22)
 	_world.add_child(warehouse)
 
+	# 礦工／山腳碎料嘅本地座標係「相對山腳」嘅少少 jitter；root 本身要
+	# 擺喺 site_foothill_pos，唔係就會全部跌喺世界原點（同底部 HUD
+	# 個 ColorRect 重疊，tap 事件俾 GUI 食咗去唔到 physics picking——
+	# Review 意見，見 ALTA-150）。
 	_miners_root = Node3D.new()
 	_miners_root.name = "MinersRoot"
+	_miners_root.position = _site_to_world(c.site_foothill_pos)
 	_world.add_child(_miners_root)
 
 	_pile_root = Node3D.new()
 	_pile_root.name = "PileRoot"
+	_pile_root.position = _site_to_world(c.site_foothill_pos)
 	_world.add_child(_pile_root)
 
 	_belt_items_root = Node3D.new()
@@ -153,8 +207,10 @@ func _rebuild_foothill_stack() -> void:
 	var tiers: int = state.miner_count
 	for i in range(tiers):
 		var t: float = float(i) / float(maxi(c.miner_summon_cap, 1))
-		var box := _make_box(Vector3(0.75 - t * 0.35, 0.16, 0.5 - t * 0.2), Color(0.5, 0.44, 0.36))
-		box.position = Vector3(0.0, 0.3 + float(i) * 0.16, 0.0)
+		var box := _make_box(
+			Vector3(0.75 - t * 0.35, FOOTHILL_TIER_HEIGHT, 0.5 - t * 0.2), Color(0.5, 0.44, 0.36)
+		)
+		box.position = Vector3(0.0, FOOTHILL_BASE_HEIGHT + float(i) * FOOTHILL_TIER_HEIGHT, 0.0)
 		_foothill_root.add_child(box)
 
 
@@ -272,7 +328,9 @@ func _build_hud() -> void:
 	top_bar.add_child(top_vbox)
 
 	_lock_label = Label.new()
-	_lock_label.text = "鎖住 · %s" % _fmt_num(c.unlock_price("mid"))
+	# issue 文案要求完整數字「鎖住 · 2,000,000」，唔用 _fmt_num() 嘅
+	# K/M 縮寫（嗰個係俾底部窄 HUD 用）。
+	_lock_label.text = "鎖住 · %s" % _fmt_int_commas(c.unlock_price("mid"))
 	top_vbox.add_child(_lock_label)
 
 	_prestige_bar = ProgressBar.new()
@@ -366,3 +424,16 @@ func _fmt_num(n: float) -> String:
 		v /= 1000.0
 		idx += 1
 	return "%s%.1f%s" % [sign_str, v, units[idx]]
+
+## 完整數字加千分位逗號（例如 2000000.0 → "2,000,000"），俾頂欄常駐
+## 提示用——嗰度地方夠闊，issue 文案亦要求完整數字。
+func _fmt_int_commas(n: float) -> String:
+	var sign_str := "-" if n < 0.0 else ""
+	var digits := str(int(round(absf(n))))
+	var grouped := ""
+	for i in range(digits.length()):
+		var pos_from_right := digits.length() - i
+		grouped += digits[i]
+		if pos_from_right > 1 and pos_from_right % 3 == 1:
+			grouped += ","
+	return sign_str + grouped
