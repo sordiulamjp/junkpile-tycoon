@@ -9,7 +9,18 @@ extends Node3D
 ## 方便 GUT 獨立測試（見 test/test_game_state.gd）。
 ##
 ## 座標：docx 場地座標 (x, y) 直接當世界單位用，y 向上（山向上長），Z
-## 俾盒仔少少立體厚度。相機用正交，跟 docx §6 斜視 pitch/yaw 約
+## 俾盒仔少少立體厚度——**成個放置場＋車場（VR-03／VR-04 共用）實際上
+## 全部住喺世界 Z=0 呢個平面**，斜視相機淨係改咗「點睇呢個平面」，冇
+## 將場地重新擺去地面 (XZ) 平面。（Review 意見，ALTA-150 round 3：
+## 曾經考慮改做「地面平面＋真垂直 Y」嘅古典等角視角，但 VR-04 車場
+## 一大堆已審過嘅座標常數（gates／spike_roller_pos／lava_bridge_y／
+## yard_x_range 等）全部跟緊現有 Z=0 平面假設，改嗰個要重新過晒 VR-04
+## 判分／物理，超出呢個 playtest-fix issue 嘅範圍，所以維持現狀；
+## touch→world 嘅映射（FrenzyYardView._unhandled_input()）已經改用
+## 射線同 Z=0 平面求交，唔再假設相機正面望 -Z，所以呢個決定唔會再
+## 逼手指映射嗰段代碼重做多次。副作用：帶／車道／四道門呢類橫向佈局
+## 斜視之後會睇落斜咗（唔再係水平線），純美術取捨，留返俾日後獨立
+## 設計 issue 處理。）相機用正交，跟 docx §6 斜視 pitch/yaw 約
 ## −55°／45°（screen_camera_pitch_deg／screen_camera_yaw_deg，用戶實機
 ## 回饋 ALTA-150：正面平視令方塊變 2D 色塊），令 BoxMesh 睇得出側面/立
 ## 體感（配 DirectionalLight3D 陰影）。size／位置由 _compute_camera_frame()
