@@ -1,8 +1,11 @@
 extends Node3D
 
 ## VR-03：放置場灰模（山腳 + 帶 + 爐 + 礦工 + 建築升級）。
+## VR-06：換皮——美術全部改由 systems/visual_factory.gd（VisualFactory）
+## 同 systems/sfx_player.gd（SfxPlayer autoload）出，呢個 script 淨係
+## 揀「邊個位置整邊種物件」，唔再自己起 mesh／材質（見 CREDITS.md 嘅
+## 資產來源）。
 ##
-## 灰模美術全部用 BoxMesh 喺 Godot 度直接砌（冇 Blender、冇 .blend）；
 ## 場景本身冇 hardcode 任何數值——全部經 GameConstants（`c`）／
 ## GameState（`state`）攞。呢個 script 淨係負責：擺位、畫面更新、
 ## 輸入轉接（tap-to-scoop）；核心數值邏輯全部喺 systems/game_state.gd，
@@ -127,6 +130,7 @@ func _process(delta: float) -> void:
 func _try_start_frenzy() -> void:
 	if not frenzy.start(state.current_income_rate()):
 		return
+	SfxPlayer.play("frenzy_start")
 	_placement_root.visible = false
 	# Review 意見：淨係隱藏 _placement_root 唔會關咗山腳碎料 Area3D 嘅
 	# 揀選——CollisionObject3D 物理揀選同 VisualInstance3D visible 係
@@ -211,16 +215,6 @@ func _compute_camera_frame() -> Dictionary:
 	var cam_pos: Vector3 = basis.x * local_cx + basis.y * local_cy + basis.z * local_cz
 	return {"size": size, "position": cam_pos}
 
-func _make_box(size: Vector3, color: Color) -> MeshInstance3D:
-	var mesh_instance := MeshInstance3D.new()
-	var box := BoxMesh.new()
-	box.size = size
-	mesh_instance.mesh = box
-	var mat := StandardMaterial3D.new()
-	mat.albedo_color = color
-	mesh_instance.material_override = mat
-	return mesh_instance
-
 func _build_world() -> void:
 	_world = Node3D.new()
 	_world.name = "World"
@@ -238,13 +232,27 @@ func _build_world() -> void:
 	cam.current = true
 	_world.add_child(cam)
 
+	# VR-06：洞穴暖色環境光 + 帶陰影嘅太陽光，代替預設冇環境光嘅平光。
+	var env := Environment.new()
+	env.background_mode = Environment.BG_COLOR
+	env.background_color = Color(0.15, 0.13, 0.12)
+	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+	env.ambient_light_color = Color(0.55, 0.46, 0.4)
+	env.ambient_light_energy = 0.7
+	var world_env := WorldEnvironment.new()
+	world_env.name = "WorldEnvironment"
+	world_env.environment = env
+	_world.add_child(world_env)
+
 	var light := DirectionalLight3D.new()
 	light.name = "DirectionalLight3D"
 	light.rotation_degrees = Vector3(-50.0, -30.0, 0.0)
 	# 用戶實機回饋（ALTA-150）：斜視之後 BoxMesh 要睇得出側面／立體感，
-	# 加返淡陰影（低 energy／唔太重手，避免灰模睇落太暗）。
-	light.shadow_enabled = true
+	# 加返淡陰影（低 energy／唔太重手，避免灰模睇落太暗）；VR-06 加暖色
+	# 溫度（洞穴太陽光唔係死白）。
+	light.light_color = Color(1.0, 0.92, 0.8)
 	light.light_energy = 1.1
+	light.shadow_enabled = true
 	_world.add_child(light)
 
 	# VR-04：放置場成組收埋喺呢個 root 底下，狂熱期間 toggle
@@ -259,8 +267,8 @@ func _build_world() -> void:
 	_placement_root.add_child(_foothill_root)
 	_rebuild_foothill_stack()
 
-	var belt_track := _make_box(
-		Vector3(0.18, 0.05, (c.belt_head_pos - c.smelter_pos).length()), Color(0.35, 0.35, 0.38)
+	var belt_track := VisualFactory.make_flat_box(
+		Vector3(0.18, 0.05, (c.belt_head_pos - c.smelter_pos).length()), VisualFactory.PALETTE["belt"]
 	)
 	belt_track.name = "BeltTrack"
 	var belt_mid := (c.belt_head_pos + c.smelter_pos) * 0.5
@@ -268,14 +276,28 @@ func _build_world() -> void:
 	belt_track.look_at_from_position(belt_track.position, _site_to_world(c.smelter_pos), Vector3.UP)
 	_placement_root.add_child(belt_track)
 
-	var smelter := _make_box(Vector3(0.5, 0.5, 0.5), Color(0.75, 0.35, 0.1))
+	# 熔爐：藍身 + 發光橙色爐口（VR-06 換皮，代替純色盒仔）。
+	var smelter := Node3D.new()
 	smelter.name = "Smelter"
 	smelter.position = _site_to_world(c.smelter_pos, 0.25)
+	var smelter_body := VisualFactory.make_metal_box(Vector3(0.5, 0.5, 0.5), VisualFactory.PALETTE["furnace_body"])
+	smelter.add_child(smelter_body)
+	var smelter_mouth := VisualFactory.make_metal_box(
+		Vector3(0.3, 0.22, 0.05), VisualFactory.PALETTE["furnace_glow"], VisualFactory.PALETTE["furnace_glow"], 1.5
+	)
+	smelter_mouth.position = Vector3(0.0, -0.05, 0.26)
+	smelter.add_child(smelter_mouth)
 	_placement_root.add_child(smelter)
 
-	var warehouse := _make_box(Vector3(0.6, 0.45, 0.45), Color(0.2, 0.4, 0.65))
+	# 倉：body + 斜頂，代替純色盒仔。
+	var warehouse := Node3D.new()
 	warehouse.name = "Warehouse"
 	warehouse.position = _site_to_world(c.warehouse_pos, 0.22)
+	var warehouse_body := VisualFactory.make_flat_box(Vector3(0.6, 0.45, 0.45), VisualFactory.PALETTE["warehouse_body"])
+	warehouse.add_child(warehouse_body)
+	var warehouse_roof := VisualFactory.make_flat_box(Vector3(0.66, 0.08, 0.5), VisualFactory.PALETTE["warehouse_roof"])
+	warehouse_roof.position = Vector3(0.0, 0.265, 0.0)
+	warehouse.add_child(warehouse_roof)
 	_placement_root.add_child(warehouse)
 
 	# 礦工／山腳碎料嘅本地座標係「相對山腳」嘅少少 jitter；root 本身要
@@ -301,14 +323,14 @@ func _build_world() -> void:
 func _rebuild_foothill_stack() -> void:
 	for child in _foothill_root.get_children():
 		child.queue_free()
-	var base := _make_box(Vector3(0.9, 0.3, 0.6), Color(0.42, 0.36, 0.3))
+	var base := VisualFactory.make_flat_box(Vector3(0.9, 0.3, 0.6), VisualFactory.PALETTE["cave"])
 	base.position = Vector3(0.0, 0.0, 0.0)
 	_foothill_root.add_child(base)
 	var tiers: int = state.miner_count
 	for i in range(tiers):
 		var t: float = float(i) / float(maxi(c.miner_summon_cap, 1))
-		var box := _make_box(
-			Vector3(0.75 - t * 0.35, FOOTHILL_TIER_HEIGHT, 0.5 - t * 0.2), Color(0.5, 0.44, 0.36)
+		var box := VisualFactory.make_flat_box(
+			Vector3(0.75 - t * 0.35, FOOTHILL_TIER_HEIGHT, 0.5 - t * 0.2), VisualFactory.PALETTE["cave_light"]
 		)
 		box.position = Vector3(0.0, FOOTHILL_BASE_HEIGHT + float(i) * FOOTHILL_TIER_HEIGHT, 0.0)
 		_foothill_root.add_child(box)
@@ -319,10 +341,13 @@ func _rebuild_foothill_stack() -> void:
 func _try_summon_miner() -> void:
 	if not state.summon_miner():
 		return
-	var miner := _make_box(Vector3(0.22, 0.4, 0.22), Color(0.95, 0.75, 0.1))
+	# VR-06：機械人 glTF（CREDITS.md）origin 喺腳底（y=0），同舊盒仔置中
+	# 唔同，企喺 y=0.1 貼地；盒仔 fallback 個樣會企得稍為浮啲，接受。
+	var miner := VisualFactory.make_miner()
 	miner.name = "Miner%d" % state.miner_count
 	var jitter := Vector2(rng.randf_range(-0.3, 0.3), 0.0)
-	miner.position = Vector3(jitter.x, 0.3, rng.randf_range(-0.2, 0.2))
+	miner.position = Vector3(jitter.x, 0.1, rng.randf_range(-0.2, 0.2))
+	miner.rotation.y = rng.randf_range(-0.4, 0.4)
 	_miners_root.add_child(miner)
 	_bob(miner)
 	_rebuild_foothill_stack()
@@ -346,8 +371,9 @@ func _on_pile_spawn_timeout() -> void:
 	_spawn_pile_visual(ore_key)
 
 func _spawn_pile_visual(ore_key: String) -> void:
-	var chunk := _make_box(Vector3.ONE * PILE_CHUNK_VISUAL_SIZE, _ore_color(ore_key))
+	var chunk := VisualFactory.make_ore_chunk(PILE_CHUNK_VISUAL_SIZE, _ore_color(ore_key))
 	chunk.position = Vector3(rng.randf_range(-0.4, 0.4), 0.55, rng.randf_range(-0.3, 0.3))
+	chunk.rotation.y = rng.randf_range(0.0, TAU)
 
 	var area := Area3D.new()
 	area.input_ray_pickable = true
@@ -373,6 +399,7 @@ func _on_pile_chunk_input(
 	if gained <= 0.0:
 		return
 	area.input_ray_pickable = false # 撳中即停接輸入，播緊回饋果下唔會重複扣同一粒
+	SfxPlayer.play("pile_mine")
 	_hide_scoop_hint()
 	_play_scoop_feedback(chunk)
 
@@ -406,12 +433,13 @@ func _ore_color(ore_key: String) -> Color:
 ## 一粒粒喺 BELT_HEAD → SMELTER → WAREHOUSE 之間飄過嘅盒仔，做視覺
 ## 回饋。呢啲盒仔冇 Area3D，唔會、亦唔應該俾人 tap 到。
 func _spawn_belt_visual_item() -> void:
-	var item := _make_box(Vector3(0.1, 0.1, 0.1), Color(0.8, 0.8, 0.7))
+	var item := VisualFactory.make_flat_box(Vector3(0.1, 0.1, 0.1), Color(0.8, 0.8, 0.7))
 	item.position = _site_to_world(c.belt_head_pos, 0.1)
 	_belt_items_root.add_child(item)
 
 	var tw := create_tween()
 	tw.tween_property(item, "position", _site_to_world(c.smelter_pos, 0.1), c.belt_visual_travel_secs)
+	tw.tween_callback(func() -> void: SfxPlayer.play("furnace_feed", -8.0))
 	tw.tween_property(item, "position", _site_to_world(c.warehouse_pos, 0.1), c.belt_visual_travel_secs * 0.6)
 	tw.tween_callback(item.queue_free)
 
@@ -443,11 +471,14 @@ func _build_hud() -> void:
 	top_vbox.set_anchors_preset(Control.PRESET_FULL_RECT)
 	top_bar.add_child(top_vbox)
 
+	var lock_row := HBoxContainer.new()
+	top_vbox.add_child(lock_row)
+	lock_row.add_child(VisualFactory.make_icon("res://assets/icons/locked.png", 18.0, Color(0.9, 0.75, 0.4)))
 	_lock_label = Label.new()
 	# issue 文案要求完整數字「鎖住 · 2,000,000」，唔用 _fmt_num() 嘅
 	# K/M 縮寫（嗰個係俾底部窄 HUD 用）。
 	_lock_label.text = "鎖住 · %s" % _fmt_int_commas(c.unlock_price("mid"))
-	top_vbox.add_child(_lock_label)
+	lock_row.add_child(_lock_label)
 
 	_prestige_bar = ProgressBar.new()
 	_prestige_bar.min_value = 0.0
@@ -455,9 +486,12 @@ func _build_hud() -> void:
 	_prestige_bar.value = 0.0 # 威望重置邏輯見 VR-05，呢度淨係擺位
 	top_vbox.add_child(_prestige_bar)
 
+	var prestige_row := HBoxContainer.new()
+	top_vbox.add_child(prestige_row)
+	prestige_row.add_child(VisualFactory.make_icon("res://assets/icons/star.png", 18.0, Color(0.85, 0.65, 0.95)))
 	_prestige_label = Label.new()
 	_prestige_label.text = "威望 0 / %s" % _fmt_num(c.prestige_threshold(0))
-	top_vbox.add_child(_prestige_label)
+	prestige_row.add_child(_prestige_label)
 
 	# -- 開場提示：撳碎料鏟入爐——用戶實機回饋（ALTA-150），碎料太細
 	# 又冇提示，唔知撳邊度。貼喺頂 HUD 底下，中層 3D 畫面最上面，第一次
@@ -492,12 +526,9 @@ func _build_hud() -> void:
 
 	var resources_row := HBoxContainer.new()
 	bottom_vbox.add_child(resources_row)
-	_cash_label = Label.new()
-	_components_label = Label.new()
-	_eco_label = Label.new()
-	for lbl in [_cash_label, _components_label, _eco_label]:
-		lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		resources_row.add_child(lbl)
+	_cash_label = _add_resource_slot(resources_row, "res://assets/icons/coin.png", Color(1.0, 0.85, 0.35))
+	_components_label = _add_resource_slot(resources_row, "res://assets/icons/gear.png", Color(0.75, 0.78, 0.85))
+	_eco_label = _add_resource_slot(resources_row, "res://assets/icons/eco_leaf.png", Color(0.55, 0.85, 0.5))
 
 	_summon_button = Button.new()
 	_summon_button.text = "召喚礦工"
@@ -514,18 +545,48 @@ func _build_hud() -> void:
 
 	_belt_upgrade_button = Button.new()
 	_belt_upgrade_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_belt_upgrade_button.pressed.connect(func() -> void: state.upgrade_belt())
+	_style_upgrade_button(_belt_upgrade_button, "res://assets/icons/arrowRight.png")
+	_belt_upgrade_button.pressed.connect(func() -> void:
+		if state.upgrade_belt():
+			SfxPlayer.play("upgrade")
+	)
 	upgrades_row.add_child(_belt_upgrade_button)
 
 	_miner_upgrade_button = Button.new()
 	_miner_upgrade_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_miner_upgrade_button.pressed.connect(func() -> void: state.upgrade_miner_level())
+	_style_upgrade_button(_miner_upgrade_button, "res://assets/icons/plus.png")
+	_miner_upgrade_button.pressed.connect(func() -> void:
+		if state.upgrade_miner_level():
+			SfxPlayer.play("upgrade")
+	)
 	upgrades_row.add_child(_miner_upgrade_button)
 
 	_refine_upgrade_button = Button.new()
 	_refine_upgrade_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_refine_upgrade_button.pressed.connect(func() -> void: state.upgrade_refine())
+	_style_upgrade_button(_refine_upgrade_button, "res://assets/icons/wrench.png")
+	_refine_upgrade_button.pressed.connect(func() -> void:
+		if state.upgrade_refine():
+			SfxPlayer.play("upgrade")
+	)
 	upgrades_row.add_child(_refine_upgrade_button)
+
+## 資源列一格：icon + 數值 label，回傳 label 俾 _refresh_hud() 更新文字。
+func _add_resource_slot(parent: HBoxContainer, icon_path: String, tint: Color) -> Label:
+	var slot := HBoxContainer.new()
+	slot.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	parent.add_child(slot)
+	slot.add_child(VisualFactory.make_icon(icon_path, 18.0, tint))
+	var lbl := Label.new()
+	lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	slot.add_child(lbl)
+	return lbl
+
+## 升級按鈕統一加 icon（Kenney Game Icons，見 CREDITS.md），icon 大細
+## 用 theme constant 夾住，唔會俾原生 50x50 PNG 谷爆粒按鈕。
+func _style_upgrade_button(button: Button, icon_path: String) -> void:
+	if ResourceLoader.exists(icon_path):
+		button.icon = load(icon_path)
+	button.add_theme_constant_override("icon_max_width", 22)
 
 func _refresh_hud() -> void:
 	_cash_label.text = "Cash %s" % _fmt_num(state.cash)
@@ -546,10 +607,17 @@ func _refresh_hud() -> void:
 		_belt_upgrade_button.text = "帶 Lv%d → 升級 %s" % [state.belt_level, _fmt_num(state.next_belt_cost())]
 		_belt_upgrade_button.disabled = not affordable
 		_set_afford_color(_belt_upgrade_button, affordable)
+		# 威望重置（VR-05）會將帶等級打番去 1，換返箭嘴（唔會停留喺
+		# 上鋪封頂嗰刻嘅剔號）。
+		if ResourceLoader.exists("res://assets/icons/arrowRight.png"):
+			_belt_upgrade_button.icon = load("res://assets/icons/arrowRight.png")
 	else:
 		_belt_upgrade_button.text = "帶 Lv%d（封頂）" % state.belt_level
 		_belt_upgrade_button.disabled = true
 		_clear_afford_color(_belt_upgrade_button) # 封頂，唔係等錢
+		# 封頂之後箭嘴 icon 冇意思，換做剔號（同一 icon_max_width 樣式）。
+		if ResourceLoader.exists("res://assets/icons/checkmark.png"):
+			_belt_upgrade_button.icon = load("res://assets/icons/checkmark.png")
 
 	var miner_lv_affordable := state.cash >= state.next_miner_level_cost()
 	_miner_upgrade_button.text = "礦工 Lv%d → 升級 %s" % [state.miner_level, _fmt_num(state.next_miner_level_cost())]
