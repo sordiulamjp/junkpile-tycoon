@@ -40,10 +40,15 @@ const PALETTE := {
 }
 
 const MINER_MODEL_PATH := "res://assets/models/character-g.glb"
-## Kenney 機械人 glTF 企立高度實測 ≈2.7 世界單位（見 ALTA-153 留言）；
-## 原本盒仔灰模高 0.4，用呢個縮放令礦工喺山腳大細睇落同灰模年代接近，
-## 冇忽然變得成隻山咁高。
-const MINER_VISUAL_SCALE := 0.15
+## Kenney 機械人 glTF 企立高度實測 ≈2.7 世界單位（見 ALTA-153 留言）。
+## 用戶實機回饋（round2 第 5 點）：礦工放大到約 0.35 世界單位高——呢個
+## 絕對數字同之前嘅 0.15（≈0.405 高）好接近，甚至字面上係細咗；但用戶
+## 睇緊嘅係「螢幕上顯得幾大」，而 VR-06b（ALTA-214）已經將鏡頭大幅拉近
+## （場地佔畫面約 70%，代替之前為咗一次框晒 12 層山＋帶＋爐＋倉而被逼
+## 拉到好遠嘅正交相機），所以呢個世界單位數字底下，礦工實際喺螢幕
+## 顯得大好多。跟返用戶畀嘅實數（0.35），唔用自己嗰個「感覺上應該更大」
+## 嘅估算。
+const MINER_VISUAL_SCALE := 0.13
 
 static var _miner_scene: PackedScene = null
 static var _miner_load_attempted := false

@@ -115,19 +115,27 @@ func test_frenzy_button_disabled_during_first_cooldown() -> void:
 	assert_true(main._frenzy_button.disabled)
 	assert_string_contains(main._frenzy_button.text, "冷卻")
 
-func test_try_start_frenzy_swaps_placement_field_for_frenzy_yard() -> void:
+## 用戶實機回饋（ALTA-153 round2 第 1 點）：放置場＋車場「上下分屏，
+## 兩者常駐」，唔可以再切場景——_placement_root／_frenzy_view 全程都
+## visible（唔再狂熱先顯示／完場先還原），觸發狂熱淨係令車場「活起來」
+## （set_process(true)，車郁得、生碎料）。
+func test_try_start_frenzy_activates_yard_without_hiding_placement() -> void:
 	var scene: PackedScene = load("res://main.tscn")
 	main = scene.instantiate()
 	add_child_autofree(main)
+
+	assert_true(main._placement_root.visible, "開場放置場已經應該 visible")
+	assert_true(main._frenzy_view.visible, "開場車場已經應該 visible（常駐）")
 
 	main.frenzy.cooldown_remaining = 0.0
 	main._try_start_frenzy()
 
 	assert_true(main.frenzy.active)
-	assert_false(main._placement_root.visible)
-	assert_true(main._frenzy_view.visible)
+	assert_true(main._placement_root.visible, "狂熱期間放置場唔應該再隱藏")
+	assert_true(main._frenzy_view.visible, "狂熱期間車場繼續 visible（一直都係）")
+	assert_true(main._frenzy_view.is_processing(), "狂熱期間車場 gameplay tick 應該行緊")
 
-func test_frenzy_ticks_for_full_duration_without_error_then_restores_placement() -> void:
+func test_frenzy_ticks_for_full_duration_without_error_then_stays_visible() -> void:
 	var scene: PackedScene = load("res://main.tscn")
 	main = scene.instantiate()
 	add_child_autofree(main)
@@ -141,8 +149,9 @@ func test_frenzy_ticks_for_full_duration_without_error_then_restores_placement()
 		elapsed += 0.5
 
 	assert_false(main.frenzy.active)
-	assert_true(main._placement_root.visible)
-	assert_false(main._frenzy_view.visible)
+	assert_true(main._placement_root.visible, "完場之後放置場繼續 visible（一直都係，冇切走過）")
+	assert_true(main._frenzy_view.visible, "完場之後車場繼續 visible（一直都係，一直冇隱藏過）")
+	assert_false(main._frenzy_view.is_processing(), "完場之後車場 gameplay tick 應該停返")
 	assert_almost_eq(main.frenzy.cooldown_remaining, main.c.frenzy_cooldown_secs, 1.0)
 
 ## 真係俾 SceneTree 行幾十個引擎幀（唔係手動 call _process()），等
@@ -155,6 +164,13 @@ func test_frenzy_ticks_for_full_duration_without_error_then_restores_placement()
 ## 同 Z=0 平面求交之後，手指由左掃到右，_car_target_x（clamp 之前嘅原
 ## 始值）應該單調遞增，而且實際覆蓋 yard_x_range 大部分闊度，唔會全部
 ## 撞晒去同一邊牆。
+##
+## 用戶回饋（ALTA-153 round2 第 1 點）之後：放置場常駐，_unhandled_input()
+## 加咗「螢幕 Y 一定要喺車場範圍之下」嘅守衛（見該函式註解）；呢個測試
+## 嘅掃動 Y 要揀車場自己嘅螢幕範圍入面（用 yard_top／yard_min_y 兩個
+## 地標喺呢個相機下嘅實際螢幕 Y 求中點），先至唔會撞正個新守衛——用
+## 舊版「成個畫面高度 50%」呢個粗略假設已經唔啱（嗰個假設嘅前提係
+## 「狂熱期間放置場隱晒、成個畫面淨係車場」，而家已經唔再係咁）。
 func test_frenzy_finger_position_maps_across_yard_x_range() -> void:
 	var scene: PackedScene = load("res://main.tscn")
 	main = scene.instantiate()
@@ -164,13 +180,18 @@ func test_frenzy_finger_position_maps_across_yard_x_range() -> void:
 	main._try_start_frenzy()
 
 	var view: FrenzyYardView = main._frenzy_view
+	var cam: Camera3D = main.get_node("World/Camera3D")
 	var vp_size: Vector2 = main.get_viewport().get_visible_rect().size
+	var yard_mid_x: float = (main.c.yard_x_range.x + main.c.yard_x_range.y) * 0.5
+	var yard_top_screen_y: float = cam.unproject_position(Vector3(yard_mid_x, main.c.car_park_max_y, 0.0)).y
+	var yard_bottom_screen_y: float = cam.unproject_position(Vector3(yard_mid_x, main.c.yard_min_y, 0.0)).y
+	var yard_screen_y: float = (yard_top_screen_y + yard_bottom_screen_y) * 0.5
 
 	var xs: Array[float] = []
 	for frac in [0.02, 0.25, 0.5, 0.75, 0.98]:
 		var evt := InputEventScreenTouch.new()
 		evt.pressed = true
-		evt.position = Vector2(vp_size.x * frac, vp_size.y * 0.5)
+		evt.position = Vector2(vp_size.x * frac, yard_screen_y)
 		view._unhandled_input(evt)
 		xs.append(view._car_target_x)
 
@@ -186,6 +207,31 @@ func test_frenzy_finger_position_maps_across_yard_x_range() -> void:
 		xs[0], main.c.yard_x_range.y,
 		"最左邊嘅手指唔應該一開始就撞晒去右牆（先前 regression）"
 	)
+
+## 用戶回饋（ALTA-153 round2 第 1 點）：放置場常駐之後，一撳山腳（mountain
+## 區域）唔應該連車都拖埋一齊郁——_car_target_x 唔應該因為呢粒撳鍾而變
+## （見 FrenzyYardView._unhandled_input() 嘅 yard_top_screen_y 守衛）。
+func test_frenzy_ignores_touches_above_yard_top_row() -> void:
+	var scene: PackedScene = load("res://main.tscn")
+	main = scene.instantiate()
+	add_child_autofree(main)
+
+	main.frenzy.cooldown_remaining = 0.0
+	main._try_start_frenzy()
+
+	var view: FrenzyYardView = main._frenzy_view
+	var cam: Camera3D = main.get_node("World/Camera3D")
+	var before: float = view._car_target_x
+
+	var mountain_screen_pos: Vector2 = cam.unproject_position(
+		main._site_to_world(main.c.site_foothill_pos)
+	)
+	var evt := InputEventScreenTouch.new()
+	evt.pressed = true
+	evt.position = mountain_screen_pos
+	view._unhandled_input(evt)
+
+	assert_eq(view._car_target_x, before, "撳山腳唔應該影響車嘅跟指目標")
 
 func test_frenzy_yard_spawns_real_rigidbody_debris_over_several_frames() -> void:
 	var scene: PackedScene = load("res://main.tscn")
@@ -262,7 +308,54 @@ func test_frenzy_yard_walls_are_in_camera_mid_band() -> void:
 	)
 
 
-# ── 用戶實機回饋回歸測試（ALTA-150，2026-09-12 Windows Godot playtest）───
+# ── 用戶實機回饋回歸測試（ALTA-153 round2，2026-09-13 S8+ playtest）───
+# 7 點修正入面第 3／5／6 點（第 1／2／7 點由 ALTA-214 補；第 4 點＋推土機
+# 留 ALTA-215）。
+
+## 第 3 點：一開場（未召喚任何礦工）都要見到成座 12 層梯田，唔係得個
+## 地台等召喚先一層層現。
+func test_foothill_shows_full_terrace_before_any_miner_summoned() -> void:
+	var scene: PackedScene = load("res://main.tscn")
+	main = scene.instantiate()
+	add_child_autofree(main)
+
+	assert_eq(main.state.miner_count, 0, "呢個測試要開場未召喚過礦工")
+	var tier_count := 0
+	for child in main._foothill_root.get_children():
+		if child is MeshInstance3D and child.mesh is BoxMesh and child.position.y > 0.0:
+			tier_count += 1
+	assert_eq(tier_count, main.c.miner_summon_cap, "未召喚都應該見到全部 12 層梯田")
+
+## 第 5 點：召喚幾個礦工之後應該企喺山腳周圍唔同角度（圍住山腳分佈），
+## 唔係全部黐晒喺同一個原點嘅少少 jitter。
+func test_summoned_miners_are_distributed_around_foothill() -> void:
+	var scene: PackedScene = load("res://main.tscn")
+	main = scene.instantiate()
+	add_child_autofree(main)
+
+	main.state.cash = 10000.0
+	main._try_summon_miner()
+	main._try_summon_miner()
+
+	assert_eq(main._miners_root.get_child_count(), 2)
+	var m0: Node3D = main._miners_root.get_child(0)
+	var m1: Node3D = main._miners_root.get_child(1)
+	# 門檻跟返 _place_miner_around_foothill() 嘅幾何保證：radius=0.5、
+	# 12 格、jitter ±0.08 rad 之下，任意相鄰兩格嘅最壞情況都仲有實質
+	# 距離（唔止「唔完全撞埋」咁鬆）。
+	assert_gt(m0.position.distance_to(m1.position), 0.15, "兩個礦工唔應該企喺同一個位")
+
+## 第 6 點：帶用分段滾軸 mesh，持續自轉先有「流動視覺」。
+func test_belt_rollers_registered_and_spin_over_time() -> void:
+	var scene: PackedScene = load("res://main.tscn")
+	main = scene.instantiate()
+	add_child_autofree(main)
+
+	assert_gt(main._belt_rollers.size(), 0, "帶應該有分段滾軸")
+	var roller: MeshInstance3D = main._belt_rollers[0]
+	var before := roller.rotation.x
+	main._process(0.5)
+	assert_ne(roller.rotation.x, before, "滾軸應該持續自轉")
 # 四點：開場經濟、相機視角、碎料視覺／回饋、掣顏色。
 
 ## 1. 開場經濟：開場 Cash 要即刻夠買第一個礦工（唔使剷幾粒碎料先夠），
