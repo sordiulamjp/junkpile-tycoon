@@ -17,8 +17,14 @@ class_name FrenzyYardView
 ## 判分事件接駁啱唔啱。
 ##
 ## 場景複用放置場個 camera／world（同一個 3D 座標系，見 constants.gd
-## 註解），frenzy 開始／完場由 main.gd 切換 _placement_root.visible
-## 同呢個 node 嘅 visible，唔另起爐灶起多個 camera。
+## 註解），唔另起爐灶起多個 camera。
+##
+## 用戶實機回饋（ALTA-153 round2 第 1 點）：車場「上下分屏，兩者常駐」，
+## 唔可以再切場景——呢個 node 一直都 visible（見 _ready()），frenzy
+## 開始／完場（main.gd _try_start_frenzy()／_on_frenzy_ended()）淨係
+## start()／stop() 呢個 gameplay tick（車郁、生碎料、幀數取樣），車／
+## 牆／滾筒／門／木橋／UPGRADE 墊呢啲結構性 mesh 全程都喺度，冇嘢跌出
+## 又彈返出嚟。
 
 signal debris_scored(amount: float)
 
@@ -43,6 +49,8 @@ var _debris_spawn_accum: float = 0.0
 var _gears_active: Array = [] # 每個元素：{"node": Node3D, "timer": float}
 var _fps_sample_accum: float = 0.0
 
+var _gate_materials: Array[StandardMaterial3D] = [] # ALTA-153 round2：「門亮」——狂熱先實際發光
+
 
 func _init(constants: GameConstants, gs: GameState, fs: FrenzyState) -> void:
 	c = constants
@@ -52,8 +60,8 @@ func _init(constants: GameConstants, gs: GameState, fs: FrenzyState) -> void:
 
 func _ready() -> void:
 	rng.randomize()
-	visible = false
-	set_process(false)
+	visible = true # ALTA-153 round2 第 1 點：車場常駐，唔再狂熱先顯示
+	set_process(false) # gameplay tick（車郁／生碎料）仍然要 frenzy 先行
 	set_process_unhandled_input(true)
 
 	_debris_root = Node3D.new()
@@ -67,22 +75,31 @@ func _ready() -> void:
 	_build_gates()
 	_build_furnace()
 	_build_upgrade_pad()
+	_set_active_visual(false) # 開場未狂熱，門先暗住
 
 
 func start() -> void:
-	visible = true
 	set_process(true)
 	_reset_car()
 	_clear_debris()
 	_clear_gears()
 	_debris_spawn_accum = 0.0
 	_fps_sample_accum = 0.0
+	_set_active_visual(true) # 用戶回饋：「門亮」——狂熱先落實發光
 
 func stop() -> void:
-	visible = false
 	set_process(false)
 	_clear_debris()
 	_clear_gears()
+	_reset_car() # 車場常駐，完場車要停返去上面「泊定」，唔好留喺爐口
+	_set_active_visual(false)
+
+## ALTA-153 round2：狂熱「活起來」嘅視覺提示——四道倍數門喺唔活躍時色
+## 淡樸實，狂熱一觸發即刻發光（「門亮」，issue 視覺參考），等玩家一眼
+## 知道車場而家可以推。純表現層，唔影響 _on_gate_entered() 判分。
+func _set_active_visual(active: bool) -> void:
+	for mat in _gate_materials:
+		mat.emission_energy_multiplier = 1.4 if active else 0.0
 
 
 func _process(delta: float) -> void:
@@ -116,6 +133,25 @@ func _unhandled_input(event: InputEvent) -> void:
 	var cam := get_viewport().get_camera_3d()
 	if cam == null:
 		return
+	# 用戶回饋（ALTA-153 round2 第 1 點）：放置場常駐之後，山腳／帶／爐
+	# 同車場共用埋同一個輸入通道——撳中山腳碎料（tap-to-scoop，見
+	# main.gd _on_pile_chunk_input()，已經 set_input_as_handled() 攔咗
+	# 一次）嗰粒 InputEventMouseButton 理論上唔應該再行到呢度。加多一重
+	# 防守：用「呢個螢幕 Y 有冇喺車場最頂（car_park_max_y）嗰行之下」
+	# 判斷，先至當跟指處理。刻意唔用射線同 Z=0 平面求交嘅世界 Y 嚟判斷
+	# ——嗰條反向投影近畫面邊緣（好斜嘅視角）容易求出好誇張嘅世界 Y
+	# （近乎同平面平行嘅射線，交點會彈得好遠），唔穩陣；呢度用嘅
+	# `unproject_position()` 係正向投影，唔會有呢個問題。
+	var yard_mid_x: float = (c.yard_x_range.x + c.yard_x_range.y) * 0.5
+	var yard_top_screen_y: float = cam.unproject_position(
+		_site_to_world_yard_ref(Vector2(yard_mid_x, c.car_park_max_y))
+	).y
+	# 留返 2% 螢幕高度做呼吸位——用畫面高度嘅比例而唔係固定 px，先啱晒
+	# 唔同解像度／DPI（固定 px 喺好細嘅 headless 測試 viewport 度會大到
+	# 冚晒個判斷）。
+	var viewport_h: float = get_viewport().get_visible_rect().size.y
+	if screen_pos.y < yard_top_screen_y - viewport_h * 0.02:
+		return
 	# 成個世界（放置場＋車場，見 constants.gd／main.gd 註解）都住喺 Z=0
 	# 呢個平面，車場物件淨係用 x／y，z 恆等 0（見 _build_car() 等）。
 	# 舊式 project_position(screen_pos, cam.global_position.z) 假設咗相機
@@ -128,6 +164,9 @@ func _unhandled_input(event: InputEvent) -> void:
 	if hit == null:
 		return # 射線同 Z=0 平面平行（理論上斜視相機唔會撞到，防守性檢查）
 	_car_target_x = (hit as Vector3).x
+
+func _site_to_world_yard_ref(v: Vector2) -> Vector3:
+	return Vector3(v.x, v.y, 0.0)
 
 
 # ══════════════════════ 車：巡航向落 + 跟指橫向 ══════════════════════
@@ -255,6 +294,14 @@ func _build_gates() -> void:
 		var plate := VisualFactory.make_flat_box(Vector3(0.5, 0.04, 0.6), _gate_color(float(gate.get("mult", 1.0))))
 		plate.position = area.position
 		add_child(plate)
+
+		# ALTA-153 round2：「門亮」——material 一開始已經 emission_enabled，
+		# 但 energy 由 _set_active_visual() 揸（開場暗住，見 _ready()）。
+		var gate_mat: StandardMaterial3D = plate.material_override
+		gate_mat.emission_enabled = true
+		gate_mat.emission = gate_mat.albedo_color
+		gate_mat.emission_energy_multiplier = 0.0
+		_gate_materials.append(gate_mat)
 
 		var label := Label3D.new()
 		label.text = "x%s" % str(gate.get("mult", 1.0))

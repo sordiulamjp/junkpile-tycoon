@@ -86,11 +86,15 @@ var _remote_constants_loader: RemoteConstantsLoader # VR-08
 
 # -- 3D 節點 --
 var _world: Node3D
-var _placement_root: Node3D # VR-04：狂熱期間成個放置場收埋，畀車場借同一個 camera
+# ALTA-153 round2：放置場一直 visible（唔再狂熱期間隱藏，見
+# _try_start_frenzy()／_on_frenzy_ended()），保留呢個 root 淨係為咗
+# 分組管理（山腳／帶／爐／倉／礦工／碎料一齊掛喺度）。
+var _placement_root: Node3D
 var _foothill_root: Node3D
 var _miners_root: Node3D
 var _pile_root: Node3D
 var _belt_items_root: Node3D
+var _belt_rollers: Array[MeshInstance3D] = [] # ALTA-153 round2：分段滾軸，_process() 度持續轉
 var _frenzy_view: FrenzyYardView
 
 # -- HUD 節點 --
@@ -186,6 +190,12 @@ func _process(delta: float) -> void:
 		_belt_visual_accum -= 1.0
 		_spawn_belt_visual_item()
 
+	# ALTA-153 round2 第 6 點：帶用分段滾軸 mesh，持續自轉先有「流動視覺」
+	# ——同 FrenzyYardView._roller_visual 嘅刺滾筒一樣手法（rotate_x() 喺
+	# 已經擺好嘅局部 X 軸度轉），純造型，唔影響帶產能／判分。
+	for roller in _belt_rollers:
+		roller.rotate_x(delta * 6.0)
+
 	var events: Dictionary = frenzy.tick(delta)
 	if events["gear_spawn"]:
 		_frenzy_view.spawn_gear()
@@ -203,21 +213,17 @@ func _try_start_frenzy() -> void:
 		return
 	EventLog.log_event("frenzy_start", {"income_rate": income_rate})
 	SfxPlayer.play("frenzy_start")
-	_placement_root.visible = false
-	# Review 意見：淨係隱藏 _placement_root 唔會關咗山腳碎料 Area3D 嘅
-	# 揀選——CollisionObject3D 物理揀選同 VisualInstance3D visible 係
-	# 兩件事，隱形碎料狂熱期間仍然 tap 得中。狂熱嘅車／門／滾筒／爐
-	# 全部靠 body_entered／_unhandled_input，冇一個靠 physics_object_picking，
-	# 所以成個 viewport 揼熄佢係安全嘅。
-	get_viewport().physics_object_picking = false
+	# 用戶實機回饋（ALTA-153 round2 第 1 點）：放置場＋車場要「上下分屏，
+	# 兩者常駐」，唔可以再切場景——_placement_root 同 _frenzy_view 依家
+	# 一直都 visible（見 _build_world()／FrenzyYardView._ready()），呢度
+	# 淨係令車場「活起來」（車郁得、生碎料、_process() 開始行），山腳
+	# 嘅碎料 tap 全程都揀得到，唔使再開關 physics_object_picking。
 	_frenzy_view.start()
 
 func _on_frenzy_ended() -> void:
 	EventLog.log_event("frenzy_end", {"eco_bonus": frenzy.eco_bonus_earned})
 	state.eco += frenzy.eco_bonus_earned
 	_frenzy_view.stop()
-	_placement_root.visible = true
-	get_viewport().physics_object_picking = true
 
 
 # ══════════════════════ 建場景（灰模） ══════════════════════
@@ -399,8 +405,8 @@ func _build_world() -> void:
 	_build_ground()
 	_build_canyon_walls()
 
-	# VR-04：放置場成組收埋喺呢個 root 底下，狂熱期間 toggle
-	# visible 就成組隱藏／還原，唔使逐個節點記低顯示狀態。
+	# VR-04：放置場成組掛喺呢個 root 底下，方便分組管理（ALTA-153 round2：
+	# 唔再狂熱期間隱藏，見 _try_start_frenzy() 註解）。
 	_placement_root = Node3D.new()
 	_placement_root.name = "PlacementField"
 	_world.add_child(_placement_root)
@@ -419,6 +425,20 @@ func _build_world() -> void:
 	belt_track.position = _site_to_world(belt_mid)
 	belt_track.look_at_from_position(belt_track.position, _site_to_world(c.smelter_pos), Vector3.UP)
 	_placement_root.add_child(belt_track)
+
+	# ALTA-153 round2 第 6 點：帶「分段滾軸 mesh（有流動視覺）」——沿住帶
+	# 本身嘅局部 Z 軸（look_at_from_position 已經令佢指向 smelter）平均
+	# 擺幾條圓柱，掛做 belt_track 嘅子節點就自動跟埋個方向轉，唔使自己
+	# 再算一次帶嘅角度。轉動邏輯喺 _process()。
+	var belt_len: float = (c.belt_head_pos - c.smelter_pos).length()
+	var roller_count := 5
+	for i in range(roller_count):
+		var frac: float = (float(i) / float(roller_count - 1)) - 0.5 if roller_count > 1 else 0.0
+		var roller := VisualFactory.make_low_poly_cylinder(0.05, 0.22, VisualFactory.PALETTE["gear_metal"], 8, 0.6)
+		roller.rotation_degrees.z = 90.0
+		roller.position = Vector3(0.0, 0.075, frac * belt_len)
+		belt_track.add_child(roller)
+		_belt_rollers.append(roller)
 
 	# 熔爐：藍身 + 發光藍火爐口（VR-06b 色板：爐口改藍火，同暖色洞穴做
 	# 對比，見 VisualFactory.PALETTE 註解）+ 屋簷 + 一盞燈——「方形入口 +
@@ -550,25 +570,60 @@ func _build_canyon_walls() -> void:
 				facet.rotation.y = rng.randf_range(-0.4, 0.4) + (0.0 if side < 0.0 else PI)
 				wall_root.add_child(facet)
 
-## 廢料山（往上長）：山腳一個底座 + 每召喚一個礦工加一層方塊，
-## 視覺上表達「開採緊、堆越嚟越高」。上限同召喚上限一致（12）。
+## 廢料山（12 層梯田常駐）：用戶實機回饋（round2 第 3 點）——一開場就
+## 要見到成座 12 層梯田（唔係得個地台，靠日後召喚先一層層現），先夠
+## 「有排開採」嘅份量。層數固定用 miner_summon_cap（同
+## _compute_camera_frame() 嘅 mountain_top_y 早就假設咗嘅高度一致，
+## 唔使再改鏡頭）；已經有礦工駐守嗰幾層轉亮色 + 加一件雜物（木桶／
+## 木板／齒輪，CSG／低面數幾何 + flat colour，issue 視覺參考「每層有
+## 雜物細節」），未開採嗰幾層維持暗色淨幾何——用色差表達開採進度，
+## 唔靠「層存唔存在」表達（tap 判定、召喚價錢呢啲數值邏輯全部喺
+## game_state.gd，呢度純粹換視覺）。
 func _rebuild_foothill_stack() -> void:
 	for child in _foothill_root.get_children():
 		child.queue_free()
-	var base := VisualFactory.make_flat_box(Vector3(0.9, 0.3, 0.6), VisualFactory.PALETTE["cave"])
+	var base := VisualFactory.make_flat_box(Vector3(1.1, 0.3, 0.75), VisualFactory.PALETTE["cave"])
 	base.position = Vector3(0.0, 0.0, 0.0)
 	_foothill_root.add_child(base)
-	var tiers: int = state.miner_count
-	for i in range(tiers):
-		var t: float = float(i) / float(maxi(c.miner_summon_cap, 1))
-		var box := VisualFactory.make_flat_box(
-			Vector3(0.75 - t * 0.35, FOOTHILL_TIER_HEIGHT, 0.5 - t * 0.2), VisualFactory.PALETTE["cave_light"]
-		)
+
+	var total_tiers: int = c.miner_summon_cap
+	var mined_tiers: int = state.miner_count
+	for i in range(total_tiers):
+		var t: float = float(i) / float(maxi(total_tiers, 1))
+		var mined: bool = i < mined_tiers
+		var tier_color: Color = VisualFactory.PALETTE["cave_light"] if mined else VisualFactory.PALETTE["cave"]
+		var box_size := Vector3(0.95 - t * 0.55, FOOTHILL_TIER_HEIGHT, 0.65 - t * 0.35)
+		var box := VisualFactory.make_flat_box(box_size, tier_color)
 		box.position = Vector3(0.0, FOOTHILL_BASE_HEIGHT + float(i) * FOOTHILL_TIER_HEIGHT, 0.0)
 		_foothill_root.add_child(box)
+		if mined and i % 2 == 0:
+			_add_tier_clutter(box_size, box.position)
+
+## 每兩層開採咗嘅梯田加一件雜物（隨機揀木桶／木板／齒輪），擺喺嗰層
+## 面頂中央附近少少 jitter。純美術裝飾，冇碰撞、唔影響任何判定。
+func _add_tier_clutter(box_size: Vector3, box_pos: Vector3) -> void:
+	var prop: MeshInstance3D
+	match rng.randi_range(0, 2):
+		0:
+			prop = VisualFactory.make_low_poly_cylinder(0.05, 0.09, VisualFactory.PALETTE["bridge_wood"], 8, 0.1) # 木桶
+		1:
+			prop = VisualFactory.make_flat_box(Vector3(0.2, 0.02, 0.06), VisualFactory.PALETTE["bridge_wood"]) # 木板
+		_:
+			prop = VisualFactory.make_low_poly_cylinder(0.04, 0.02, VisualFactory.PALETTE["gear_metal"], 8, 0.7) # 齒輪
+			prop.rotation_degrees.x = 90.0
+	prop.rotation.y = rng.randf_range(0.0, TAU)
+	prop.position = box_pos + Vector3(
+		rng.randf_range(-box_size.x * 0.25, box_size.x * 0.25),
+		box_size.y * 0.5 + 0.045,
+		rng.randf_range(-box_size.z * 0.25, box_size.z * 0.25)
+	)
+	_foothill_root.add_child(prop)
 
 
 # ══════════════════════ 礦工 ══════════════════════
+
+## 圍住山腳分佈嘅半徑——純美術造型常數（見 _place_miner_around_foothill()）。
+const MINER_RING_RADIUS := 0.5
 
 func _try_summon_miner() -> void:
 	if not state.summon_miner():
@@ -577,19 +632,41 @@ func _try_summon_miner() -> void:
 	# 唔同，企喺 y=0.1 貼地；盒仔 fallback 個樣會企得稍為浮啲，接受。
 	var miner := VisualFactory.make_miner()
 	miner.name = "Miner%d" % state.miner_count
-	var jitter := Vector2(rng.randf_range(-0.3, 0.3), 0.0)
-	miner.position = Vector3(jitter.x, 0.1, rng.randf_range(-0.2, 0.2))
-	miner.rotation.y = rng.randf_range(-0.4, 0.4)
+	# 一定要先 add_child() 先至叫 _place_miner_around_foothill()／
+	# _animate_mining()——`look_at()` 同 `create_tween()` 兩個都要求個
+	# node 已經喺 scene tree 入面（唔係就 engine 拋 "!is_inside_tree()"）。
 	_miners_root.add_child(miner)
-	_bob(miner)
+	_place_miner_around_foothill(miner, state.miner_count - 1)
+	_animate_mining(miner)
 	_rebuild_foothill_stack()
 
-func _bob(node: Node3D) -> void:
-	var tw := create_tween()
-	tw.set_loops()
+## 用戶實機回饋（round2 第 5 點）：召喚後嘅礦工「圍住山腳分佈」，唔係
+## 全部堆喺同一個原點嘅少少 jitter。用極座標平均分佈喺山腳周圍一圈，
+## 面朝住圓心（即係山腳本身）——先有「一齊喺度開採緊」嘅感覺，唔會
+## 個個疊晒埋一堆。
+func _place_miner_around_foothill(miner: Node3D, index: int) -> void:
+	var angle: float = (float(index) / float(maxi(c.miner_summon_cap, 1))) * TAU \
+		+ rng.randf_range(-0.08, 0.08)
+	var miner_y := 0.1
+	miner.position = Vector3(sin(angle) * MINER_RING_RADIUS, miner_y, cos(angle) * MINER_RING_RADIUS)
+	miner.look_at(Vector3(0.0, miner_y, 0.0), Vector3.UP)
+
+## 用戶實機回饋（round2 第 5 點）：「有敲擊動畫（tween 上下 + 鎬頭擺）」
+## ——Kenney glTF 冇逐條骨嘅駕馭介面，改用成隻 miner 嘅垂直起伏（模擬
+## 蹲低揮鎬）+ 前傾後仰（模擬鎬頭掄落）兩條獨立 loop tween 疊埋，比
+## 原本單純上下 bob 更似「敲緊嘢」。
+func _animate_mining(node: Node3D) -> void:
 	var base_y := node.position.y
-	tw.tween_property(node, "position:y", base_y + 0.08, 0.4).set_trans(Tween.TRANS_SINE)
-	tw.tween_property(node, "position:y", base_y, 0.4).set_trans(Tween.TRANS_SINE)
+	var bob_tw := create_tween()
+	bob_tw.set_loops()
+	bob_tw.tween_property(node, "position:y", base_y + 0.05, 0.22).set_trans(Tween.TRANS_SINE)
+	bob_tw.tween_property(node, "position:y", base_y, 0.22).set_trans(Tween.TRANS_SINE)
+
+	var base_rot_x := node.rotation.x
+	var swing_tw := create_tween()
+	swing_tw.set_loops()
+	swing_tw.tween_property(node, "rotation:x", base_rot_x - 0.3, 0.18).set_trans(Tween.TRANS_SINE)
+	swing_tw.tween_property(node, "rotation:x", base_rot_x, 0.26).set_trans(Tween.TRANS_SINE)
 
 
 # ══════════════════════ 山腳碎料：手動 scoop ══════════════════════
@@ -627,6 +704,11 @@ func _on_pile_chunk_input(
 ) -> void:
 	if not (event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT):
 		return
+	# 用戶回饋（round2 第 1 點）：放置場常駐之後，呢粒撳落嚟嘅事件唔應該
+	# 再落去 FrenzyYardView._unhandled_input()（狂熱期間撳中一粒碎料唔
+	# 應該連車都一齊拖走）——physics picking 揀中呢個 Area3D 就即刻攔截，
+	# 唔理有冇真係剷到嘢。
+	get_viewport().set_input_as_handled()
 	var gained := state.scoop_ore(ore_key)
 	if gained <= 0.0:
 		return
