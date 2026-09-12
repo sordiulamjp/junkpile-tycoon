@@ -100,6 +100,7 @@ enum Resource3 { CASH, COMPONENTS, ECO }
 @export var frenzy_cooldown_secs: float = 600.0      # TUNE：一般冷卻 10 分鐘
 @export var frenzy_first_cooldown_secs: float = 90.0 # TUNE：首次冷卻縮短
 @export var gear_drop_interval_secs: float = 8.0     # TUNE：狂熱期間每 8 秒 1 粒閃齒輪
+@export var frenzy_manual_eff: float = 1.0           # TUNE：狂熱期間玩家推堆效率＝放置收入，VR-04 實測後調
 
 ## -- Eco --
 @export var eco_gain_hazard_per_item: float = 1.0     # TUNE：高危廢料入爐每粒
