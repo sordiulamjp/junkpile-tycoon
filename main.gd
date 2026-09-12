@@ -112,6 +112,12 @@ var _scoop_hint_shown: bool = false
 
 func _ready() -> void:
 	c = GameConstants.new()
+	# VR-08 Review 修正：一定要喺呢一刻（構造任何讀 `c` 嘅物件之前）同步
+	# 套用返上次成功 fetch 存低嘅 cache——GameState._init()／FrenzyState._init()
+	# 會即刻讀 c.starting_cash／c.frenzy_first_cooldown_secs，遲少少（例如
+	# 背景 fetch 完成先 set()）呢兩個欄位就永遠冚唔到，唔理重開幾多次都
+	# 冇用。見 systems/remote_constants.gd 嘅 CACHE_PATH 註解。
+	_apply_overrides(RemoteConstants.read_cache())
 	state = GameState.new(c)
 	frenzy = FrenzyState.new(c)
 	rng.randomize()
@@ -142,19 +148,35 @@ func _ready() -> void:
 
 ## 開機背景攞遠端 constants 覆寫；成功就直接 set() 落現有嘅 `c`（同一個
 ## Resource 個體，state／frenzy／_frenzy_view 全部揸緊呢個 reference，
-## 唔使逐個傳過），失敗就乜都唔做（維持本機預設）。
+## 唔使逐個傳過）,失敗就乜都唔做（維持本機預設／舊 cache）。呢個 fetch
+## 本身淨係處理「今次呢個 session 之後仲讀得到 c」嘅欄位——已經喺 _ready()
+## 開頭讀走咗嘅嗰幾個（starting_cash 等）要等下次重開先食到新值，見
+## _on_remote_constants_loaded() 寫 cache 嗰段。
 func _start_remote_constants_fetch() -> void:
 	_remote_constants_loader = RemoteConstantsLoader.new()
 	add_child(_remote_constants_loader)
 	_remote_constants_loader.finished.connect(_on_remote_constants_loaded)
 	_remote_constants_loader.start()
 
-func _on_remote_constants_loaded(overrides: Dictionary, _source: String) -> void:
+func _on_remote_constants_loaded(overrides: Dictionary, source: String) -> void:
+	# "local_default:..." = 呢次 fetch 完全失敗（冇部署／逾時／連唔到／壞
+	# JSON），伺服器嘅實際狀態未知，唔可以當「而家冇覆寫」寫爛（清走）舊
+	# cache——維持上次成功攞到嗰份，離線都用得到。
+	if source.begins_with("local_default"):
+		return
+	# 呢度先係真正接觸到伺服器嘅回應（"remote_empty" 或
+	# "remote_applied:..."）：可能係空 Dictionary（管理員刻意清咗全部
+	# 覆寫），都要照寫落 cache——下次開機先會跟返伺服器而家嘅實際狀態
+	# 用返純本機預設，唔會一直卡住舊值。
+	RemoteConstants.write_cache(overrides)
 	if overrides.is_empty():
 		return
+	_apply_overrides(overrides)
+	_refresh_hud() # 有覆寫升級價／狂熱數值等 → HUD 顯示緊嘅價錢即刻反映新值
+
+func _apply_overrides(overrides: Dictionary) -> void:
 	for key: String in overrides:
 		c.set(key, overrides[key])
-	_refresh_hud() # 有覆寫升級價／狂熱數值等 → HUD 顯示緊嘅價錢即刻反映新值
 
 
 func _process(delta: float) -> void:

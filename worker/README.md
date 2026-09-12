@@ -71,9 +71,13 @@ curl -X POST https://<你嘅worker網址>/constants \
 curl https://<你嘅worker網址>/constants
 ```
 
-玩家下次開 App 就會攞到新值（開機喺背景 GET 一次，見
-`RemoteConstantsLoader`；request 失敗或者回應格式壞咗都會 fallback 用本機
-預設，唔會因為 worker 冧咗／連唔到而擋住遊戲入口）。
+App 開機喺背景 GET 一次（見 `RemoteConstantsLoader`），成功就即刻套用（升
+級價／狂熱數值等即場生效）並存落本機 cache；request 失敗或者回應格式壞
+咗都會 fallback 用本機 cache／預設，唔會因為 worker 冧咗／連唔到而擋住
+遊戲入口。**部分欄位（例如 `starting_cash`）喺遊戲初始化嗰刻就已經讀
+走，今次 session 改極都唔會即場生效**——呢類欄位一定要玩家**重開多次
+App**（背景 fetch 存落本機 cache → 下次開機 `main.gd` 構造遊戲物件之前
+先讀 cache 套用），先會用到新值。
 
 ## 私隱
 
