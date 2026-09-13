@@ -165,7 +165,7 @@ func _unhandled_input(event: InputEvent) -> void:
 	# 係正向投影，唔會有呢個問題。
 	var yard_mid_x: float = (c.yard_x_range.x + c.yard_x_range.y) * 0.5
 	var yard_top_screen_y: float = cam.unproject_position(
-		_site_to_world_yard_ref(Vector2(yard_mid_x, c.car_park_max_y))
+		to_global(_site_to_world_yard_ref(Vector2(yard_mid_x, c.car_park_max_y)))
 	).y
 	# 留返 2% 螢幕高度做呼吸位——用畫面高度嘅比例而唔係固定 px，先啱晒
 	# 唔同解像度／DPI（固定 px 喺好細嘅 headless 測試 viewport 度會大到
@@ -181,10 +181,12 @@ func _unhandled_input(event: InputEvent) -> void:
 	# 唔理相機擺法點都啱（包括未來再調角度）。
 	var ray_origin: Vector3 = cam.project_ray_origin(screen_pos)
 	var ray_dir: Vector3 = cam.project_ray_normal(screen_pos)
-	var hit: Variant = Plane(Vector3.BACK, 0.0).intersects_ray(ray_origin, ray_dir)
+	# VR-06b：場地攤平做地面——用場地自己嘅地面平面（local z=0）求交。
+	var ground_plane := Plane(global_transform.basis.z, global_position)
+	var hit: Variant = ground_plane.intersects_ray(ray_origin, ray_dir)
 	if hit == null:
-		return # 射線同 Z=0 平面平行（理論上斜視相機唔會撞到，防守性檢查）
-	_car_target_x = (hit as Vector3).x
+		return
+	_car_target_x = to_local(hit as Vector3).x
 
 func _site_to_world_yard_ref(v: Vector2) -> Vector3:
 	return Vector3(v.x, v.y, 0.0)
@@ -193,7 +195,7 @@ func _site_to_world_yard_ref(v: Vector2) -> Vector3:
 # ══════════════════════ 車：巡航向落 + 跟指橫向 ══════════════════════
 
 func _reset_car() -> void:
-	car.position = Vector3(0.0, c.car_park_max_y, 0.0)
+	car.position = Vector3(0.0, c.car_park_max_y, CAR_Z)
 	_car_target_x = 0.0
 	_stun_timer = 0.0
 	_apply_car_tier_visual()
@@ -218,7 +220,8 @@ func _make_area(size: Vector3) -> Area3D:
 	var area := Area3D.new()
 	var col := CollisionShape3D.new()
 	var shape := BoxShape3D.new()
-	shape.size = size
+	# VR-06b：攤平之後 z 係高度——感應區一律拉高 0.8，地面上嘅碎料／車都撞到。
+	shape.size = Vector3(size.x, size.y, maxf(size.z, 0.8))
 	col.shape = shape
 	area.add_child(col)
 	return area
@@ -234,9 +237,7 @@ func _build_walls() -> void:
 		shape.size = Vector3(0.2, height, 1.0)
 		col.shape = shape
 		wall.add_child(col)
-		var visual := VisualFactory.make_flat_box(Vector3(0.2, height, 1.0), VisualFactory.PALETTE["wall"])
-		wall.add_child(visual)
-		wall.position = Vector3(side_x, mid_y, 0.0)
+		wall.position = Vector3(side_x, mid_y, 0.4)
 		add_child(wall)
 
 ## VR-06c：卡通推土機——車身細、鏟斗大、履帶（issue 視覺參考第 2 點），
@@ -248,6 +249,7 @@ const CAR_BODY_SIZE := Vector3(0.28, 0.16, 0.28)
 const CAR_BLADE_SIZE := Vector3(0.6, 0.09, 0.2)
 const CAR_TRACK_SIZE := Vector3(0.08, 0.11, 0.32)
 const CAR_TRACK_COLOR := Color(0.14, 0.14, 0.15)
+const CAR_Z := 0.16 # VR-06b：車身中心離地高度（攤平場地，z 係高度）
 
 func _build_car() -> void:
 	car = AnimatableBody3D.new()
@@ -270,25 +272,29 @@ func _build_car() -> void:
 	# Z 同車身一樣深，唔再伸出去 Z 方向。
 	_blade_mesh = VisualFactory.make_metal_box(CAR_BLADE_SIZE, Color("#D9432B"))
 	_blade_mat = _blade_mesh.material_override
-	_blade_mesh.position = Vector3(0.0, -(CAR_BODY_SIZE.y * 0.5 + CAR_BLADE_SIZE.y * 0.5 - 0.02), 0.0)
+	_blade_mesh.position = Vector3(0.0, -(CAR_BODY_SIZE.y * 0.5 + CAR_BLADE_SIZE.y * 0.5 - 0.02), -0.04)
 	car.add_child(_blade_mesh)
 
 	# 履帶——兩條低身長盒仔代替四粒輪，卡通推土機必備語言（issue 視覺
 	# 參考第 2 點）；純裝飾，唔跟 tier 變（同舊版輪一樣淨係唔郁 _car_mesh
 	# 之外嘅嘢）。
 	for side_x in [-1.0, 1.0]:
-		var track := VisualFactory.make_metal_box(CAR_TRACK_SIZE, CAR_TRACK_COLOR)
+		var track := VisualFactory.make_metal_box(Vector3(CAR_TRACK_SIZE.x, CAR_TRACK_SIZE.z, CAR_TRACK_SIZE.y), CAR_TRACK_COLOR)
 		track.position = Vector3(
-			side_x * (CAR_BODY_SIZE.x * 0.5 + CAR_TRACK_SIZE.x * 0.5), -CAR_BODY_SIZE.y * 0.5, 0.0
+			side_x * (CAR_BODY_SIZE.x * 0.5 + CAR_TRACK_SIZE.x * 0.5), 0.0, -CAR_BODY_SIZE.z * 0.5 + 0.02
 		)
 		car.add_child(track)
+	# 駕駛室（車身頂細盒）——卡通推土機語言。
+	var cab := VisualFactory.make_metal_box(Vector3(0.16, 0.14, 0.12), Color(0.95, 0.78, 0.2))
+	cab.position = Vector3(0.0, 0.04, CAR_BODY_SIZE.z * 0.5 + 0.06)
+	car.add_child(cab)
 
 	var col := CollisionShape3D.new()
 	var shape := BoxShape3D.new()
-	shape.size = Vector3(0.5, 0.22, 0.4)
+	shape.size = Vector3(0.5, 0.3, 0.3)
 	col.shape = shape
 	car.add_child(col)
-	car.position = Vector3(0.0, c.car_park_max_y, 0.0)
+	car.position = Vector3(0.0, c.car_park_max_y, CAR_Z)
 	add_child(car)
 
 func _build_roller() -> void:
@@ -304,7 +310,7 @@ func _build_roller() -> void:
 		maxf(extents.y, extents.z) * 0.5, extents.x, VisualFactory.PALETTE["gear_metal"], 10
 	)
 	_roller_visual.rotation_degrees.z = 90.0
-	_roller_visual.position = area.position
+	_roller_visual.position = area.position + Vector3(0.0, 0.0, maxf(extents.y, extents.z) * 0.5)
 	add_child(_roller_visual)
 
 func _build_bridge() -> void:
@@ -318,9 +324,19 @@ func _build_bridge() -> void:
 
 	var safe_width: float = c.lava_bridge_safe_x_range.y - c.lava_bridge_safe_x_range.x
 	var safe_mid: float = (c.lava_bridge_safe_x_range.x + c.lava_bridge_safe_x_range.y) * 0.5
-	var bridge_mesh := VisualFactory.make_flat_box(Vector3(safe_width, 0.05, 0.5), VisualFactory.PALETTE["bridge_wood"])
-	bridge_mesh.position = Vector3(safe_mid, c.lava_bridge_y, 0.0)
+	var bridge_mesh := VisualFactory.make_flat_box(Vector3(safe_width, 0.5, 0.05), VisualFactory.PALETTE["bridge_wood"])
+	bridge_mesh.position = Vector3(safe_mid, c.lava_bridge_y, 0.03)
 	add_child(bridge_mesh)
+	for i in range(5): # 木板紋
+		var plank := VisualFactory.make_flat_box(Vector3(safe_width, 0.06, 0.02), VisualFactory.PALETTE["bridge_wood"].darkened(0.25))
+		plank.position = Vector3(safe_mid, c.lava_bridge_y - 0.2 + float(i) * 0.1, 0.06)
+		add_child(plank)
+	var lb_label := Label3D.new()
+	lb_label.text = "100 lb"
+	lb_label.font_size = 64
+	lb_label.pixel_size = 0.003
+	lb_label.position = Vector3(safe_mid, c.lava_bridge_y + 0.36, 0.08)
+	add_child(lb_label)
 
 	# 場地規格 v2（ALTA-219）：木橋加幾條橫紋板（issue 視覺參考 k_368：
 	# 木板一條條併埋），代替之前一嚿實色扁盒仔冇木紋感。純裝飾，唔改
@@ -351,9 +367,9 @@ func _build_bridge() -> void:
 
 	# 岩浆：加發光，睇落有少少熱感（純裝飾，唔影響 _on_bridge_entered 判定）。
 	var lava_mesh := VisualFactory.make_metal_box(
-		Vector3(width, 0.04, 0.5), VisualFactory.PALETTE["lava"], VisualFactory.PALETTE["lava"], 0.8
+		Vector3(width, 0.5, 0.03), VisualFactory.PALETTE["lava"], VisualFactory.PALETTE["lava"], 1.2
 	)
-	lava_mesh.position = Vector3(mid_x, c.lava_bridge_y - 0.03, 0.0)
+	lava_mesh.position = Vector3(mid_x, c.lava_bridge_y, 0.0)
 	add_child(lava_mesh)
 
 ## 場地規格 v2（ALTA-219）：門改「門框＋兩柱＋頂部數字」語言（issue 視覺
@@ -366,9 +382,9 @@ func _build_bridge() -> void:
 ## main/mid/west 三道門喺 3.4 闊車場相鄰淨得 1.0~1.4 個世界單位，字面
 ## 跟 2.5 闊會相鄰門框互撞，所以縮到 GATE_WIDTH 夾實際門距。
 const GATE_WIDTH := 0.8
-const GATE_POST_HEIGHT := 0.42
-const GATE_POST_THICKNESS := 0.09
-const GATE_LINTEL_HEIGHT := 0.09
+const GATE_POST_HEIGHT := 0.5
+const GATE_POST_THICKNESS := 0.06
+const GATE_LINTEL_HEIGHT := 0.05
 
 func _build_gates() -> void:
 	for gate_id: String in c.gates.keys():
@@ -384,35 +400,34 @@ func _build_gates() -> void:
 		area.body_entered.connect(_on_gate_entered.bind(gate_id))
 		add_child(area)
 
+		# 攤平地面：門柱沿 z（高度）企起，門楣喺頂，地上一塊紫墊 + 大字。
 		var half_w: float = GATE_WIDTH * 0.5
 		for side in [-1.0, 1.0]:
 			var post := VisualFactory.make_flat_box(
-				Vector3(GATE_POST_THICKNESS, GATE_POST_HEIGHT, GATE_POST_THICKNESS * 1.4),
+				Vector3(GATE_POST_THICKNESS, GATE_POST_THICKNESS * 1.4, GATE_POST_HEIGHT),
 				VisualFactory.PALETTE["pad_purple"]
 			)
-			post.position = gate_pos + Vector3(side * half_w, GATE_POST_HEIGHT * 0.5, 0.0)
+			post.position = gate_pos + Vector3(side * half_w, 0.0, GATE_POST_HEIGHT * 0.5)
 			add_child(post)
-
 		var lintel := VisualFactory.make_flat_box(
-			Vector3(GATE_WIDTH + GATE_POST_THICKNESS, GATE_LINTEL_HEIGHT, GATE_POST_THICKNESS * 1.4),
+			Vector3(GATE_WIDTH + GATE_POST_THICKNESS, GATE_POST_THICKNESS * 1.4, GATE_LINTEL_HEIGHT),
 			VisualFactory.PALETTE["pad_purple"]
 		)
-		lintel.position = gate_pos + Vector3(0.0, GATE_POST_HEIGHT + GATE_LINTEL_HEIGHT * 0.5, 0.0)
+		lintel.position = gate_pos + Vector3(0.0, 0.0, GATE_POST_HEIGHT + GATE_LINTEL_HEIGHT * 0.5)
 		add_child(lintel)
-
-		# ALTA-153 round2：「門亮」——material 一開始已經 emission_enabled，
-		# 但 energy 由 _set_active_visual() 揸（開場暗住，見 _ready()）。
 		var gate_mat: StandardMaterial3D = lintel.material_override
 		gate_mat.emission_enabled = true
 		gate_mat.emission = gate_mat.albedo_color
 		gate_mat.emission_energy_multiplier = 0.0
 		_gate_materials.append(gate_mat)
 
+		var pad := _make_ground_pad(gate_pos, Vector2(GATE_WIDTH, 0.45))
+		add_child(pad)
 		var label := Label3D.new()
-		label.text = "x%s" % str(mult)
-		label.position = gate_pos + Vector3(0.0, GATE_POST_HEIGHT + GATE_LINTEL_HEIGHT + 0.14, 0.0)
-		label.pixel_size = 0.004
-		label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+		label.text = "x%d" % int(mult)
+		label.font_size = 110
+		label.position = gate_pos + Vector3(0.0, 0.0, 0.03)
+		label.pixel_size = 0.0035
 		label.modulate = Color.WHITE
 		add_child(label)
 
@@ -429,13 +444,13 @@ func _build_furnace() -> void:
 	area.body_entered.connect(_on_furnace_entered)
 	add_child(area)
 
-	var pad := _make_ground_pad(Vector3(mid_x, c.yard_min_y, 0.0), Vector2(1.0, 0.5))
+	var pad := _make_ground_pad(Vector3(mid_x, c.yard_min_y, 0.0), Vector2(1.1, 0.5))
 	add_child(pad)
 	var label := Label3D.new()
 	label.text = "SELL"
-	label.position = Vector3(mid_x, c.yard_min_y, 0.02) + Vector3(0.0, 0.16, 0.0)
-	label.pixel_size = 0.004
-	label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	label.font_size = 110
+	label.position = Vector3(mid_x, c.yard_min_y, 0.03)
+	label.pixel_size = 0.0035
 	label.modulate = Color.WHITE
 	add_child(label)
 
@@ -444,8 +459,8 @@ func _build_furnace() -> void:
 ## SurfaceTool 自訂幾何超出呢個純視覺調整嘅範圍，用邊角削細少少嘅扁盒
 ## 頂替，同其餘 flat-shaded box 手法一致）。
 func _make_ground_pad(pos: Vector3, size: Vector2) -> MeshInstance3D:
-	var pad := VisualFactory.make_flat_box(Vector3(size.x, 0.04, size.y), VisualFactory.PALETTE["pad_purple"])
-	pad.position = pos
+	var pad := VisualFactory.make_flat_box(Vector3(size.x, size.y, 0.02), VisualFactory.PALETTE["pad_purple"])
+	pad.position = pos + Vector3(0.0, 0.0, 0.01)
 	return pad
 
 func _build_upgrade_pad() -> void:
@@ -454,22 +469,15 @@ func _build_upgrade_pad() -> void:
 	area.position = Vector3(c.upgrade_pad_pos.x, c.upgrade_pad_pos.y, 0.0)
 	area.body_entered.connect(_on_upgrade_pad_entered)
 	add_child(area)
-	var visual := _make_ground_pad(area.position, Vector2(0.6, 0.5))
+	var visual := _make_ground_pad(area.position, Vector2(0.9, 0.5))
 	add_child(visual)
-
-	# 場地規格 v2：地上大字代替彈窗——同倍數門嘅 Label3D 一樣做法（issue
-	# 視覺參考：「地上 SELL／UPGRADE 墊…用地上大字，唔用彈窗」）；呢個
-	# 墊本身冇 Cash 價錢（免費踩過就升級，見 FrenzyState.try_upgrade_pad()），
-	# 所以淨顯示墊名。字色改白（跟返墊紫底＋白字嘅統一語言，取代之前
-	# 同墊本身撞唔埋一齊嘅青色）。
 	var label := Label3D.new()
 	label.text = "UPGRADE"
-	label.position = area.position + Vector3(0.0, 0.18, 0.0)
-	label.pixel_size = 0.003
-	label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	label.font_size = 80
+	label.position = area.position + Vector3(0.0, 0.0, 0.03)
+	label.pixel_size = 0.0035
 	label.modulate = Color.WHITE
 	add_child(label)
-
 
 # ══════════════════════ Area3D 事件：刺滾筒／窄岩浆／倍數門／爐／UPGRADE 墊 ══════════════════════
 
@@ -573,7 +581,7 @@ func _spawn_tick(delta: float) -> void:
 func _spawn_one_debris() -> void:
 	var kind: String = frenzy.roll_spawn_kind(rng)
 	var x: float = rng.randf_range(c.yard_x_range.x, c.yard_x_range.y)
-	var pos := Vector3(x, c.yard_spawn_y, rng.randf_range(-0.1, 0.1))
+	var pos := Vector3(x, c.yard_spawn_y - rng.randf_range(0.0, 0.6), DEBRIS_SIZE.z * 0.5 + 0.02)
 	if frenzy.is_fake_physics():
 		_spawn_fake_debris(kind, pos)
 	else:
@@ -665,8 +673,8 @@ func _build_ore_pool() -> void:
 	# （見上面註解），縮到車頭一截（滾筒之前），行返落去嗰截地面淨返
 	# 俾滾筒／木橋／岩浆／門呢啲有結構嘅裝置露面，同 issue 視覺參考
 	# 「地面墊／門／木橋／岩浆帶要睇得見」對齊。
-	var y_min: float = c.spike_roller_pos.y + 0.15
-	var y_max: float = c.car_park_max_y - c.ore_pool_ball_radius * 2.0
+	var y_min: float = c.lava_bridge_y + 0.2
+	var y_max: float = c.car_park_max_y - 0.1
 	for tier: String in weights.keys():
 		var count: int = int(round(float(c.ore_pool_total_count) * float(weights[tier]) / total_weight))
 		if count <= 0:
@@ -681,10 +689,20 @@ func _build_ore_pool() -> void:
 		add_child(mmi)
 		_pool_mesh_by_tier[tier] = mmi
 		for i in range(count):
+			# 有機 blob：三個中心，粒圍住中心散佈（IZM「堆」語言）。
+			var centers := [
+				Vector2(c.yard_x_range.x + 0.55, y_min + (y_max - y_min) * 0.7),
+				Vector2(c.yard_x_range.x + 1.35, y_min + (y_max - y_min) * 0.25),
+				Vector2(c.yard_x_range.y - 1.0, y_min + (y_max - y_min) * 0.75),
+				Vector2(c.yard_x_range.y - 0.35, y_min + (y_max - y_min) * 0.3),
+			]
+			var ctr: Vector2 = centers[rng.randi_range(0, centers.size() - 1)]
+			var ang: float = rng.randf_range(0.0, TAU)
+			var rad: float = sqrt(rng.randf()) * 0.42
 			var pos := Vector3(
-				rng.randf_range(c.yard_x_range.x, c.yard_x_range.y),
-				rng.randf_range(y_min, y_max),
-				rng.randf_range(-0.12, 0.12)
+				clampf(ctr.x + cos(ang) * rad * 1.15, c.yard_x_range.x, c.yard_x_range.y),
+				clampf(ctr.y + sin(ang) * rad, y_min, y_max),
+				c.ore_pool_ball_radius * float(scale_mult)
 			)
 			mmi.multimesh.set_instance_transform(
 				i, Transform3D(Basis.IDENTITY.scaled(Vector3.ONE * scale_mult), pos)
@@ -751,6 +769,7 @@ func _activate_pool_slot(slot: Dictionary) -> void:
 	# 呢度改為向側／向下（遠離車盒），先真係推得開，唔會撞返自己車身。
 	var away: Vector3 = (slot["pos"] as Vector3) - car.position
 	away.y = -absf(away.y) - 0.3
+	away.z = rng.randf_range(0.3, 0.7) # 揚起
 	if Vector2(away.x, away.z).length() < 0.001:
 		away.x = rng.randf_range(-1.0, 1.0)
 		away.z = rng.randf_range(-1.0, 1.0)
@@ -806,7 +825,8 @@ func spawn_gear() -> void:
 	var x: float = rng.randf_range(c.yard_x_range.x, c.yard_x_range.y)
 	var gear := VisualFactory.make_low_poly_cylinder(0.1, 0.1, Color(0.8, 0.85, 0.2), 8, 0.7)
 	gear.name = "Gear"
-	gear.position = Vector3(x, c.yard_spawn_y, 0.15)
+	gear.position = Vector3(x, c.yard_spawn_y - rng.randf_range(0.2, 1.0), 0.12)
+	gear.rotation_degrees.x = 90.0
 	add_child(gear)
 
 	var area := Area3D.new()

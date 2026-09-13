@@ -183,20 +183,20 @@ enum Resource3 { CASH, COMPONENTS, ECO }
 @export var barrel_spawn_ratio: float = 0.35   # TUNE：生成池入面藍波佔比，其餘係散幣
 @export var debris_spawn_interval_secs: float = 0.08 # TUNE：狂熱期間隔幾耐生一粒新碎料（未撞 cap 先生）
 @export var debris_fake_fall_speed: float = 1.4      # TUNE：假物理（位置插值）落速，低階機用嚟代替剛體
-@export var debris_gravity_scale: float = 0.12       # TUNE：實機 playtest 發現預設重力（9.8）跌 spawn_y→yard_min_y 成個車場淨使 <1s，車追唔切；夾細落速等剛體有時間畀車撞／過滾筒／過門
+@export var debris_gravity_scale: float = 1.0        # TUNE：實機 playtest 發現預設重力（9.8）跌 spawn_y→yard_min_y 成個車場淨使 <1s，車追唔切；夾細落速等剛體有時間畀車撞／過滾筒／過門
 
 ## -- 刺滾筒（藍波 → 金幣） --
-@export var spike_roller_pos: Vector2 = Vector2(0.65, -0.5)            # TUNE
-@export var spike_roller_half_extents: Vector3 = Vector3(0.5, 0.3, 0.25) # TUNE
+@export var spike_roller_pos: Vector2 = Vector2(1.3, -0.4)            # TUNE
+@export var spike_roller_half_extents: Vector3 = Vector3(0.4, 0.12, 0.12) # TUNE
 
 ## -- 窄岩浆 + 木橋（車跌落唔即死，只加溢滿；溢滿上限見 A1 trash_meter_cap） --
-@export var lava_bridge_y: float = -0.78                        # TUNE
+@export var lava_bridge_y: float = -0.9                        # TUNE
 @export var lava_bridge_safe_x_range: Vector2 = Vector2(-0.22, 0.22) # TUNE：木橋安全闊度
 @export var lava_fall_overflow_amount: float = 6.0              # TUNE：跌一次溢滿條加幾多
 @export var lava_fall_stun_secs: float = 0.6                    # TUNE：跌落之後車短暫定住先返回橋面
 
 ## -- UPGRADE 墊（即換模型，灰模用色塊／大細分身分，冇實際換 mesh） --
-@export var upgrade_pad_pos: Vector2 = Vector2(-0.9, -0.95) # TUNE
+@export var upgrade_pad_pos: Vector2 = Vector2(-0.6, -1.5) # TUNE
 @export var upgrade_pad_rearm_secs: float = 6.0             # TUNE：同一墊重複觸發嘅冷卻
 @export var car_upgrade_tiers: Array[Dictionary] = [
 	{"name": "拖拉機", "scale": 1.0, "speed_mult": 1.0, "push_mult": 1.0, "color": Color("#D9432B")}, # 場地規格 v2：鏟斗紅
@@ -233,8 +233,8 @@ enum Resource3 { CASH, COMPONENTS, ECO }
 @export var ore_pool_tier_weights: Dictionary = {
 	"stone": 40, "coal": 24, "copper": 16, "gold": 10, "diamond": 7, "crown": 3,
 } # TUNE：波池顏色分佈（純視覺 flavor，同 GameState 山腳礦物機率獨立，冇判分意義）
-@export var ore_pool_total_count: int = 3000        # TUNE：靜態 MultiMesh 波總粒數（issue：「成千粒」）
-@export var ore_pool_ball_radius: float = 0.05      # TUNE：普通波半徑
+@export var ore_pool_total_count: int = 4000        # TUNE：靜態 MultiMesh 波總粒數（issue：「成千粒」）
+@export var ore_pool_ball_radius: float = 0.035     # TUNE：普通波半徑
 @export var ore_pool_gold_scale_mult: float = 1.6   # TUNE：金波大粒過普通波（issue 明文要求，鑽／皇冠淨係自發光唔放大）
 ## 波池夠密（3000 粒鋪成千粒喺成條車場 y 走廊），半徑同時活躍粒數大致
 ## 成平方關係——實測（headless 單元測試量過）0.35 會一次過驚動 100+ 粒，

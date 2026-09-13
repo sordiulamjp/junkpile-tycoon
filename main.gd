@@ -41,8 +41,15 @@ extends Node3D
 ## script const（唔屬於 constants.gd 嘅「數值」，但相機取景要用嚟計算
 ## 山頂最高會去到邊，所以抽出嚟同 _rebuild_foothill_stack() 共用，
 ## 避免兩處各自 hardcode 一份出現唔一致）。
-const FOOTHILL_BASE_HEIGHT := 0.3
-const FOOTHILL_TIER_HEIGHT := 0.16
+const FOOTHILL_BASE_HEIGHT := 0.22
+const FOOTHILL_TIER_HEIGHT := 0.1
+## VR-06b 場地規格 v2：廢料山（12 層梯田）嘅平面尺寸——闊約 2.6（車闊≈0.5，
+## 即 ~5 車闊）、由山腳向後（+y）伸 1.7；每層向後縮、向上疊。
+const MOUNTAIN_WIDTH := 2.6
+const MOUNTAIN_DEPTH := 1.7
+## 場地（site）座標 → 世界：site 平面攤平做地面（site y → 世界 -z，site z → 世界 +y）。
+## 成個場地掛喺 _site_root（rotation.x = -90°）之下，物件仍然用 site 座標寫。
+const SITE_BASIS := Basis(Vector3(1, 0, 0), Vector3(0, 0, -1), Vector3(0, 1, 0))
 
 ## VR-06b：鏡頭改透視（issue 視覺參考 ALTA-153 最後一則留言，IZM 截圖：
 ## 高角度望落一條由頂延伸到底嘅峽谷，前景大後景細）。呢啲純粹係鏡頭
@@ -57,7 +64,7 @@ const FOOTHILL_TIER_HEIGHT := 0.16
 ## 55–60°／40–45°／8° 呢組數，見 test_main_scene.gd
 ## test_camera_is_tilted_not_front_on() 跟住改咗嘅門檻。
 const CAMERA_FOV_DEG := 40.0    # 場地規格 v2：40°
-const CAMERA_PITCH_DEG := -62.0 # 場地規格 v2：60–65°（負數＝低頭望落場地，跟返正交相機嗰個正負號慣例）
+const CAMERA_PITCH_DEG := -60.0 # 場地規格 v2：60–65°（負數＝低頭望落場地，跟返正交相機嗰個正負號慣例）
 const CAMERA_YAW_DEG := 0.0     # 場地規格 v2：唔轉 yaw
 
 ## 取景安全邊界（screen fraction／世界單位），畀盒仔／模型本身嘅大細
@@ -100,6 +107,7 @@ var _pending_offline_result: Dictionary = {} # 等緊玩家撳「收下」嘅 Of
 
 # -- 3D 節點 --
 var _world: Node3D
+var _site_root: Node3D # VR-06b：場地根（攤平做地面）
 # ALTA-153 round2：放置場一直 visible（唔再狂熱期間隱藏，見
 # _try_start_frenzy()／_on_frenzy_ended()），保留呢個 root 淨係為咗
 # 分組管理（山腳／帶／爐／倉／礦工／碎料一齊掛喺度）。
@@ -179,7 +187,7 @@ func _ready() -> void:
 
 	_frenzy_view = FrenzyYardView.new(c, state, frenzy)
 	_frenzy_view.name = "FrenzyYard"
-	_world.add_child(_frenzy_view)
+	_site_root.add_child(_frenzy_view)
 
 	_pile_spawn_timer = Timer.new()
 	_pile_spawn_timer.wait_time = c.pile_debris_spawn_interval_secs
@@ -440,12 +448,10 @@ func _on_frenzy_ended() -> void:
 func _site_to_world(v: Vector2, z: float = 0.0) -> Vector3:
 	return Vector3(v.x, v.y, z)
 
-## 山頂世界 Y——相機取景（_camera_reference_points()）、地面／岩壁背景
-## 幾何（_build_ground()／_build_canyon_walls()）三處都要揸實同一個
-## 「山有幾高」，抽出嚟做單一函式先唔會三處各自 hardcode 一份公式之後
-## 唔同步（ALTA-219 場地規格 v2 root cause 之一：地面／岩壁本身冚唔到
-## 相機已經框埋嘅山頂高度，露出背景色近黑嗰一大片，見 _build_ground()
-## 註解）。
+## site 座標 → 世界座標（畀相機取景／測試用；場景物件本身用 _site_to_world 局部座標）。
+func _site_to_global(v: Vector2, z: float = 0.0) -> Vector3:
+	return SITE_BASIS * Vector3(v.x, v.y, z)
+
 func _mountain_top_y() -> float:
 	return c.site_foothill_pos.y + FOOTHILL_BASE_HEIGHT + float(c.miner_summon_cap) * FOOTHILL_TIER_HEIGHT
 
@@ -458,28 +464,26 @@ func _mountain_top_y() -> float:
 ## 縱向），唔可以再靠撞彩，要老老實實將車場橫向範圍都計埋先保證
 ## 「車場兩牆全部喺中層帶」（issue 驗收）。
 func _camera_reference_points() -> Array[Vector3]:
-	var mountain_top_y: float = _mountain_top_y()
-	var wall_mid_y: float = (c.car_park_max_y + c.yard_min_y) * 0.5
+	var mountain_top_z: float = FOOTHILL_BASE_HEIGHT + float(c.miner_summon_cap) * FOOTHILL_TIER_HEIGHT
+	var mountain_back_y: float = c.site_foothill_pos.y + MOUNTAIN_DEPTH
+	var half_w: float = MOUNTAIN_WIDTH * 0.5
 	return [
-		_site_to_world(c.site_foothill_pos),
-		_site_to_world(Vector2(c.site_foothill_pos.x, mountain_top_y)),
-		_site_to_world(c.belt_head_pos),
-		_site_to_world(c.smelter_pos, 0.25),
-		_site_to_world(c.warehouse_pos, 0.22),
-		_site_to_world(Vector2(c.yard_x_range.x - 0.1, wall_mid_y)),
-		_site_to_world(Vector2(c.yard_x_range.y + 0.1, wall_mid_y)),
+		_site_to_global(Vector2(c.site_foothill_pos.x - half_w, c.site_foothill_pos.y)),
+		_site_to_global(Vector2(c.site_foothill_pos.x + half_w, c.site_foothill_pos.y)),
+		_site_to_global(Vector2(c.site_foothill_pos.x, mountain_back_y), mountain_top_z),
+		_site_to_global(Vector2(c.site_foothill_pos.x - half_w, mountain_back_y), mountain_top_z),
+		_site_to_global(Vector2(c.site_foothill_pos.x + half_w, mountain_back_y), mountain_top_z),
+		_site_to_global(c.belt_head_pos),
+		_site_to_global(c.smelter_pos, 0.5),
+		_site_to_global(c.warehouse_pos, 0.45),
+		_site_to_global(Vector2(c.warehouse_pos.x, c.warehouse_pos.y - 0.35)),
+		_site_to_global(Vector2(c.yard_x_range.x - 0.1, c.yard_min_y)),
+		_site_to_global(Vector2(c.yard_x_range.y + 0.1, c.yard_min_y)),
+		_site_to_global(Vector2(c.yard_x_range.x - 0.1, c.car_park_max_y)),
+		_site_to_global(Vector2(c.yard_x_range.y + 0.1, c.car_park_max_y)),
+		_site_to_global(Vector2(c.yard_x_range.y + 0.7, c.gate_y)),
 	]
 
-## 透視相機嘅垂直取景比例隨深度變（近大遠細），冇一個封閉公式可以好似
-## 正交相機舊版咁一步用 bounding-box 反推 size／位置——上一版嗰條公式
-## 淨啱正交（screen 比例同深度無關）。而家改用二分法數值解：候選相機
-## 距離（local_cz，沿住相機自己 -forward 退後幾多）配合
-## _solve_camera_height_for_bottom_fit() 揸實「畫面最底嗰個地標」貼
-## bottom_frac，再睇吓呢個距離之下「畫面最頂嗰個地標」跌落邊——跌得
-## 太深（frac 細過 top_frac，即係穿咗去頂 HUD 之上）就要再退後（加大
-## local_cz），跌得太淺（仲有好多白，未貼到 top_frac）就要再貼近（縮細
-## local_cz）。兩個方向都單調（見 _solve_camera_height_for_bottom_fit()
-## 註解），所以二分法保證收斂。
 func _solve_camera_distance_for_vertical_fit(
 	locals: Array[Vector3], max_lz: float, k_v: float, top_frac: float, bottom_frac: float
 ) -> float:
@@ -638,7 +642,7 @@ func _build_world() -> void:
 	env.background_color = Color(0.15, 0.13, 0.12)
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
 	env.ambient_light_color = Color(0.55, 0.46, 0.4)
-	env.ambient_light_energy = 0.7
+	env.ambient_light_energy = 1.0
 	var world_env := WorldEnvironment.new()
 	world_env.name = "WorldEnvironment"
 	world_env.environment = env
@@ -646,7 +650,7 @@ func _build_world() -> void:
 
 	var light := DirectionalLight3D.new()
 	light.name = "DirectionalLight3D"
-	light.rotation_degrees = Vector3(-50.0, -30.0, 0.0)
+	light.rotation_degrees = Vector3(-55.0, 25.0, 0.0)
 	# 用戶實機回饋（ALTA-150）：斜視之後 BoxMesh 要睇得出側面／立體感，
 	# 加返淡陰影（低 energy／唔太重手，避免灰模睇落太暗）；VR-06 加暖色
 	# 溫度（洞穴太陽光唔係死白）。
@@ -658,14 +662,20 @@ func _build_world() -> void:
 	# VR-06b：峽谷環境（岩壁「碗」+ 地面）——純背景裝飾，擺喺 _world
 	# 底下而唔係 _placement_root，狂熱切換 _placement_root.visible 嗰陣
 	# 唔會連環境一齊隱藏（同 IZM 參考一致：車場都係喺同一個峽谷入面）。
+	# VR-06b 場地規格 v2：成個場地攤平做地面——site (x, y) 係地面平面，
+	# site z 係高度。相機由上方 -62° 望落嚟（IZM 峽谷視角）。
+	_site_root = Node3D.new()
+	_site_root.name = "Site"
+	_site_root.basis = SITE_BASIS
+	_world.add_child(_site_root)
+
 	_build_ground()
 	_build_canyon_walls()
+	_build_dressing()
 
-	# VR-04：放置場成組掛喺呢個 root 底下，方便分組管理（ALTA-153 round2：
-	# 唔再狂熱期間隱藏，見 _try_start_frenzy() 註解）。
 	_placement_root = Node3D.new()
 	_placement_root.name = "PlacementField"
-	_world.add_child(_placement_root)
+	_site_root.add_child(_placement_root)
 
 	_foothill_root = Node3D.new()
 	_foothill_root.name = "Foothill"
@@ -674,13 +684,13 @@ func _build_world() -> void:
 	_rebuild_foothill_stack()
 
 	var belt_track := VisualFactory.make_flat_box(
-		Vector3(0.18, 0.05, (c.belt_head_pos - c.smelter_pos).length()), VisualFactory.PALETTE["belt"]
+		Vector3(0.26, 0.05, (c.belt_head_pos - c.smelter_pos).length()), VisualFactory.PALETTE["belt"]
 	)
 	belt_track.name = "BeltTrack"
 	var belt_mid := (c.belt_head_pos + c.smelter_pos) * 0.5
-	belt_track.position = _site_to_world(belt_mid)
-	belt_track.look_at_from_position(belt_track.position, _site_to_world(c.smelter_pos), Vector3.UP)
+	belt_track.position = _site_to_world(belt_mid, 0.06)
 	_placement_root.add_child(belt_track)
+	belt_track.look_at(_placement_root.to_global(_site_to_world(c.smelter_pos)), _site_root.global_transform.basis.z)
 
 	# ALTA-153 round2 第 6 點：帶「分段滾軸 mesh（有流動視覺）」——沿住帶
 	# 本身嘅局部 Z 軸（look_at_from_position 已經令佢指向 smelter）平均
@@ -692,7 +702,7 @@ func _build_world() -> void:
 		var frac: float = (float(i) / float(roller_count - 1)) - 0.5 if roller_count > 1 else 0.0
 		var roller := VisualFactory.make_low_poly_cylinder(0.05, 0.22, VisualFactory.PALETTE["gear_metal"], 8, 0.6)
 		roller.rotation_degrees.z = 90.0
-		roller.position = Vector3(0.0, 0.075, frac * belt_len)
+		roller.position = Vector3(0.0, 0.04, frac * belt_len)
 		belt_track.add_child(roller)
 		_belt_rollers.append(roller)
 
@@ -701,33 +711,40 @@ func _build_world() -> void:
 	# 屋簷 + 一盞燈」語言（issue 視覺參考），用自己色，唔抄 IZM 藍頂。
 	var smelter := Node3D.new()
 	smelter.name = "Smelter"
-	smelter.position = _site_to_world(c.smelter_pos, 0.25)
-	var smelter_body := VisualFactory.make_metal_box(Vector3(0.5, 0.5, 0.5), VisualFactory.PALETTE["furnace_body"])
+	smelter.position = _site_to_world(c.smelter_pos, 0.3)
+	var smelter_body := VisualFactory.make_metal_box(Vector3(0.7, 0.6, 0.6), VisualFactory.PALETTE["furnace_body"])
 	smelter.add_child(smelter_body)
 	var smelter_mouth := VisualFactory.make_metal_box(
-		Vector3(0.3, 0.22, 0.05), VisualFactory.PALETTE["furnace_glow"], VisualFactory.PALETTE["furnace_glow"], 1.5
+		Vector3(0.36, 0.05, 0.3), VisualFactory.PALETTE["furnace_glow"], VisualFactory.PALETTE["furnace_glow"], 2.0
 	)
-	smelter_mouth.position = Vector3(0.0, -0.05, 0.26)
+	smelter_mouth.position = Vector3(0.0, -0.31, -0.08)
 	smelter.add_child(smelter_mouth)
-	var smelter_eave := VisualFactory.make_flat_box(Vector3(0.56, 0.06, 0.22), VisualFactory.PALETTE["entrance_eave"])
-	smelter_eave.position = Vector3(0.0, 0.28, 0.16)
+	var smelter_eave := VisualFactory.make_flat_box(Vector3(0.8, 0.26, 0.06), VisualFactory.PALETTE["entrance_eave"])
+	smelter_eave.position = Vector3(0.0, -0.36, 0.33)
 	smelter.add_child(smelter_eave)
 	var smelter_lamp := VisualFactory.make_lamp(0.05, VisualFactory.PALETTE["lamp_warm"])
-	smelter_lamp.position = Vector3(0.22, 0.22, 0.26)
+	smelter_lamp.position = Vector3(0.32, -0.34, 0.26)
 	smelter.add_child(smelter_lamp)
+	# 爐頂：煙囱 + 發光爐口（俯視鏡頭先見到火光）。
+	var chimney := VisualFactory.make_metal_box(Vector3(0.22, 0.22, 0.3), VisualFactory.PALETTE["furnace_body"].darkened(0.2))
+	chimney.position = Vector3(0.18, 0.12, 0.45)
+	smelter.add_child(chimney)
+	var top_glow := VisualFactory.make_metal_box(Vector3(0.3, 0.3, 0.06), Color(1.0, 0.45, 0.1), Color(1.0, 0.45, 0.1), 2.2)
+	top_glow.position = Vector3(-0.15, -0.05, 0.33)
+	smelter.add_child(top_glow)
 	_placement_root.add_child(smelter)
 
 	# 倉：body + 斜頂 + 一盞燈，同一套「入口 + 屋簷 + 一盞燈」語言。
 	var warehouse := Node3D.new()
 	warehouse.name = "Warehouse"
 	warehouse.position = _site_to_world(c.warehouse_pos, 0.22)
-	var warehouse_body := VisualFactory.make_flat_box(Vector3(0.6, 0.45, 0.45), VisualFactory.PALETTE["warehouse_body"])
+	var warehouse_body := VisualFactory.make_flat_box(Vector3(0.7, 0.5, 0.44), VisualFactory.PALETTE["warehouse_body"])
 	warehouse.add_child(warehouse_body)
-	var warehouse_roof := VisualFactory.make_flat_box(Vector3(0.66, 0.08, 0.5), VisualFactory.PALETTE["warehouse_roof"])
-	warehouse_roof.position = Vector3(0.0, 0.265, 0.0)
+	var warehouse_roof := VisualFactory.make_flat_box(Vector3(0.78, 0.58, 0.08), VisualFactory.PALETTE["warehouse_roof"])
+	warehouse_roof.position = Vector3(0.0, 0.0, 0.26)
 	warehouse.add_child(warehouse_roof)
 	var warehouse_lamp := VisualFactory.make_lamp(0.05, VisualFactory.PALETTE["lamp_warm"])
-	warehouse_lamp.position = Vector3(0.28, 0.2, 0.24)
+	warehouse_lamp.position = Vector3(0.32, -0.28, 0.2)
 	warehouse.add_child(warehouse_lamp)
 	_placement_root.add_child(warehouse)
 
@@ -763,28 +780,75 @@ const GROUND_WALL_INSET := 0.7 # 同 _build_canyon_walls() 嘅 side_x 一致，�
 ## 更暗嘅幼長扁盒仔疊喺底板之上少少，代替 issue 講嘅 vertex color，
 ## 同一份 flat-shaded 盒仔手法，唔使起 SurfaceTool 自訂 mesh）。擺喺場地
 ## 中心（帶頭／爐／倉／車場之間），底板夠大冚晒中層帶睇得到嘅範圍。
+## VR-06b 場地規格 v2 嘅場地裝飾：右側岩浆帶、爐前 SELL 大字、油桶方陣。
+func _build_dressing() -> void:
+	var dress := Node3D.new()
+	dress.name = "Dressing"
+	_site_root.add_child(dress)
+
+	# 右側岩浆帶（闊 2 車闊≈1.0）由車場頂直落到倉。
+	var lava_x: float = c.yard_x_range.y + 0.42
+	var lava_top: float = c.site_foothill_pos.y + 0.3
+	var lava_bottom: float = c.warehouse_pos.y - 0.6
+	var lava := VisualFactory.make_metal_box(
+		Vector3(0.5, lava_top - lava_bottom, 0.03), VisualFactory.PALETTE["lava"], VisualFactory.PALETTE["lava"], 1.8
+	)
+	lava.position = Vector3(lava_x, (lava_top + lava_bottom) * 0.5, 0.0)
+	dress.add_child(lava)
+	for _i in range(14):
+		var crust := VisualFactory.make_flat_box(Vector3(rng.randf_range(0.08, 0.18), rng.randf_range(0.06, 0.14), 0.03), Color(0.3, 0.1, 0.05))
+		crust.position = Vector3(lava_x + rng.randf_range(-0.2, 0.2), rng.randf_range(lava_bottom, lava_top), 0.01)
+		crust.rotation.z = rng.randf_range(0.0, TAU)
+		dress.add_child(crust)
+
+	# 爐前 SELL 大字墊（紫底白字）。
+	var sell_pad := VisualFactory.make_flat_box(Vector3(1.0, 0.6, 0.02), Color(0.36, 0.23, 0.55))
+	sell_pad.position = Vector3(c.smelter_pos.x, c.smelter_pos.y + 0.55, 0.01)
+	dress.add_child(sell_pad)
+	var sell_label := Label3D.new()
+	sell_label.text = "SELL"
+	sell_label.font_size = 96
+	sell_label.pixel_size = 0.004
+	sell_label.modulate = Color(1, 1, 1)
+	sell_label.position = Vector3(c.smelter_pos.x, c.smelter_pos.y + 0.55, 0.03)
+	dress.add_child(sell_label)
+
+	# 油桶方陣（障礙兼裝飾）喺車場左下角。
+	for row in range(3):
+		for col_i in range(3):
+			var barrel := VisualFactory.make_low_poly_cylinder(0.11, 0.24, Color(0.2, 0.42, 0.75) if (row + col_i) % 2 == 0 else Color(0.25, 0.5, 0.85), 8, 0.35)
+			barrel.rotation_degrees.x = 90.0
+			barrel.position = Vector3(c.yard_x_range.x + 0.3 + float(col_i) * 0.25, c.warehouse_pos.y + 0.1 - float(row) * 0.25, 0.12)
+			dress.add_child(barrel)
+
 func _build_ground() -> void:
 	var ground_root := Node3D.new()
 	ground_root.name = "Ground"
-	_world.add_child(ground_root)
+	_site_root.add_child(ground_root)
 
 	var mid_x: float = (c.yard_x_range.x + c.yard_x_range.y) * 0.5
-	var min_x: float = c.yard_x_range.x - GROUND_WALL_INSET
-	var max_x: float = c.yard_x_range.y + GROUND_WALL_INSET
-	var min_y: float = c.warehouse_pos.y - 4.0     # 同 _build_canyon_walls() bottom_y 一致；實測（debug 二分法覆算）centering 落嚟 bottom 嗰邊嘅留白要去到 -4.0 先近乎冚晒（見 _solve_camera_height_centered() 註解）
-	var max_y: float = _mountain_top_y() + 1.2     # 冚過山頂，唔留返黑罅（實測 debug 二分法覆算 +0.6 仲差 3.5% 先貼到 top_frac，加到 +1.2 有安全邊際）
-	var width: float = max_x - min_x
-	var height: float = max_y - min_y
-	var mid_y: float = (min_y + max_y) * 0.5
+	var top_y: float = c.site_foothill_pos.y + MOUNTAIN_DEPTH + 1.0
+	var bottom_y: float = c.warehouse_pos.y - 0.5
+	var width: float = (c.yard_x_range.y - c.yard_x_range.x) + 3.0
+	var height: float = top_y - bottom_y
 
-	var backdrop := VisualFactory.make_flat_box(
-		Vector3(width, height, 0.06), VisualFactory.PALETTE["ground_warm"]
-	)
-	backdrop.position = Vector3(mid_x, mid_y, -0.08)
-	ground_root.add_child(backdrop)
+	var slab := VisualFactory.make_flat_box(Vector3(width, height, 0.06), VisualFactory.PALETTE["ground_warm"])
+	slab.name = "GroundSlab"
+	slab.position = Vector3(mid_x, (top_y + bottom_y) * 0.5, -0.03)
+	ground_root.add_child(slab)
 
-	# 車轍紋：由帶頭經爐去倉一條，車場中軸一條——同帶／車道嘅實際路徑
-	# 大致對得上，睇落似「成日有嘢輾過」，冇實際碰撞／判定。
+	# 地面碰撞：碎料／波池剛體要有嘢托住（攤平之後重力向下 = site -z）。
+	var floor_body := StaticBody3D.new()
+	floor_body.name = "Floor"
+	var col := CollisionShape3D.new()
+	var shape := BoxShape3D.new()
+	shape.size = Vector3(width, height, 0.2)
+	col.shape = shape
+	floor_body.add_child(col)
+	floor_body.position = Vector3(mid_x, (top_y + bottom_y) * 0.5, -0.1)
+	ground_root.add_child(floor_body)
+
+	# 車轍紋：帶頭→爐→倉一條、車場中軸一條。
 	var tread_paths: Array[Array] = [
 		[c.belt_head_pos, c.smelter_pos, c.warehouse_pos],
 		[Vector2(mid_x, c.car_park_max_y), Vector2(mid_x, c.yard_min_y)],
@@ -797,119 +861,78 @@ func _build_ground() -> void:
 			var seg_len: float = (b - a).length()
 			if seg_len < 0.001:
 				continue
-			var tread := VisualFactory.make_flat_box(
-				Vector3(0.1, seg_len, 0.02), VisualFactory.PALETTE["ground_tread"]
-			)
-			tread.position = _site_to_world(seg_mid, -0.05)
-			# 呢個 world 用 y 向上（山向上長），唔係 Godot 2D 螢幕座標，
-			# 所以自己攞 (0,1) 做「上」，唔用 Vector2.UP 常數（嗰個係
-			# (0,-1)，Y 向下嘅螢幕慣例，喺呢個世界用就會轉錯方向）。
+			var tread := VisualFactory.make_flat_box(Vector3(0.14, seg_len, 0.01), VisualFactory.PALETTE["ground_tread"])
+			tread.position = _site_to_world(seg_mid, 0.005)
 			tread.rotation.z = Vector2(0.0, 1.0).angle_to(b - a)
 			ground_root.add_child(tread)
 
-## 場地規格 v2（ALTA-219）：岩壁要「包住場地三邊（底邊留 HUD）」——之前
-## 版本淨包咗左右兩邊，山頂之上（遠端，即底邊／HUD 嗰邊嘅對面）冇牆，
-## 用戶實機（now.png／s8now.png）睇到「岩壁得兩嚿深色磚」，一嚟係密度
-## 太疏（6 行 × 3 嚿，攤開成 mountain_top_y↔warehouse 咁大嘅垂直範圍，
-## 每嚿睇落好散），二嚟山頂之上一片空就係頂部大片黑嘅其中一個源頭
-## （另一個源頭見 _build_ground() 註解）。呢版加密左右兩幅牆，並且加
-## 第三幅「背牆」封住山頂上方、橫跨兩幅側牆之間全闊。
 func _build_canyon_walls() -> void:
 	var wall_root := Node3D.new()
 	wall_root.name = "CanyonWalls"
-	_world.add_child(wall_root)
+	_site_root.add_child(wall_root)
 
-	var mountain_top_y: float = _mountain_top_y()
-	var bottom_y: float = c.warehouse_pos.y - 4.0
-	var rows := 9
-	var row_height: float = (mountain_top_y - bottom_y + 1.5) / float(rows)
-	var facets_per_row := 4
+	var left_x: float = c.yard_x_range.x - 0.55
+	var right_x: float = c.yard_x_range.y + 1.05
+	var back_y: float = c.site_foothill_pos.y + MOUNTAIN_DEPTH + 0.5
+	var front_y: float = c.warehouse_pos.y - 0.3
 
-	# 實機回饋（第一輪，2026-09-13）：加大 Z jitter 諗住做「凸出嚟」嘅
-	# 立體感，但呢個相機淨係 pitch（CAMERA_YAW_DEG=0），world Y／Z 經
-	# basis 轉換之後，Z 對螢幕垂直位置嘅影響同 Y 差唔多量級（大 Z jitter
-	# 會將塊石嘅螢幕位置大幅拉低，跌落中層帶擋住個山），實機截圖見到
-	# 岩壁變咗幾嚿巨型色塊拉到成個畫面中間。改為淨留少少 Z（0~0.15）
-	# 畀塊石有少少立體厚度，唔再靠 Z jitter 做「凸出」。
-	#
-	# 實機回饋（第二輪）：facets_per_row 太多＋jitter_x 太窄，令同一行
-	# 幾嚿全部疊晒喺 side_x 附近，睇落似一條實色長方柱／木柵，唔似
-	# 「不規則切面」。改細 facets_per_row、放闊 jitter_x（令邊緣凹凸
-	# 唔齊），facet 高度縮到 row_height 嘅七成，留返三成罅隙做斷層感，
-	# 唔再係實心冚晒成條column。
-	for side in [-1.0, 1.0]:
-		var side_x: float = (c.yard_x_range.x - GROUND_WALL_INSET) if side < 0.0 \
-			else (c.yard_x_range.y + GROUND_WALL_INSET)
-		for row in range(rows):
-			var y: float = bottom_y + float(row) * row_height
-			for i in range(facets_per_row):
-				var jitter_x := rng.randf_range(-0.6, 0.6)
-				var jitter_z := rng.randf_range(0.0, 0.15)
-				var facet_size := Vector3(
-					0.5 + rng.randf_range(-0.1, 0.2), row_height * 0.7, 0.3 + rng.randf_range(0.0, 0.2)
-				)
-				var tone: Color = VisualFactory.PALETTE["canyon_wall"].lerp(
-					VisualFactory.PALETTE["canyon_wall_dark"], rng.randf()
-				)
-				var facet := VisualFactory.make_rock_facet(facet_size, tone, rng.randf())
-				facet.position = Vector3(side_x + jitter_x, y, jitter_z)
-				facet.rotation.y = rng.randf_range(-0.4, 0.4) + (0.0 if side < 0.0 else PI)
+	# 兩側：由前到後一排排切面大石，高 1.0–1.6（車高≈0.3 → 3–5 車高）。
+	var step := 0.55
+	var y: float = front_y
+	while y <= back_y:
+		for side in [-1.0, 1.0]:
+			var base_x: float = left_x if side < 0.0 else right_x
+			for layer in range(2):
+				var h: float = rng.randf_range(0.9, 1.5) - float(layer) * 0.35
+				var sz := Vector3(rng.randf_range(0.7, 1.1), rng.randf_range(0.5, 0.75), h)
+				var tone: Color = VisualFactory.PALETTE["canyon_wall"].lerp(VisualFactory.PALETTE["canyon_wall_dark"], rng.randf() * 0.7)
+				var facet := _make_rock(sz, tone)
+				facet.position = Vector3(base_x + side * (0.35 + float(layer) * 0.55) + rng.randf_range(-0.1, 0.1), y + rng.randf_range(-0.12, 0.12), sz.z * 0.5 - 0.05)
+				facet.rotation.z = rng.randf_range(-0.35, 0.35)
 				wall_root.add_child(facet)
+		y += step
+	# 後方：一排高石包住山後面。
+	var x: float = left_x
+	while x <= right_x + 0.01:
+		var sz := Vector3(rng.randf_range(0.7, 1.0), rng.randf_range(0.6, 0.9), rng.randf_range(1.4, 2.0))
+		var tone: Color = VisualFactory.PALETTE["canyon_wall"].lerp(VisualFactory.PALETTE["canyon_wall_dark"], rng.randf() * 0.7)
+		var facet := _make_rock(sz, tone)
+		facet.position = Vector3(x + rng.randf_range(-0.1, 0.1), back_y + rng.randf_range(0.0, 0.3), sz.z * 0.5 - 0.05)
+		facet.rotation.z = rng.randf_range(-0.3, 0.3)
+		wall_root.add_child(facet)
+		x += 0.6
 
-	# 第三邊——遠端「背牆」，橫跨兩幅側牆之間全闊，封住山頂上方（三邊
-	# 入面嘅第三邊；底邊／近鏡頭嗰邊留畀 HUD，唔加牆）。第一行特登由
-	# 「山頂高度之下半行」開始（唔係啱啱好貼山頂），同山頂本身重疊少少
-	# 先唔會漏返條罅出嚟（同上面一樣，冇再用大 Z jitter 屈曲螢幕位置）。
-	# 第二輪：rows 由 4 減到 2、放闊 jitter_x，避免同一 X 位幾行疊埋一條
-	# 幼柱（同上面側牆嘅修正同一個道理）。
-	var back_min_x: float = c.yard_x_range.x - GROUND_WALL_INSET
-	var back_max_x: float = c.yard_x_range.y + GROUND_WALL_INSET
-	var back_width: float = back_max_x - back_min_x
-	var back_rows := 2
-	var back_spacing := 0.5
-	var back_count: int = int(back_width / back_spacing) + 2
-	for row in range(back_rows):
-		var y: float = mountain_top_y - row_height * 0.5 + float(row) * row_height * 0.85
-		for i in range(back_count):
-			var fx: float = back_min_x + (float(i) / float(back_count - 1)) * back_width
-			var jitter_x := rng.randf_range(-0.3, 0.3)
-			var jitter_z := rng.randf_range(0.0, 0.15)
-			var facet_size := Vector3(
-				0.5 + rng.randf_range(-0.1, 0.2), row_height * 0.7, 0.3 + rng.randf_range(0.0, 0.2)
-			)
-			var tone: Color = VisualFactory.PALETTE["canyon_wall"].lerp(
-				VisualFactory.PALETTE["canyon_wall_dark"], rng.randf()
-			)
-			var facet := VisualFactory.make_rock_facet(facet_size, tone, rng.randf())
-			facet.position = Vector3(fx + jitter_x, y, jitter_z)
-			facet.rotation.y = rng.randf_range(-0.3, 0.3) + PI * 0.5
-			wall_root.add_child(facet)
+## 一嚿切面岩石：低面數盒 + 頂面斜削（PrismMesh 立起嚟），size = (闊, 深, 高)。
+func _make_rock(size: Vector3, color: Color) -> Node3D:
+	var root := Node3D.new()
+	var body := VisualFactory.make_flat_box(Vector3(size.x, size.y, size.z * 0.7), color)
+	body.position = Vector3(0.0, 0.0, -size.z * 0.15)
+	root.add_child(body)
+	var cap := VisualFactory.make_rock_facet(Vector3(size.x, size.z * 0.3, size.y), color.lightened(0.12), rng.randf_range(0.2, 0.8))
+	cap.rotation_degrees.x = 90.0
+	cap.position = Vector3(0.0, 0.0, size.z * 0.35)
+	root.add_child(cap)
+	return root
 
-## 第 i 層梯田嘅盒仔大細／local 中心 y——同時俾 `_rebuild_foothill_stack()`
-## 同 `_spawn_pile_visual()` 用，抽出嚟避免兩處各自
-## hardcode 一份數字後日後改一邊唔記得改埋另一邊（round2 修正二嘅 bug
-## 根源之一就係碎料生成位冇跟返呢兩條式，見下面果個函式嘅註解）。
 func _tier_box_size(tier_index: int) -> Vector3:
 	var t: float = float(tier_index) / float(maxi(c.miner_summon_cap, 1))
-	return Vector3(0.95 - t * 0.55, FOOTHILL_TIER_HEIGHT, 0.65 - t * 0.35)
+	return Vector3(MOUNTAIN_WIDTH * (1.0 - t * 0.55), MOUNTAIN_DEPTH * (1.0 - t * 0.6), FOOTHILL_TIER_HEIGHT)
 
 func _tier_center_y(tier_index: int) -> float:
-	return FOOTHILL_BASE_HEIGHT + float(tier_index) * FOOTHILL_TIER_HEIGHT
+	# 每層向後縮：後緣固定喺 MOUNTAIN_DEPTH，前緣逐層退後，形成面向車場嘅梯級。
+	return MOUNTAIN_DEPTH - _tier_box_size(tier_index).y * 0.5
 
-## 廢料山（12 層梯田常駐）：用戶實機回饋（round2 第 3 點）——一開場就
-## 要見到成座 12 層梯田（唔係得個地台，靠日後召喚先一層層現），先夠
-## 「有排開採」嘅份量。層數固定用 miner_summon_cap（同
-## _compute_camera_frame() 嘅 mountain_top_y 早就假設咗嘅高度一致，
-## 唔使再改鏡頭）；已經有礦工駐守嗰幾層轉亮色 + 加一件雜物（木桶／
-## 木板／齒輪，CSG／低面數幾何 + flat colour，issue 視覺參考「每層有
-## 雜物細節」），未開採嗰幾層維持暗色淨幾何——用色差表達開採進度，
-## 唔靠「層存唔存在」表達（tap 判定、召喚價錢呢啲數值邏輯全部喺
-## game_state.gd，呢度純粹換視覺）。
+func _tier_center_z(tier_index: int) -> float:
+	return FOOTHILL_BASE_HEIGHT + float(tier_index) * FOOTHILL_TIER_HEIGHT + FOOTHILL_TIER_HEIGHT * 0.5
+
+func _tier_center_local(tier_index: int) -> Vector3:
+	return Vector3(0.0, _tier_center_y(tier_index), _tier_center_z(tier_index))
+
 func _rebuild_foothill_stack() -> void:
 	for child in _foothill_root.get_children():
 		child.queue_free()
-	var base := VisualFactory.make_flat_box(Vector3(1.1, 0.3, 0.75), VisualFactory.PALETTE["cave"])
-	base.position = Vector3(0.0, 0.0, 0.0)
+	var base := VisualFactory.make_flat_box(Vector3(MOUNTAIN_WIDTH + 0.3, MOUNTAIN_DEPTH + 0.2, FOOTHILL_BASE_HEIGHT), VisualFactory.PALETTE["cave"])
+	base.position = Vector3(0.0, MOUNTAIN_DEPTH * 0.5, FOOTHILL_BASE_HEIGHT * 0.5)
 	_foothill_root.add_child(base)
 
 	var total_tiers: int = c.miner_summon_cap
@@ -919,23 +942,12 @@ func _rebuild_foothill_stack() -> void:
 		var tier_color: Color = VisualFactory.PALETTE["cave_light"] if mined else VisualFactory.PALETTE["cave"]
 		var box_size := _tier_box_size(i)
 		var box := VisualFactory.make_flat_box(box_size, tier_color)
-		box.position = Vector3(0.0, _tier_center_y(i), 0.0)
+		box.name = "Tier%d" % (i + 1)
+		box.position = _tier_center_local(i)
 		_foothill_root.add_child(box)
-		# 場地規格 v2（ALTA-219）：box 本身留低唔改（相機取景／碎料落點
-		# 嘅 bounding box 測試同 _spawn_pile_visual() 都跟緊呢個 box，見
-		# test_main_scene.gd test_foothill_shows_full_terrace_before_any_miner_summoned()
-		# / test_pile_debris_spawns_outside_terrace_footprint()），但喺
-		# 盒仔邊緣加幾嚿凸出嘅切面石打散直邊輪廓——用戶實機回饋：依家個
-		# 山「係樓梯形方塊」，issue 視覺參考要「岩壁語言：切面大石堆成
-		# 12 層梯田」，唔係光滑盒仔。
-		_add_tier_rock_facets(box_size, box.position, tier_color)
-		if mined and i % 2 == 0:
-			_add_tier_clutter(box_size, box.position)
+		# 每層前緣鋪一排雜物（油桶／木箱／輪胎／廢鐵），廢料山要似「堆滿嘢」。
+		_add_tier_clutter(box_size, box.position, 3 if mined else 2)
 
-## 岩壁語言——喺一層梯田盒仔嘅前緣／頂緣散幾嚿切面石（同
-## _build_canyon_walls() 一樣用 VisualFactory.make_rock_facet()），凸出
-## 盒仔本身少少令輪廓唔規則。純視覺疊加，唔郁 box 本身（bounding box
-## 測試／碎料落點全部跟 box，見呼叫處註解）。
 func _add_tier_rock_facets(box_size: Vector3, box_pos: Vector3, tier_color: Color) -> void:
 	var facet_count := 4
 	for f in range(facet_count):
@@ -957,24 +969,28 @@ func _add_tier_rock_facets(box_size: Vector3, box_pos: Vector3, tier_color: Colo
 
 ## 每兩層開採咗嘅梯田加一件雜物（隨機揀木桶／木板／齒輪），擺喺嗰層
 ## 面頂中央附近少少 jitter。純美術裝飾，冇碰撞、唔影響任何判定。
-func _add_tier_clutter(box_size: Vector3, box_pos: Vector3) -> void:
-	var prop: MeshInstance3D
-	match rng.randi_range(0, 2):
-		0:
-			prop = VisualFactory.make_low_poly_cylinder(0.05, 0.09, VisualFactory.PALETTE["bridge_wood"], 8, 0.1) # 木桶
-		1:
-			prop = VisualFactory.make_flat_box(Vector3(0.2, 0.02, 0.06), VisualFactory.PALETTE["bridge_wood"]) # 木板
-		_:
-			prop = VisualFactory.make_low_poly_cylinder(0.04, 0.02, VisualFactory.PALETTE["gear_metal"], 8, 0.7) # 齒輪
-			prop.rotation_degrees.x = 90.0
-	prop.rotation.y = rng.randf_range(0.0, TAU)
-	prop.position = box_pos + Vector3(
-		rng.randf_range(-box_size.x * 0.25, box_size.x * 0.25),
-		box_size.y * 0.5 + 0.045,
-		rng.randf_range(-box_size.z * 0.25, box_size.z * 0.25)
-	)
-	_foothill_root.add_child(prop)
-
+func _add_tier_clutter(box_size: Vector3, box_pos: Vector3, count: int) -> void:
+	for _i in range(count):
+		var prop: Node3D
+		match rng.randi_range(0, 3):
+			0: # 油桶（立起）
+				prop = VisualFactory.make_low_poly_cylinder(0.06, 0.12, [Color(0.75, 0.25, 0.15), Color(0.2, 0.4, 0.7), Color(0.85, 0.7, 0.2)][rng.randi_range(0, 2)], 8, 0.3)
+				prop.rotation_degrees.x = 90.0
+			1: # 木箱
+				prop = VisualFactory.make_flat_box(Vector3(0.14, 0.14, 0.12), VisualFactory.PALETTE["bridge_wood"])
+			2: # 輪胎（平放）
+				prop = VisualFactory.make_low_poly_cylinder(0.08, 0.05, Color(0.12, 0.12, 0.13), 10, 0.1)
+				prop.rotation_degrees.x = 90.0
+			_: # 廢鐵板
+				prop = VisualFactory.make_flat_box(Vector3(0.22, 0.05, 0.16), VisualFactory.PALETTE["gear_metal"])
+				prop.rotation_degrees.y = rng.randf_range(-25.0, 25.0)
+		prop.rotation.z = rng.randf_range(0.0, TAU)
+		prop.position = box_pos + Vector3(
+			rng.randf_range(-box_size.x * 0.45, box_size.x * 0.45),
+			-box_size.y * 0.5 + rng.randf_range(0.05, 0.22),
+			box_size.z * 0.5 + 0.06
+		)
+		_foothill_root.add_child(prop)
 
 # ══════════════════════ 礦工 ══════════════════════
 
@@ -1032,34 +1048,28 @@ func _spawn_loaded_miners() -> void:
 ##    嘅 swing 再以呢個歪咗嘅姿勢做 base，變咗長期趴住。要用
 ##    `_miners_root.to_global()` 攞返正確嘅全域目標點。
 func _place_miner_around_foothill(miner: Node3D, index: int) -> void:
-	var slot_count: int = maxi(c.miner_summon_cap - 1, 1)
-	var angle: float = -PI * 0.5 + (float(index) / float(slot_count)) * PI \
-		+ rng.randf_range(-0.05, 0.05)
-	# 兩個端點（index 0／slot_count）加咗負／正 jitter 之後可能撞穿
-	# ±90°，令 z 變負（跌返出「前半弧」以外，俾梯田擋返住）——夾住個
-	# 範圍，其餘中間嘅格都唔會撞邊。
-	angle = clampf(angle, -PI * 0.5, PI * 0.5)
-	var miner_y := 0.1
-	miner.position = Vector3(sin(angle) * MINER_RING_RADIUS, miner_y, cos(angle) * MINER_RING_RADIUS)
-	miner.look_at(_miners_root.to_global(Vector3(0.0, miner_y, 0.0)), Vector3.UP)
+	# 礦工企喺山腳前面一排（site -y 方向），面向山。
+	var slot_count: int = maxi(c.miner_summon_cap, 1)
+	var t: float = (float(index) + 0.5) / float(slot_count)
+	var x: float = (t - 0.5) * (MOUNTAIN_WIDTH * 0.9) + rng.randf_range(-0.04, 0.04)
+	var y: float = -0.22 - rng.randf_range(0.0, 0.12)
+	miner.position = Vector3(x, y, 0.0)
+	# glTF 模型 +y 向上；場地攤平後「上」係 site +z，所以先轉 90°，再繞 z 轉去面向山（+y）。
+	var miner_scale: Vector3 = miner.scale
+	miner.basis = Basis(Vector3(1, 0, 0), PI * 0.5).scaled(miner_scale)
 
-## 用戶實機回饋（round2 第 5 點）：「有敲擊動畫（tween 上下 + 鎬頭擺）」
-## ——Kenney glTF 冇逐條骨嘅駕馭介面，改用成隻 miner 嘅垂直起伏（模擬
-## 蹲低揮鎬）+ 前傾後仰（模擬鎬頭掄落）兩條獨立 loop tween 疊埋，比
-## 原本單純上下 bob 更似「敲緊嘢」。
 func _animate_mining(node: Node3D) -> void:
-	var base_y := node.position.y
+	var base_z := node.position.z
 	var bob_tw := create_tween()
 	bob_tw.set_loops()
-	bob_tw.tween_property(node, "position:y", base_y + 0.05, 0.22).set_trans(Tween.TRANS_SINE)
-	bob_tw.tween_property(node, "position:y", base_y, 0.22).set_trans(Tween.TRANS_SINE)
+	bob_tw.tween_property(node, "position:z", base_z + 0.04, 0.22).set_trans(Tween.TRANS_SINE)
+	bob_tw.tween_property(node, "position:z", base_z, 0.22).set_trans(Tween.TRANS_SINE)
 
 	var base_rot_x := node.rotation.x
 	var swing_tw := create_tween()
 	swing_tw.set_loops()
-	swing_tw.tween_property(node, "rotation:x", base_rot_x - 0.3, 0.18).set_trans(Tween.TRANS_SINE)
+	swing_tw.tween_property(node, "rotation:x", base_rot_x + 0.3, 0.18).set_trans(Tween.TRANS_SINE)
 	swing_tw.tween_property(node, "rotation:x", base_rot_x, 0.26).set_trans(Tween.TRANS_SINE)
-
 
 # ══════════════════════ 山腳碎料：手動 scoop ══════════════════════
 
@@ -1096,13 +1106,14 @@ const PILE_CHUNK_FRONT_CLEARANCE_MAX := 0.16
 
 func _spawn_pile_visual(ore_key: String) -> void:
 	var chunk := VisualFactory.make_ore_chunk(PILE_CHUNK_VISUAL_SIZE, _ore_color(ore_key))
-	var max_tier: int = mini(PILE_CHUNK_MAX_TIER, c.miner_summon_cap - 1)
-	var tier_index: int = rng.randi_range(PILE_CHUNK_MIN_TIER, maxi(max_tier, PILE_CHUNK_MIN_TIER))
+	var tier_index: int = 0
 	var box_size := _tier_box_size(tier_index)
-	var x: float = rng.randf_range(-box_size.x * 0.4, box_size.x * 0.4)
-	var z: float = box_size.z * 0.5 + rng.randf_range(PILE_CHUNK_FRONT_CLEARANCE_MIN, PILE_CHUNK_FRONT_CLEARANCE_MAX)
-	chunk.position = Vector3(x, _tier_center_y(tier_index), z)
-	chunk.rotation.y = rng.randf_range(0.0, TAU)
+	var center := _tier_center_local(tier_index)
+	var x: float = rng.randf_range(-box_size.x * 0.45, box_size.x * 0.45)
+	var y: float = center.y - box_size.y * 0.5 + rng.randf_range(0.03, 0.07)
+	chunk.position = Vector3(x, y, center.z + box_size.z * 0.5 + PILE_CHUNK_VISUAL_SIZE * 0.5)
+	chunk.rotation_degrees.x = 90.0
+	chunk.rotation.z = rng.randf_range(0.0, TAU)
 
 	var area := Area3D.new()
 	area.input_ray_pickable = true
@@ -1112,8 +1123,6 @@ func _spawn_pile_visual(ore_key: String) -> void:
 	col.shape = shape
 	area.add_child(col)
 	chunk.add_child(area)
-	# 未 belted 先接 tap handler；一入帶（_spawn_belt_visual_item）嘅盒仔
-	# 完全冇 Area3D，結構上就已經保證「已 belted 碎料不可 scoop」。
 	area.input_event.connect(_on_pile_chunk_input.bind(chunk, area, ore_key))
 
 	_pile_root.add_child(chunk)

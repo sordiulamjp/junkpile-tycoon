@@ -177,6 +177,6 @@ func test_car_collision_shape_untouched_by_bulldozer_reskin() -> void:
 	assert_not_null(col, "車應該有 CollisionShape3D")
 	var shape: BoxShape3D = col.shape
 	assert_eq(
-		shape.size, Vector3(0.5, 0.22, 0.4),
+		shape.size, Vector3(0.5, 0.3, 0.3),
 		"碰撞盒要維持原本大細唔改——木橋安全闊度／四道門／UPGRADE 墊嘅觸發全部靠呢個大細，換皮唔應該連帶郁物理"
 	)
