@@ -26,7 +26,8 @@ func _fake_left_click() -> void:
 
 
 func test_setup_shows_display_name_and_cost() -> void:
-	assert_string_contains(panel._label.text, "區域 2")
+	# 2026-09-14 用戶：墊改用圖示，文字淨返價錢
+	assert_string_contains(panel._label.text, "50K")
 	assert_string_contains(panel._label.text, "50K")
 
 func test_tap_invokes_callback_with_region_id_and_cost() -> void:
@@ -51,7 +52,7 @@ func test_button_release_is_ignored() -> void:
 
 func test_mark_unlocked_shows_unlocked_label_and_stops_accepting_taps() -> void:
 	panel.mark_unlocked()
-	assert_string_contains(panel._label.text, "已解鎖")
+	assert_eq(panel._label.text, "✓", "已解鎖淨顯示 ✓（圖示版）")
 
 	_fake_left_click()
 	assert_eq(_tap_calls.size(), 0, "已解鎖之後撳落去唔應該再 call callback")
@@ -70,4 +71,4 @@ func test_refresh_afford_state_uses_base_color_when_affordable() -> void:
 func test_refresh_afford_state_is_noop_once_unlocked() -> void:
 	panel.mark_unlocked()
 	panel.refresh_afford_state(0.0) # 已解鎖，就算冇錢都唔應該打返做「未解鎖」嘅顯示
-	assert_string_contains(panel._label.text, "已解鎖")
+	assert_eq(panel._label.text, "✓", "已解鎖淨顯示 ✓（圖示版）")
