@@ -8,22 +8,24 @@ extends Node3D
 const SITE_BASIS := Basis(Vector3(1, 0, 0), Vector3(0, 0, -1), Vector3(0, 1, 0))
 const CAM_PITCH_DEG := -60.0
 const CAM_FOV := 40.0
-const CAM_DIST := 11.5
-const FIELD_MIN := Vector2(-2.4, -2.7)   # site bounds (x, y)
-const FIELD_MAX := Vector2(2.4, 2.9)
-const MINE_POS := Vector2(0.0, 1.35)     # MineZone origin (its terraces extend +y)
-const FURNACE_POS := Vector2(1.55, -1.7)
-const CAR_START := Vector2(0.0, -0.6)
+const CAM_DIST := 8.5
+const FIELD_MIN := Vector2(-4.0, -4.2)   # site bounds (x, y) — 用戶：場地太細，放大
+const FIELD_MAX := Vector2(4.0, 4.4)
+const MINE_POS := Vector2(0.0, 2.4)      # MineZone origin (its terraces extend +y)
+const FURNACE_POS := Vector2(2.6, -2.4)
+const CAR_START := Vector2(0.0, -0.4)
 const CAR_Z := 0.14
 const JOY_RADIUS_PX := 110.0
 
 # TUNE (IG feel: slow, heavy)
-const CAR_SPEED := 1.4
-const CAR_ACCEL := 4.0
-const CAR_TURN_LERP := 8.0
+const CAR_SPEED := 1.8
+const CAR_ACCEL := 9.0
+const CAR_TURN_LERP := 10.0
+const CARGO_CAP := [30, 60, 100] # 鏟斗 tier 0/1/2 可以載幾多粒
+const CAPTURE_R := 0.9
 const PUSH_IMPULSE := 0.35
 const ORE_RADIUS := 0.04
-const ORE_COUNT := 2600
+const ORE_COUNT := 4200
 const KICK_RADIUS := 0.42
 const KICK_LIFETIME := 1.4
 const KICK_BUDGET := 120
@@ -57,6 +59,10 @@ var _scan_accum := 0.0
 var _respawn_accum := 0.0
 var _furnace_glow: StandardMaterial3D
 var _furnace_flash := 0.0
+var _cargo: Array = []            # {tier, node}
+var _cargo_root: Node3D
+var _furnace_node: Node3D
+var _furnace_arrow: Control
 var _spill_accum := 0.0
 var _bottleneck_icons: Dictionary = {}
 
@@ -240,8 +246,9 @@ func _build_zone1(saved: Dictionary) -> void:
 	furnace.name = "Furnace"
 	furnace.position = _site_to_local(FURNACE_POS)
 	_site.add_child(furnace)
-	var body := VisualFactory.make_metal_box(Vector3(0.9, 0.7, 0.55), Color(MineConstants.PALETTE["furnace"]))
-	body.position = Vector3(0.0, 0.2, 0.275)
+	_furnace_node = furnace
+	var body := VisualFactory.make_metal_box(Vector3(1.1, 0.8, 0.6), Color(MineConstants.PALETTE["furnace"]))
+	body.position = Vector3(0.0, 0.2, 0.3)
 	furnace.add_child(body)
 	# Reviewer round 3：熔爐本體純粹係 mesh，冇 collider，車可以直穿——
 	# 加 StaticBody3D 貼實爐身，SellArea（下面）維持獨立 Area3D 唔受影響。
@@ -260,8 +267,9 @@ func _build_zone1(saved: Dictionary) -> void:
 	mouth.position = Vector3(0.0, -0.16, 0.2)
 	_furnace_glow = mouth.material_override
 	furnace.add_child(mouth)
-	var pad := VisualFactory.make_flat_box(Vector3(1.0, 0.55, 0.02), Color(MineConstants.PALETTE["pad"]))
-	pad.position = Vector3(0.0, -0.5, 0.01)
+	# 用戶：全方位都可以收碎料——爐四周一圈紫墊，任何方向入到都賣
+	var pad := VisualFactory.make_flat_box(Vector3(2.4, 2.2, 0.02), Color(MineConstants.PALETTE["pad"]))
+	pad.position = Vector3(0.0, 0.2, 0.01)
 	furnace.add_child(pad)
 	# 用戶 2026-09-14：圖示代替文字——賣礦墊上放一疊金幣 + 箭嘴指向爐口
 	for i in range(3):
@@ -280,10 +288,10 @@ func _build_zone1(saved: Dictionary) -> void:
 	area.name = "SellArea"
 	var col := CollisionShape3D.new()
 	var shape := BoxShape3D.new()
-	shape.size = Vector3(0.95, 0.5, 0.8)
+	shape.size = Vector3(2.4, 2.2, 1.0)
 	col.shape = shape
 	area.add_child(col)
-	area.position = Vector3(0.0, -0.15, 0.3)
+	area.position = Vector3(0.0, 0.2, 0.3)
 	area.body_entered.connect(_on_sell_area_entered)
 	furnace.add_child(area)
 
@@ -304,6 +312,9 @@ func _build_car() -> void:
 
 	_car_body = Node3D.new()
 	_car.add_child(_car_body)
+	_cargo_root = Node3D.new()
+	_cargo_root.name = "Cargo"
+	_car.add_child(_cargo_root)
 	var body := VisualFactory.make_metal_box(Vector3(0.3, 0.32, 0.16), Color("#F2C230"))
 	_car_body.add_child(body)
 	var cab := VisualFactory.make_metal_box(Vector3(0.18, 0.16, 0.12), Color("#F7D35A"))
@@ -335,13 +346,7 @@ func _physics_process(delta: float) -> void:
 	_car.move_and_slide()
 	# keep on the ground plane
 	_car.position.z = CAR_Z
-	# push rigid ore
-	for i in range(_car.get_slide_collision_count()):
-		var kc := _car.get_slide_collision(i)
-		var body := kc.get_collider()
-		if body is RigidBody3D:
-			var n: Vector3 = kc.get_normal()
-			(body as RigidBody3D).apply_central_impulse(-n * PUSH_IMPULSE * maxf(_car_vel.length() / CAR_SPEED, 0.3))
+	_capture_tick()
 	# face movement direction
 	if _car_vel.length() > 0.05:
 		var ang: float = atan2(_car_vel.y, _car_vel.x) - PI * 0.5
@@ -393,7 +398,7 @@ func _build_ore_pool() -> void:
 	_kick_root.name = "KickedOre"
 	_site.add_child(_kick_root)
 	var tiers := {"silver": [0.85, Color(MineConstants.PALETTE["ore_silver"]), 1.0], "gold": [0.15, Color(MineConstants.PALETTE["ore_gold"]), 1.3]}
-	var blobs := [Vector2(-1.1, 0.0), Vector2(0.5, -0.35), Vector2(-0.2, 0.75)]
+	var blobs := [Vector2(-2.2, 0.4), Vector2(1.4, 0.2), Vector2(-0.6, -1.6), Vector2(0.9, 1.3), Vector2(-2.4, -2.4)]
 	for tier: String in tiers.keys():
 		var count: int = int(ORE_COUNT * float(tiers[tier][0]))
 		var mmi := VisualFactory.make_ore_pool_multimesh(ORE_RADIUS, tiers[tier][1], 0.35 if tier == "gold" else 0.0, count)
@@ -403,7 +408,7 @@ func _build_ore_pool() -> void:
 		for i in range(count):
 			var ctr: Vector2 = blobs[rng.randi_range(0, blobs.size() - 1)]
 			var a := rng.randf_range(0.0, TAU)
-			var r := sqrt(rng.randf()) * 0.6
+			var r := sqrt(rng.randf()) * 0.75
 			var pos := Vector3(ctr.x + cos(a) * r * 1.2, ctr.y + sin(a) * r, ORE_RADIUS * float(tiers[tier][2]))
 			mmi.multimesh.set_instance_transform(i, Transform3D(Basis.IDENTITY.scaled(Vector3.ONE * float(tiers[tier][2])), pos))
 			_slots.append({"tier": tier, "idx": i, "pos": pos, "scale": float(tiers[tier][2]), "active": false, "gone": false})
@@ -416,20 +421,6 @@ func _show_slot(s: Dictionary) -> void:
 
 func _pool_tick(delta: float) -> void:
 	_scan_accum += delta
-	if _scan_accum >= 0.1:
-		_scan_accum = 0.0
-		var budget: int = KICK_BUDGET - _kicked.size()
-		var r2: float = KICK_RADIUS * KICK_RADIUS
-		var cp: Vector3 = _car.position
-		for s: Dictionary in _slots:
-			if budget <= 0:
-				break
-			if s["active"] or s["gone"]:
-				continue
-			if (s["pos"] as Vector3).distance_squared_to(cp) > r2:
-				continue
-			_activate_slot(s)
-			budget -= 1
 	for k: Dictionary in _kicked.duplicate():
 		var node: RigidBody3D = k["node"]
 		if not is_instance_valid(node):
@@ -462,7 +453,7 @@ func _spawn_spill_nugget() -> void:
 	var gold: bool = rng.randf() < 0.15
 	var n := VisualFactory.make_ore_ball(ORE_RADIUS * (1.3 if gold else 1.0), Color(MineConstants.PALETTE["ore_gold"] if gold else MineConstants.PALETTE["ore_silver"]), 0.3 if gold else 0.0)
 	var start := Vector3(MINE_POS.x + rng.randf_range(-0.25, 0.25), MINE_POS.y + 0.1, 0.45)
-	var target := Vector3(rng.randf_range(-0.6, 0.6), rng.randf_range(0.35, 0.85), ORE_RADIUS)
+	var target := Vector3(MINE_POS.x + rng.randf_range(-0.8, 0.8), MINE_POS.y - rng.randf_range(0.7, 1.4), ORE_RADIUS)
 	n.position = start
 	_site.add_child(n)
 	var tw := create_tween()
@@ -471,6 +462,56 @@ func _spawn_spill_nugget() -> void:
 	tw.tween_property(n, "position:y", target.y, 0.7)
 	tw.tween_property(n, "position:z", target.z, 0.7).set_trans(Tween.TRANS_BOUNCE).set_ease(Tween.EASE_OUT)
 	tw.chain().tween_callback(n.queue_free).set_delay(0.6)
+
+## 鏟斗前方捕獲：礦粒入到鏟斗前嘅捕獲區就上車（IG 式：車前堆住一堆礦帶走），滿咗就唔再收
+func _capture_tick() -> void:
+	var cap: int = CARGO_CAP[clampi(mine.state.push_tier, 0, 2)]
+	if _cargo.size() >= cap:
+		return
+	var cp: Vector3 = _car.position
+	var r2: float = CAPTURE_R * CAPTURE_R
+	var inv: Transform3D = _car.transform.affine_inverse()
+	for s: Dictionary in _slots:
+		if _cargo.size() >= cap:
+			break
+		if s["active"] or s["gone"]:
+			continue
+		var p: Vector3 = s["pos"]
+		if p.distance_squared_to(cp) > r2:
+			continue
+		var lp: Vector3 = inv * p # car-local: +y forward
+		if lp.y < 0.05 or lp.y > 0.62 or absf(lp.x) > 0.36:
+			continue
+		s["gone"] = true
+		_hide_slot(s)
+		_add_cargo(s["tier"], float(s["scale"]))
+
+func _add_cargo(tier: String, sc: float) -> void:
+	var i: int = _cargo.size()
+	var ball := VisualFactory.make_ore_ball(ORE_RADIUS * sc, Color(MineConstants.PALETTE["ore_gold"] if tier == "gold" else MineConstants.PALETTE["ore_silver"]), 0.3 if tier == "gold" else 0.0)
+	var cols := 6
+	var layer: int = i / (cols * 3)
+	var idx: int = i % (cols * 3)
+	var row: int = idx / cols
+	var col: int = idx % cols
+	ball.position = Vector3(-0.22 + float(col) * 0.088 + rng.randf_range(-0.01, 0.01), 0.24 + float(row) * 0.085, 0.02 + float(layer) * 0.07)
+	_cargo_root.add_child(ball)
+	_cargo.append({"tier": tier, "node": ball})
+
+func _dump_cargo() -> void:
+	if _cargo.is_empty():
+		return
+	var mult: float = mine.state.c.push_tier_scoop_mult[clampi(mine.state.push_tier, 0, 2)]
+	var total := 0.0
+	for cgo: Dictionary in _cargo:
+		total += mine.state.c.ore_value(cgo["tier"]) * mult
+		(cgo["node"] as Node3D).queue_free()
+	_cargo.clear()
+	if frenzy.active:
+		total *= mine.state.c.frenzy_income_mult
+	state.cash += total
+	_furnace_flash = 1.2
+	SfxPlayer.play("pile_mine")
 
 func _activate_slot(s: Dictionary) -> void:
 	s["active"] = true
@@ -513,6 +554,9 @@ func _settle_kick(k: Dictionary) -> void:
 		node.queue_free()
 
 func _on_sell_area_entered(body: Node3D) -> void:
+	if body == _car:
+		_dump_cargo()
+		return
 	if not (body is RigidBody3D) or not body.has_meta("slot"):
 		return
 	var s: Dictionary = body.get_meta("slot")
@@ -551,8 +595,8 @@ func _process(delta: float) -> void:
 
 func _follow_camera(delta: float) -> void:
 	var target_site := Vector2(_car.position.x, _car.position.y)
-	target_site.x = clampf(target_site.x, FIELD_MIN.x + 1.2, FIELD_MAX.x - 1.2)
-	target_site.y = clampf(target_site.y + 0.9, FIELD_MIN.y + 1.6, FIELD_MAX.y + 0.4)
+	target_site.x = clampf(target_site.x, FIELD_MIN.x + 1.4, FIELD_MAX.x - 1.4)
+	target_site.y = clampf(target_site.y + 0.6, FIELD_MIN.y + 1.6, FIELD_MAX.y + 0.2)
 	var target_world: Vector3 = _site.to_global(Vector3(target_site.x, target_site.y, 0.0))
 	var desired: Vector3 = target_world + _cam.global_transform.basis.z * CAM_DIST
 	_cam.global_position = _cam.global_position.lerp(desired, 1.0 - exp(-4.0 * delta)) if _cam.global_position.length() > 0.001 else desired
@@ -629,6 +673,16 @@ func _build_hud() -> void:
 	mine_btn.pressed.connect(func() -> void: if mine.panel.visible: mine.panel.close() else: mine.panel.open())
 	brow.add_child(mine_btn)
 
+	# arrow to the furnace when carrying ore (points along screen edge)
+	_furnace_arrow = TextureRect.new()
+	_furnace_arrow.texture = load("res://assets/icons/arrowRight.png")
+	_furnace_arrow.size = Vector2(56, 56)
+	_furnace_arrow.pivot_offset = Vector2(28, 28)
+	_furnace_arrow.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_furnace_arrow.modulate = Color(1.0, 0.75, 0.3)
+	_furnace_arrow.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_furnace_arrow.visible = false
+	_hud.add_child(_furnace_arrow)
 	# floating joystick visuals
 	_joy_ring = Panel.new()
 	_joy_ring.size = Vector2(JOY_RADIUS_PX * 2.0, JOY_RADIUS_PX * 2.0)
@@ -677,6 +731,24 @@ func _refresh_hud() -> void:
 		ic.modulate = Color(1.0, 0.35, 0.3, 1.0) if k == stage else Color(1, 1, 1, 0.85)
 		ic.scale = Vector2.ONE * (1.0 + 0.12 * pulse) if k == stage else Vector2.ONE
 	mine.refresh_afford_state()
+	_update_furnace_arrow()
+
+func _update_furnace_arrow() -> void:
+	if _cargo.is_empty() or _furnace_node == null:
+		_furnace_arrow.visible = false
+		return
+	var vp := get_viewport().get_visible_rect().size
+	var fp: Vector3 = _furnace_node.global_position
+	var sp: Vector2 = _cam.unproject_position(fp)
+	var inside: bool = not _cam.is_position_behind(fp) and sp.x > 0 and sp.x < vp.x and sp.y > 120 and sp.y < vp.y - 130
+	_furnace_arrow.visible = not inside
+	if inside:
+		return
+	var center := vp * 0.5
+	var dir: Vector2 = (sp - center).normalized() if not _cam.is_position_behind(fp) else Vector2(0, 1)
+	var edge: Vector2 = center + dir * minf(vp.x * 0.42, vp.y * 0.36)
+	_furnace_arrow.position = edge - Vector2(28, 28)
+	_furnace_arrow.rotation = dir.angle()
 
 ## 2D stage icons drawn with ColorRects (no emoji font needed): 礦層＝梯級, 礦車＝車+輪, 倉庫＝屋
 func _make_stage_icon(stage: String) -> Control:

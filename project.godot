@@ -40,6 +40,10 @@ enabled=PackedStringArray()
 
 3d/physics_engine="Jolt Physics"
 
+[physics]
+
+common/physics_interpolation=true
+
 [rendering]
 
 renderer/rendering_method="gl_compatibility"
