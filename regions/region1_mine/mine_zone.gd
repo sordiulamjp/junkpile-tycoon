@@ -19,7 +19,7 @@ class_name MineZone
 ## 色調跟 Analyst 16:48「區域 1 規格」：IG 廣告 DdEYh2HMRW1 紫岩色調（見
 ## mine_constants.gd PALETTE）。
 
-const LAYER_WIDTH := 1.3
+const LAYER_WIDTH := 2.4
 const PALETTE := MineConstants.PALETTE
 
 var state: MineState
