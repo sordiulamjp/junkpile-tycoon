@@ -241,12 +241,19 @@ func _build_zone1(saved: Dictionary) -> void:
 	var pad := VisualFactory.make_flat_box(Vector3(1.0, 0.55, 0.02), Color(MineConstants.PALETTE["pad"]))
 	pad.position = Vector3(0.0, -0.5, 0.01)
 	furnace.add_child(pad)
-	var lbl := Label3D.new()
-	lbl.text = "SELL"
-	lbl.font_size = 100
-	lbl.pixel_size = 0.0035
-	lbl.position = Vector3(0.0, -0.5, 0.03)
-	furnace.add_child(lbl)
+	# 用戶 2026-09-14：圖示代替文字——賣礦墊上放一疊金幣 + 箭嘴指向爐口
+	for i in range(3):
+		var coin := VisualFactory.make_low_poly_cylinder(0.11, 0.035, Color(MineConstants.PALETTE["ore_gold"]), 10, 0.5)
+		coin.rotation_degrees.x = 90.0
+		coin.position = Vector3(-0.2, -0.55, 0.03 + float(i) * 0.04)
+		furnace.add_child(coin)
+	var arrow := VisualFactory.make_flat_box(Vector3(0.3, 0.07, 0.02), Color.WHITE)
+	arrow.position = Vector3(0.12, -0.5, 0.03)
+	furnace.add_child(arrow)
+	var head := VisualFactory.make_rock_facet(Vector3(0.18, 0.02, 0.16), Color.WHITE, 0.5)
+	head.rotation_degrees = Vector3(90.0, 0.0, -90.0)
+	head.position = Vector3(0.34, -0.5, 0.03)
+	furnace.add_child(head)
 	var area := Area3D.new()
 	area.name = "SellArea"
 	var col := CollisionShape3D.new()
