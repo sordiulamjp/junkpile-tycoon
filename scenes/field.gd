@@ -8,7 +8,7 @@ extends Node3D
 const SITE_BASIS := Basis(Vector3(1, 0, 0), Vector3(0, 0, -1), Vector3(0, 1, 0))
 const CAM_PITCH_DEG := -60.0
 const CAM_FOV := 40.0
-const CAM_DIST := 8.5
+const CAM_DIST := 10.5
 const FIELD_MIN := Vector2(-4.0, -4.2)   # site bounds (x, y) — 用戶：場地太細，放大
 const FIELD_MAX := Vector2(4.0, 4.4)
 const MINE_POS := Vector2(0.0, 2.4)      # MineZone origin (its terraces extend +y)
