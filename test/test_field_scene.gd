@@ -293,7 +293,7 @@ func test_ai_activates_after_idle_threshold_and_releases_on_player_input() -> vo
 	field._joy_down = false
 	field._keys_vec = Vector2.ZERO
 
-	for _i in range(int(field.AI_IDLE_SECS) - 1): # 用戶 2026-09-14：放手 3 秒後接返（AI_IDLE_SECS）
+	for _i in range(int(field.AI_IDLE_SECS) - 1): # issue 原文：6 秒冇操作先自動（field.AI_IDLE_SECS）
 		field._physics_process(1.0)
 	assert_false(field._ai_active, "未夠 AI_IDLE_SECS 唔應該自動接手")
 
