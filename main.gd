@@ -820,7 +820,13 @@ func _build_ground() -> void:
 
 	var mid_x: float = (c.yard_x_range.x + c.yard_x_range.y) * 0.5
 	var top_y: float = c.site_foothill_pos.y + MOUNTAIN_DEPTH + 1.0
-	var bottom_y: float = c.warehouse_pos.y - 0.5
+	# Review round 2：實機 deliver_opening.png 量到底部（爐／倉之後）有一
+	# 條實色黑帶，pixel 掃描見到淨返 y≈1610–1730（螢幕高度嘅 ~5.4%）—
+	# 呢度個 -0.5 margin 明顯唔夠：頂部用緊 +1.0 margin（相對 mountain_back_y
+	# 基準）先冚到成個取景，底部得返 -0.5（相對 warehouse_pos 基準，扣埋
+	# camera 因為橫向 fit 被逼企遠咗嘅額外空間，得返 0.15 淨 margin 遠遠
+	# 唔夠），跟頂部同一個量級加大先夠。
+	var bottom_y: float = c.warehouse_pos.y - 2.0
 	var width: float = (c.yard_x_range.y - c.yard_x_range.x) + 3.0
 	var height: float = top_y - bottom_y
 
