@@ -874,10 +874,29 @@ func _try_unlock_region(region_id: String, cost: float) -> void:
 ## 唔會攔截 pile chunk／解鎖板嘅 tap 判斷（嗰兩樣睇嘅係 Area3D
 ## input_event，同呢度嘅 _unhandled_input 係兩條獨立管道，Godot 會先派
 ## 去 3D 物件揀選，冇任何 3D 物件食咗先落嚟呢度）。
+##
+## Review 修正（ALTA-227 round 1）：
+## 1. 狂熱期間唔拖鏡頭——frenzy_yard_view.gd 自己嗰個 _unhandled_input()
+##    負責跟指郁車，兩個 _unhandled_input() 冇互相 set_input_as_handled()，
+##    狂熱中拖一下會連鏡頭都跟住郁，CAMERA_MAX_PAN（2.6）接近成個車場
+##    取景高度，拖幾下車場／帶／爐就跌出畫面，而且淨往上夾令 120 秒
+##    嘅垂直抖動單向累積。「鏡頭跟車」留返畀區域 2～4（VR-13～15）有
+##    真正新地形要睇嗰陣先做，呢度暫時淨係唔好撞衫（見完成留言）。
+## 2. Godot 預設 emulate_mouse_from_touch=true，手機一下拖曳會同時派
+##    一個真 InputEventScreenDrag 同一個模擬嘅 InputEventMouseMotion
+##    （device=DEVICE_ID_EMULATION，button_mask 有 LEFT）——冇呢個
+##    device 判斷，兩條分支會同一下拖曳各自 apply 一次，Android 靈敏度
+##    變成 host 兩倍。
 func _unhandled_input(event: InputEvent) -> void:
+	if frenzy.active:
+		return
 	if event is InputEventScreenDrag:
 		_apply_camera_drag(event.relative.y)
-	elif event is InputEventMouseMotion and (event.button_mask & MOUSE_BUTTON_MASK_LEFT) != 0:
+	elif (
+		event is InputEventMouseMotion
+		and (event.button_mask & MOUSE_BUTTON_MASK_LEFT) != 0
+		and event.device != InputEvent.DEVICE_ID_EMULATION
+	):
 		_apply_camera_drag(event.relative.y)
 
 ## 手指／滑鼠向上拖（screen_delta_y < 0，Godot 螢幕 Y 向下遞增）＝望上

@@ -128,3 +128,60 @@ func test_drag_up_clamps_at_max_pan() -> void:
 
 	main._apply_camera_drag(-100000.0) # 誇張大力向上拖
 	assert_eq(main._camera_pan, main.CAMERA_MAX_PAN)
+
+## Review 修正（round 1）：狂熱入面跟指郁車嘅拖曳唔可以連鏡頭都拖埋
+## （frenzy_yard_view.gd 自己嗰個 _unhandled_input() 冇 set_input_as_handled()）。
+func test_unhandled_input_drag_is_ignored_during_frenzy() -> void:
+	var scene: PackedScene = load("res://main.tscn")
+	main = scene.instantiate()
+	add_child_autofree(main)
+
+	main.frenzy.cooldown_remaining = 0.0
+	main._try_start_frenzy()
+	assert_true(main.frenzy.active, "測試前提：狂熱應該啟動咗")
+
+	var event := InputEventScreenDrag.new()
+	event.relative = Vector2(0.0, -100.0)
+	main._unhandled_input(event)
+
+	assert_eq(main._camera_pan, 0.0, "狂熱期間拖曳唔應該郁鏡頭")
+
+func test_unhandled_input_drag_works_when_not_in_frenzy() -> void:
+	var scene: PackedScene = load("res://main.tscn")
+	main = scene.instantiate()
+	add_child_autofree(main)
+
+	var event := InputEventScreenDrag.new()
+	event.relative = Vector2(0.0, -100.0)
+	main._unhandled_input(event)
+
+	assert_gt(main._camera_pan, 0.0, "冇狂熱嗰陣拖曳應該照舊郁鏡頭")
+
+## Review 修正（round 1）：Godot 預設 emulate_mouse_from_touch=true，觸控
+## 拖曳會同時派一個真 InputEventScreenDrag 同一個模擬嘅
+## InputEventMouseMotion（device=DEVICE_ID_EMULATION）——後者唔應該再
+## apply 多一次，唔係就手機靈敏度變兩倍。
+func test_unhandled_input_ignores_touch_emulated_mouse_motion() -> void:
+	var scene: PackedScene = load("res://main.tscn")
+	main = scene.instantiate()
+	add_child_autofree(main)
+
+	var event := InputEventMouseMotion.new()
+	event.relative = Vector2(0.0, -100.0)
+	event.button_mask = MOUSE_BUTTON_MASK_LEFT
+	event.device = InputEvent.DEVICE_ID_EMULATION
+	main._unhandled_input(event)
+
+	assert_eq(main._camera_pan, 0.0, "觸控模擬出嚟嘅 mouse motion 唔應該再郁多一次鏡頭")
+
+func test_unhandled_input_real_mouse_motion_still_works() -> void:
+	var scene: PackedScene = load("res://main.tscn")
+	main = scene.instantiate()
+	add_child_autofree(main)
+
+	var event := InputEventMouseMotion.new()
+	event.relative = Vector2(0.0, -100.0)
+	event.button_mask = MOUSE_BUTTON_MASK_LEFT
+	main._unhandled_input(event)
+
+	assert_gt(main._camera_pan, 0.0, "Windows host 編輯器試玩用真滑鼠，唔應該俾 device 判斷擋咗")
