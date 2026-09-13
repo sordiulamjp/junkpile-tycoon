@@ -364,7 +364,7 @@ func test_foothill_shows_full_terrace_before_any_miner_summoned() -> void:
 	assert_eq(main.state.miner_count, 0, "呢個測試要開場未召喚過礦工")
 	var tier_count := 0
 	for child in main._foothill_root.get_children():
-		if child is MeshInstance3D and child.mesh is BoxMesh and child.position.y > 0.0:
+		if child.name.begins_with("Tier"):
 			tier_count += 1
 	assert_eq(tier_count, main.c.miner_summon_cap, "未召喚都應該見到全部 12 層梯田")
 
@@ -387,7 +387,7 @@ func test_pile_debris_spawns_outside_terrace_footprint() -> void:
 	assert_gt(main._pile_root.get_child_count(), 0, "應該生咗至少一粒碎料")
 	for chunk: Node3D in main._pile_root.get_children():
 		for tier: Node3D in main._foothill_root.get_children():
-			if not (tier is MeshInstance3D and tier.mesh is BoxMesh and tier.position.y > 0.0):
+			if not tier.name.begins_with("Tier"):
 				continue
 			var box_size: Vector3 = tier.mesh.size
 			var rel: Vector3 = chunk.position - tier.position
@@ -451,9 +451,11 @@ func test_summoned_miners_are_distributed_around_foothill() -> void:
 	# 應該維持 0（純橫向 Y 轉），唔應該因為錯用 local 座標做 look_at()
 	# 目標而歪咗成 30 幾度。
 	for miner: Node3D in [m0, m1]:
-		assert_almost_eq(miner.rotation.x, 0.0, 0.01, "礦工唔應該向前傾／趴低")
+		# VR-06b（ALTA-219）：場地攤平做地面，模型 +y 轉去 site +z（企直＝rotation.x 90°）。
+		assert_almost_eq(miner.rotation.x, PI * 0.5, 0.01, "礦工應該企直（模型 +y 對 site +z）")
 		assert_almost_eq(miner.rotation.z, 0.0, 0.01, "礦工唔應該側身")
-		assert_true(miner.position.z >= 0.0, "礦工應該企喺前半弧（z ≥ 0），唔會俾梯田擋住")
+		assert_true(miner.position.y < 0.0, "礦工應該企喺山腳前面（site -y），唔會俾梯田擋住")
+		assert_almost_eq(miner.position.z, 0.0, 0.01, "礦工應該貼地")
 
 ## 第 6 點：帶用分段滾軸 mesh，持續自轉先有「流動視覺」。
 func test_belt_rollers_registered_and_spin_over_time() -> void:
