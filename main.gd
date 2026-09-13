@@ -125,6 +125,11 @@ var _summon_button: Button
 var _belt_upgrade_button: Button
 var _miner_upgrade_button: Button
 var _refine_upgrade_button: Button
+# 效能修正（ALTA-219 fps 調查）：見 _refresh_hud() 註解——帶升級掣嘅箭嘴／
+# 剔號 icon 預先喺 _build_hud() load() 一次快取喺度，_refresh_hud() 每幀
+# 淨係讀呢兩個 reference，唔再每幀 touch ResourceLoader。
+var _belt_icon_arrow: Texture2D
+var _belt_icon_check: Texture2D
 var _frenzy_button: Button
 var _scoop_hint_label: Label # 開場提示「撳碎料鏟入爐」，第一次剷完就收起（ALTA-150 實機回饋）
 var _scoop_hint_shown: bool = false
@@ -643,11 +648,21 @@ func _build_world() -> void:
 	light.name = "DirectionalLight3D"
 	light.rotation_degrees = Vector3(-55.0, 25.0, 0.0)
 	# 用戶實機回饋（ALTA-150）：斜視之後 BoxMesh 要睇得出側面／立體感，
-	# 加返淡陰影（低 energy／唔太重手，避免灰模睇落太暗）；VR-06 加暖色
-	# 溫度（洞穴太陽光唔係死白）。
+	# 曾經加過淡陰影；VR-06 加暖色溫度（洞穴太陽光唔係死白）。
 	light.light_color = Color(1.0, 0.92, 0.8)
 	light.light_energy = 1.1
-	light.shadow_enabled = true
+	# 效能修正（ALTA-219 fps 調查）：呢張場景成個峽谷（岩壁／12 層梯田／
+	# 切面石／雜物／門／木橋等）有幾百件個別 MeshInstance3D，實時陰影
+	# 每幀都要將呢批嘢全部再畫一次落 shadow map，S8+ 實測（Time.get_ticks_usec()
+	# 逐段計時 + adb logcat）淨係呢個 shadow pass 就令狂熱 fps 由持續
+	# 60fps 跌返落 33～35（未達 issue 「fps ≥ 40」門檻），同狂熱物件數量
+	# 完全無關（山腳未召喚任何礦工、debris 已經降到最低 cap 都係咁）。
+	# ALTA-150 要求嘅「側面／立體感」主要嚟自 flat-shaded 材質
+	# （SHADING_MODE_PER_VERTEX，見 VisualFactory.flat_material()）配合呢個
+	# 斜射方向光——即使冇 cast shadow，唔同法線嘅面都會顯得唔同亮度，
+	# 睇落仍然有塊面感；淨係少咗地面嘅投影黑影。兩者取捨之下，fps 呢個
+	# issue 明文嘅硬性驗收線優先。
+	light.shadow_enabled = false
 	_world.add_child(light)
 
 	# VR-06b：峽谷環境（岩壁「碗」+ 地面）——純背景裝飾，擺喺 _world
@@ -1299,6 +1314,11 @@ func _build_hud() -> void:
 	var upgrades_row := HBoxContainer.new()
 	bottom_vbox.add_child(upgrades_row)
 
+	if ResourceLoader.exists("res://assets/icons/arrowRight.png"):
+		_belt_icon_arrow = load("res://assets/icons/arrowRight.png")
+	if ResourceLoader.exists("res://assets/icons/checkmark.png"):
+		_belt_icon_check = load("res://assets/icons/checkmark.png")
+
 	_belt_upgrade_button = Button.new()
 	_belt_upgrade_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_style_upgrade_button(_belt_upgrade_button, "res://assets/icons/arrowRight.png")
@@ -1534,28 +1554,41 @@ func _refresh_hud() -> void:
 
 	if state.can_upgrade_belt():
 		var affordable := state.cash >= state.next_belt_cost()
-		_belt_upgrade_button.text = "帶 Lv%d → 升級 %s" % [state.belt_level, _fmt_num(state.next_belt_cost())]
+		var belt_text := "帶 Lv%d → 升級 %s" % [state.belt_level, _fmt_num(state.next_belt_cost())]
+		if _belt_upgrade_button.text != belt_text:
+			_belt_upgrade_button.text = belt_text
 		_belt_upgrade_button.disabled = not affordable
 		_set_afford_color(_belt_upgrade_button, affordable)
 		# 威望重置（VR-05）會將帶等級打番去 1，換返箭嘴（唔會停留喺
 		# 上鋪封頂嗰刻嘅剔號）。
-		if ResourceLoader.exists("res://assets/icons/arrowRight.png"):
-			_belt_upgrade_button.icon = load("res://assets/icons/arrowRight.png")
+		# 效能修正（ALTA-219 fps 調查）：_refresh_hud() 本身每幀都 call——
+		# 之前呢度每幀都行一次 ResourceLoader.exists()／load()，喺
+		# Android pck 入面查／攞一個 texture 資源，實測（S8+，adb logcat
+		# Performance.TIME_PROCESS）單係呢兩句每幀就食成 20+ms，係狂熱
+		# fps 跌到 13～15（門檻 40）嘅主因之一。改用 _build_hud() 起嗰陣
+		# 預先 load() 一次嘅 _belt_icon_arrow／_belt_icon_check（見該處），
+		# 呢度淨係揀返個已經攞好嘅 reference，唔再 touch ResourceLoader。
+		if _belt_upgrade_button.icon != _belt_icon_arrow:
+			_belt_upgrade_button.icon = _belt_icon_arrow
 	else:
 		_belt_upgrade_button.text = "帶 Lv%d（封頂）" % state.belt_level
 		_belt_upgrade_button.disabled = true
 		_clear_afford_color(_belt_upgrade_button) # 封頂，唔係等錢
 		# 封頂之後箭嘴 icon 冇意思，換做剔號（同一 icon_max_width 樣式）。
-		if ResourceLoader.exists("res://assets/icons/checkmark.png"):
-			_belt_upgrade_button.icon = load("res://assets/icons/checkmark.png")
+		if _belt_upgrade_button.icon != _belt_icon_check:
+			_belt_upgrade_button.icon = _belt_icon_check
 
 	var miner_lv_affordable := state.cash >= state.next_miner_level_cost()
-	_miner_upgrade_button.text = "礦工 Lv%d → 升級 %s" % [state.miner_level, _fmt_num(state.next_miner_level_cost())]
+	var miner_text := "礦工 Lv%d → 升級 %s" % [state.miner_level, _fmt_num(state.next_miner_level_cost())]
+	if _miner_upgrade_button.text != miner_text:
+		_miner_upgrade_button.text = miner_text
 	_miner_upgrade_button.disabled = not miner_lv_affordable
 	_set_afford_color(_miner_upgrade_button, miner_lv_affordable)
 
 	var refine_affordable := state.cash >= state.next_refine_level_cost()
-	_refine_upgrade_button.text = "精煉 Lv%d → 升級 %s" % [state.refine_level, _fmt_num(state.next_refine_level_cost())]
+	var refine_text := "精煉 Lv%d → 升級 %s" % [state.refine_level, _fmt_num(state.next_refine_level_cost())]
+	if _refine_upgrade_button.text != refine_text:
+		_refine_upgrade_button.text = refine_text
 	_refine_upgrade_button.disabled = not refine_affordable
 	_set_afford_color(_refine_upgrade_button, refine_affordable)
 
@@ -1581,12 +1614,29 @@ func _refresh_hud() -> void:
 ## 用戶實機回饋（ALTA-150）：升級掣全部灰晒，撞唔到分清楚係「等緊
 ## 錢」定「壞咗」。夠錢就轉返正常／綠色，唔夠錢價錢轉紅色，等玩家知
 ## 道等緊儲夠錢，唔係壞咗。（撞上限／封頂嘅掣唔叫呢個，維持預設灰色。）
+##
+## 效能修正（ALTA-219 fps 調查）：`_refresh_hud()` 每幀都 call，之前呢
+## 兩個 function 每幀都無條件 add/remove_theme_color_override()——實測
+## （S8+，Time.get_ticks_usec() 逐段計時）帶／礦工／精煉三個「有 icon」
+## 嘅升級掣，單係呢兩句每幀就食成 7～9ms（冇 icon 嘅召喚掣淨係 ~1.3ms），
+## 三個掣加埋成 23ms，係狂熱 fps 跌到 13～15（門檻 40）嘅主因。呢度加
+## `_afford_color_cache` 記低上次套用嗰個狀態，狀態冇變就即刻 return，
+## 唔再逐幀重複 touch theme override（affordable 真正改變嗰幾幀先真係
+## 重新上色，畫面行為完全一樣）。
+var _afford_color_cache: Dictionary = {} # Button -> true/false/null(未套用或已清)
+
 func _set_afford_color(btn: Button, affordable: bool) -> void:
+	if _afford_color_cache.get(btn) == affordable:
+		return
+	_afford_color_cache[btn] = affordable
 	var color := Color(0.4, 0.9, 0.4) if affordable else Color(0.95, 0.35, 0.3)
 	btn.add_theme_color_override("font_color", color)
 	btn.add_theme_color_override("font_disabled_color", color)
 
 func _clear_afford_color(btn: Button) -> void:
+	if _afford_color_cache.get(btn) == null:
+		return
+	_afford_color_cache[btn] = null
 	btn.remove_theme_color_override("font_color")
 	btn.remove_theme_color_override("font_disabled_color")
 
