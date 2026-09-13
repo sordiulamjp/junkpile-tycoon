@@ -9,6 +9,10 @@ const SITE_BASIS := Basis(Vector3(1, 0, 0), Vector3(0, 0, -1), Vector3(0, 1, 0))
 const CAM_PITCH_DEG := -60.0
 const CAM_FOV := 40.0
 const CAM_DIST := 10.5
+const CAM_DIST_MIN := 6.5
+const CAM_DIST_MAX := 18.0
+var _cam_dist := CAM_DIST
+var _pinch_last := -1.0
 const FIELD_MIN := Vector2(-5.2, -5.4)   # site bounds (x, y) — 用戶：再放大
 const FIELD_MAX := Vector2(5.2, 5.6)
 const MINE_POS := Vector2(0.0, 3.3)      # MineZone origin (its terraces extend +y)
@@ -84,7 +88,7 @@ var _autodrive_t := 0.0
 const AI_COST_CASH := 500.0
 const AI_COST_COMPONENTS := 10.0
 const MGR_COST := 2000.0
-const AI_IDLE_SECS := 6.0
+const AI_IDLE_SECS := 3.0 # 放手 3 秒後 AI 接返（用戶隨時可以再接手）
 const AI_SPEED_MULT := 0.65
 var _ai_unlocked := false
 var _ai_on := true
@@ -385,7 +389,7 @@ func _build_car() -> void:
 
 func _physics_process(delta: float) -> void:
 	var input_vec: Vector2 = _joy_vec if _joy_down else _keys_vec
-	if input_vec.length() > 0.05:
+	if input_vec.length() > 0.05 or _joy_down:
 		_idle_t = 0.0
 		_ai_active = false
 	else:
@@ -432,6 +436,16 @@ func _physics_process(delta: float) -> void:
 	_pool_tick(delta)
 
 func _unhandled_input(event: InputEvent) -> void:
+	# 縮放：滾輪／手勢；用戶要「睇得晒全畫面」就拉遠
+	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_WHEEL_UP:
+		_cam_dist = clampf(_cam_dist - 0.8, CAM_DIST_MIN, CAM_DIST_MAX)
+		return
+	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+		_cam_dist = clampf(_cam_dist + 0.8, CAM_DIST_MIN, CAM_DIST_MAX)
+		return
+	if event is InputEventMagnifyGesture:
+		_cam_dist = clampf(_cam_dist / event.factor, CAM_DIST_MIN, CAM_DIST_MAX)
+		return
 	if event is InputEventScreenTouch or event is InputEventMouseButton:
 		var pressed: bool = event.pressed
 		if event is InputEventMouseButton and event.button_index != MOUSE_BUTTON_LEFT:
@@ -440,6 +454,8 @@ func _unhandled_input(event: InputEvent) -> void:
 			_joy_down = true
 			_joy_origin = event.position
 			_joy_vec = Vector2.ZERO
+			_ai_active = false # 用戶隨時接手：一按落即刻停 AI
+			_idle_t = 0.0
 			_show_joystick(true)
 		else:
 			_joy_down = false
@@ -810,7 +826,7 @@ func _follow_camera(delta: float) -> void:
 	target_site.x = clampf(target_site.x, FIELD_MIN.x + 1.4, FIELD_MAX.x - 1.4)
 	target_site.y = clampf(target_site.y + 0.6, FIELD_MIN.y + 1.6, FIELD_MAX.y + 0.2)
 	var target_world: Vector3 = _site.to_global(Vector3(target_site.x, target_site.y, 0.0))
-	var desired: Vector3 = target_world + _cam.global_transform.basis.z * CAM_DIST
+	var desired: Vector3 = target_world + _cam.global_transform.basis.z * _cam_dist
 	_cam.global_position = _cam.global_position.lerp(desired, 1.0 - exp(-4.0 * delta)) if _cam.global_position.length() > 0.001 else desired
 
 func _build_hud() -> void:
@@ -866,11 +882,13 @@ func _build_hud() -> void:
 	_hud.add_child(bottom)
 	var brow := HBoxContainer.new()
 	brow.alignment = BoxContainer.ALIGNMENT_CENTER
-	brow.add_theme_constant_override("separation", 14)
+	brow.add_theme_constant_override("separation", 10)
 	bottom.add_child(brow)
 	_frenzy_button = Button.new()
 	_frenzy_button.icon = load("res://assets/icons/star.png")
-	_frenzy_button.expand_icon = true
+	_frenzy_button.expand_icon = false
+	_frenzy_button.add_theme_constant_override("icon_max_width", 40)
+	_frenzy_button.clip_text = true
 	_frenzy_button.text = ""
 	_frenzy_button.custom_minimum_size = Vector2(150, 66)
 	_frenzy_button.add_theme_font_size_override("font_size", 28)
@@ -878,7 +896,9 @@ func _build_hud() -> void:
 	brow.add_child(_frenzy_button)
 	var mine_btn := Button.new()
 	mine_btn.icon = load("res://assets/icons/wrench.png")
-	mine_btn.expand_icon = true
+	mine_btn.expand_icon = false
+	mine_btn.add_theme_constant_override("icon_max_width", 40)
+	mine_btn.clip_text = true
 	mine_btn.text = ""
 	mine_btn.custom_minimum_size = Vector2(110, 66)
 	mine_btn.add_theme_font_size_override("font_size", 28)
@@ -891,7 +911,9 @@ func _build_hud() -> void:
 	brow.add_child(_ai_button)
 	_mgr_button = Button.new()
 	_mgr_button.icon = load("res://assets/icons/gear.png")
-	_mgr_button.expand_icon = true
+	_mgr_button.expand_icon = false
+	_mgr_button.add_theme_constant_override("icon_max_width", 40)
+	_mgr_button.clip_text = true
 	_mgr_button.custom_minimum_size = Vector2(110, 66)
 	_mgr_button.add_theme_font_size_override("font_size", 24)
 	_mgr_button.pressed.connect(_on_mgr_pressed)

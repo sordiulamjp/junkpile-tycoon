@@ -31,6 +31,8 @@ SfxPlayer="*res://systems/sfx_player.gd"
 window/size/viewport_width=720
 window/size/viewport_height=960
 window/handheld/orientation=1
+window/stretch/mode="canvas_items"
+window/stretch/aspect="expand"
 
 [editor_plugins]
 
