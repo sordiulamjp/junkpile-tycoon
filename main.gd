@@ -67,6 +67,24 @@ const CAMERA_TOP_MARGIN := 0.02
 const CAMERA_BOTTOM_MARGIN := 0.03
 const CAMERA_HORIZONTAL_MARGIN_WORLD := 0.2
 
+## VR-11：鏡頭可拖（「鏡頭跟車／可拖」，field-zones-v9.png）——場地由下
+## （區域 1）向上擴張，預設取景（上面 _camera_reference_points() 嘅框架）
+## 淨係框住區域 1，區域 2 嘅解鎖板企喺呢個框以外，要拖先睇到。拖動淨係
+## 沿住相機自己 local up 軸（_compute_camera_frame() 嗰個 basis.y）平移
+## 相機位置，方向／FOV／_camera_reference_points() 為本嘅預設取景計算
+## 完全唔變——_camera_pan 預設 0，唔拖就同之前一模一樣，唔會累到現有
+## 相機取景回歸測試（test_main_scene.gd 嗰批 _in_camera_mid_band()）。
+const CAMERA_DRAG_SENSITIVITY := 0.005 # 美術取景常數（唔係遊戲數值）：每螢幕像素拖動對應幾多世界單位
+const CAMERA_MAX_PAN := 2.6            # 美術取景常數：最多拖幾遠先見到區域 2 解鎖板
+
+## VR-11：區域 2 入口解鎖板擺位——喺現有峽谷入面、後壁附近、山腳左方
+## （跟 field-zones-v9.png「左上」示意），冇改任何區域 1 既有幾何／
+## 判分。呢個位置純粹係框架驗證用嘅第一個示範，區域 2 實際場地
+## （VR-13，backlog）起好之後，呢個板同呢兩個常數應該搬去嗰個區域自己
+## 嘅位置，唔再掛喺區域 1 場地度。
+const REGION2_PANEL_SITE_POS := Vector2(-1.3, 2.6)
+const REGION2_PANEL_HEIGHT := 0.3
+
 ## 山腳碎料嘅 tap 拾取範圍——刻意獨立於 0.12 嘅視覺盒仔尺寸（ALTA-195，
 ## 實機驗收見 Reviewer 喺 ALTA-150 嘅提醒）。720×960 下依家個相機要一次
 ## 框晒山腳到山頂長到盡（12 層），令 1 世界單位≈107px，跟視覺尺寸嘅
@@ -112,6 +130,15 @@ var _pile_root: Node3D
 var _belt_items_root: Node3D
 var _belt_rollers: Array[MeshInstance3D] = [] # ALTA-153 round2：分段滾軸，_process() 度持續轉
 var _frenzy_view: FrenzyYardView
+
+# -- VR-11：鏡頭可拖 --
+var _camera: Camera3D
+var _camera_base_position: Vector3 # _compute_camera_frame() 算出嚟嗰個預設位置（_camera_pan=0 嗰刻）
+var _camera_pan: float = 0.0       # 沿住相機 local up 軸嘅偏移量，夾喺 [0, CAMERA_MAX_PAN]
+
+# -- VR-11：場地擴張框架 --
+var _unlocked_regions: Array[String] = ["region1"] # 區域 1 恆常已解鎖
+var _region2_panel: UnlockPanel
 
 # -- HUD 節點 --
 var _lock_label: Label
@@ -169,7 +196,12 @@ func _ready() -> void:
 	var loaded_state: Dictionary = {}
 	var offline_raw_rate := 0.0
 	if save_exists:
-		loaded_state = SaveManager.load_state()
+		# VR-11：經 Save autoload 讀（唔再直接叫 SaveManager.load_state()）
+		# ——Save.load_and_apply_wallet() 讀完同一份 flat dict 之餘，順手
+		# 將 cash／components／eco 套落 Wallet（共用錢包 autoload，見
+		# autoload/wallet.gd），等 _apply_loaded_state() 下面可以直接由
+		# Wallet 攞返呢三個欄位，單一 source of truth。
+		loaded_state = Save.load_and_apply_wallet()
 		_apply_loaded_state(loaded_state)
 		# VR-05b review fix：呢一刻 state.income_multiplier 仲係預設 1.0
 		# （下一行先 set），current_income_rate() 攞到嘅係未計威望嘅 raw
@@ -179,6 +211,9 @@ func _ready() -> void:
 		# （見 _run_offline_settlement()）。
 		offline_raw_rate = state.current_income_rate()
 		state.income_multiplier = Prestige.income_multiplier(c, _prestige_count)
+	# VR-11：冇存檔（新玩家）嗰陣 state.cash 係 GameState._init() 剛設低
+	# 嘅 c.starting_cash，唔係 0——Wallet 都要跟住同步，唔留喺預設 0。
+	_sync_wallet_from_state()
 
 	_build_world()
 	_spawn_loaded_miners() # VR-05b review fix：讀檔補返已召喚礦工嘅 node（新玩家 miner_count=0，冧一世都唔會行）
@@ -272,13 +307,26 @@ func _apply_overrides(overrides: Dictionary) -> void:
 ## 見 data/prestige.gd／data/save_manager.gd 嘅欄位定義）。用 get() 夾
 ## 埋預設值，就算存檔缺咗某個欄位都唔會拋錯。
 func _apply_loaded_state(loaded: Dictionary) -> void:
-	state.cash = float(loaded.get("cash", 0.0))
-	state.components = float(loaded.get("components", 0.0))
-	state.eco = float(loaded.get("eco", 0.0))
+	# VR-11：cash／components／eco 而家由 Wallet（共用錢包 autoload）攞——
+	# 呼叫方（_ready()）已經喺呢個之前 call 咗 Save.load_and_apply_wallet()，
+	# 呢一刻 Wallet 已經套用咗同一份 `loaded` 入面嘅呢三個欄位，數值一定
+	# 一致。
+	state.cash = Wallet.cash
+	state.components = Wallet.components
+	state.eco = Wallet.eco
 	state.miner_count = int(loaded.get("miners", 0))
 	state.miner_level = int(loaded.get("miner_level", 0))
 	state.belt_level = int(loaded.get("belt_level", 1))
 	state.refine_level = int(loaded.get("refine_level", 0))
+	# VR-11：Array 型別要逐個元素轉 String（JSON 讀返嚟嘅係 Array[Variant]），
+	# 缺咗欄位（舊 v1 存檔，理論上已經俾 SaveManager._migrate() 補齊，呢度
+	# 淨係額外防守）當只有 region1。
+	var loaded_regions: Array = loaded.get("unlocked_regions", ["region1"])
+	_unlocked_regions = []
+	for region_id: Variant in loaded_regions:
+		_unlocked_regions.append(String(region_id))
+	if not "region1" in _unlocked_regions:
+		_unlocked_regions.append("region1")
 	_lifetime_cash = float(loaded.get("lifetime_cash", 0.0))
 	_prestige_count = int(loaded.get("prestige_count", 0))
 	_last_save_unix = float(loaded.get("last_save_unix", Time.get_unix_time_from_system()))
@@ -300,10 +348,20 @@ func _build_save_state() -> Dictionary:
 		"miner_level": state.miner_level,
 		"belt_level": state.belt_level,
 		"refine_level": state.refine_level,
+		"unlocked_regions": _unlocked_regions,
 	}
 
+## VR-11：將當刻嘅即時 cash／components／eco 推返落 Wallet（共用錢包
+## autoload）——存檔之前一定要 call 一次，保證 Wallet 記憶體嗰份同即將
+## 存落 disk 嗰份一致。
+func _sync_wallet_from_state() -> void:
+	Wallet.cash = state.cash
+	Wallet.components = state.components
+	Wallet.eco = state.eco
+
 func _save_game() -> void:
-	SaveManager.save_state(_build_save_state())
+	_sync_wallet_from_state()
+	Save.save_raw(_build_save_state())
 
 ## 開機讀到存檔（`loaded` 係讀檔嗰刻、套用之前嘅原始 dict，帶住上次嘅
 ## last_save_unix）就行 OfflineSettlement.settle()：用復原返嗰刻嘅礦工／
@@ -631,6 +689,8 @@ func _build_world() -> void:
 	cam.position = frame["position"]
 	cam.current = true
 	_world.add_child(cam)
+	_camera = cam
+	_camera_base_position = frame["position"] # VR-11：拖動嘅基準點，_camera_pan=0 即係呢個預設取景
 
 	# VR-06：洞穴暖色環境光 + 帶陰影嘅太陽光，代替預設冇環境光嘅平光。
 	var env := Environment.new()
@@ -771,6 +831,67 @@ func _build_world() -> void:
 	_belt_items_root = Node3D.new()
 	_belt_items_root.name = "BeltItemsRoot"
 	_placement_root.add_child(_belt_items_root)
+
+	_build_region_expansion()
+
+## VR-11：場地擴張框架——喺現有峽谷入面擺一個 UnlockPanel（見
+## systems/unlock_panel.gd），代表「區域 2 入口」（field-zones-v9.png：
+## 左上「200」紫色解鎖板）。區域 2 實際玩法／場地（VR-13，backlog）未
+## 起，呢個板暫時淨係示範解鎖板機制本身：顯示價錢、撳落去夠錢就扣錢＋
+## 記存檔，唔會真正解鎖到任何新玩法／場景（冇場景可解鎖）。已解鎖就開
+## 場直接顯示「已解鎖」，唔使再撳一次。
+func _build_region_expansion() -> void:
+	_region2_panel = UnlockPanel.new()
+	_region2_panel.name = "Region2UnlockPanel"
+	_region2_panel.position = _site_to_world(REGION2_PANEL_SITE_POS, REGION2_PANEL_HEIGHT)
+	_placement_root.add_child(_region2_panel)
+	_region2_panel.setup("region2", c.region2_unlock_price, "區域 2　紫岩礦場", _try_unlock_region)
+	if "region2" in _unlocked_regions:
+		_region2_panel.mark_unlocked()
+
+## UnlockPanel 撳落去嘅 callback。夠錢先真正扣 state.cash＋記落
+## _unlocked_regions＋存檔；唔夠錢就乜都唔做（板自己會靠
+## refresh_afford_state() 顯示緊「未夠錢」嘅暗色，唔使呢度另外彈提示）。
+## 已經解鎖就直接跳過（板 _unlocked 之後理論上已經唔再接受撳，呢度係
+## 額外防守）。
+func _try_unlock_region(region_id: String, cost: float) -> void:
+	if region_id in _unlocked_regions:
+		return
+	if state.cash < cost:
+		return
+	state.cash -= cost
+	_unlocked_regions.append(region_id)
+	EventLog.log_event("region_unlock", {"region": region_id, "cost": cost})
+	SfxPlayer.play("upgrade")
+	if _region2_panel != null and _region2_panel.region_id == region_id:
+		_region2_panel.mark_unlocked()
+	_save_game()
+	_refresh_hud()
+
+## VR-11：鏡頭可拖——觸控拖曳（手機）／滑鼠左鍵拖曳（Windows host
+## 編輯器試玩）都接，累積 screen-space 嘅垂直位移落 _camera_pan，夾喺
+## [0, CAMERA_MAX_PAN]。淨係影響相機位置（_update_camera_position()），
+## 唔會攔截 pile chunk／解鎖板嘅 tap 判斷（嗰兩樣睇嘅係 Area3D
+## input_event，同呢度嘅 _unhandled_input 係兩條獨立管道，Godot 會先派
+## 去 3D 物件揀選，冇任何 3D 物件食咗先落嚟呢度）。
+func _unhandled_input(event: InputEvent) -> void:
+	if event is InputEventScreenDrag:
+		_apply_camera_drag(event.relative.y)
+	elif event is InputEventMouseMotion and (event.button_mask & MOUSE_BUTTON_MASK_LEFT) != 0:
+		_apply_camera_drag(event.relative.y)
+
+## 手指／滑鼠向上拖（screen_delta_y < 0，Godot 螢幕 Y 向下遞增）＝望上
+## （睇多啲上面嘅區域），跟手機地圖 app 「向上掃＝望到上面更多嘢」嘅
+## 慣例。
+func _apply_camera_drag(screen_delta_y: float) -> void:
+	_camera_pan = clampf(_camera_pan - screen_delta_y * CAMERA_DRAG_SENSITIVITY, 0.0, CAMERA_MAX_PAN)
+	_update_camera_position()
+
+func _update_camera_position() -> void:
+	if _camera == null:
+		return
+	var basis := Basis.from_euler(Vector3(deg_to_rad(CAMERA_PITCH_DEG), deg_to_rad(CAMERA_YAW_DEG), 0.0))
+	_camera.position = _camera_base_position + basis.y * _camera_pan
 
 ## 場地規格 v2（ALTA-219）：地面／岩壁背景要冚住成個相機取景範圍
 ## （_camera_reference_points() 已經計埋山頂／車場兩牆），唔可以再各自
@@ -1549,6 +1670,9 @@ func _refresh_hud() -> void:
 	_components_label.text = _fmt_num(state.components)
 	_eco_label.text = _fmt_num(state.eco)
 	_miner_count_label.text = "礦工 %d/%d" % [state.miner_count, c.miner_summon_cap]
+
+	if _region2_panel != null:
+		_region2_panel.refresh_afford_state(state.cash) # VR-11：解鎖板「夠唔夠錢」嘅暗／亮色跟返即時 Cash
 
 	_summon_button.text = "召喚礦工 (%d/%d)" % [state.miner_count, c.miner_summon_cap]
 	if state.can_summon_miner():

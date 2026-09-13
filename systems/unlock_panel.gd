@@ -1,0 +1,109 @@
+extends Node3D
+class_name UnlockPanel
+
+## VR-11：場地擴張框架——「解鎖板」reusable 元件（field-zones-v9.png：
+## 區域 2 入口「200」紫色解鎖板）。「同一場地，由下向上擴張」，唔係
+## 獨立場景——呢個元件純粹係擺喺 main.gd 嘅 3D 世界入面、可以撳嘅一嚿
+## 板，負責顯示＋接 tap 輸入，完全唔識 GameState／Wallet 內部形狀：夠唔
+## 夠錢、扣邊個欄位、點樣持久化全部由呼叫方（main.gd）決定——「而家有
+## 幾多錢」由呼叫方喺 refresh_afford_state() 逐次傳落嚟（唔喺呢度自己讀
+## Wallet，避免同 GameState 每幀 tick 嘅即時 cash 唔同步，見 main.gd
+## _refresh_hud() 嘅呼叫點），撳落去就 call 返呼叫方嘅 callback，等區域
+## 3／4（VR-14／15，backlog）之後可以直接重用呢個 class，唔使抄一份。
+##
+## 三種視覺狀態：已解鎖（唔再接受撳）／夠錢未解鎖（正常紫）／唔夠錢未
+## 解鎖（暗紫），對應 _refresh() 嘅分支。
+
+var region_id: String
+var cost: float
+var display_name: String
+var _on_tap: Callable
+var _unlocked: bool = false
+var _affordable: bool = false
+
+var _label: Label3D
+var _pad: MeshInstance3D
+var _area: Area3D
+
+
+## region_id／cost／display_name：呢個解鎖板代表邊個區域、幾錢、卡面
+## 顯示乜名。on_tap：未解鎖之前撳落去 call 呢個
+## Callable(region_id: String, cost: float)，由呼叫方決定通唔通過（夠唔
+## 夠錢）、扣邊個欄位、記唔記存檔；成功之後呼叫方要自己 call 返
+## mark_unlocked()——呢個元件自己唔扣錢、唔存檔、唔自動判定「已解鎖」。
+func setup(p_region_id: String, p_cost: float, p_display_name: String, on_tap: Callable) -> void:
+	region_id = p_region_id
+	cost = p_cost
+	display_name = p_display_name
+	_on_tap = on_tap
+	_build_visual()
+	_refresh()
+
+func _build_visual() -> void:
+	_pad = VisualFactory.make_flat_box(Vector3(0.9, 0.5, 0.06), VisualFactory.PALETTE["pad_purple"])
+	add_child(_pad)
+
+	_label = Label3D.new()
+	_label.font_size = 64
+	_label.pixel_size = 0.0035
+	_label.position = Vector3(0.0, 0.0, 0.24)
+	_label.modulate = Color.WHITE
+	_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	add_child(_label)
+
+	_area = Area3D.new()
+	_area.input_ray_pickable = true
+	var col := CollisionShape3D.new()
+	var shape := BoxShape3D.new()
+	shape.size = Vector3(0.9, 0.5, 0.3)
+	col.shape = shape
+	_area.add_child(col)
+	add_child(_area)
+	_area.input_event.connect(_on_input_event)
+
+func _on_input_event(
+	_camera: Node, event: InputEvent, _pos: Vector3, _normal: Vector3, _shape_idx: int
+) -> void:
+	if _unlocked:
+		return
+	if not (event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT):
+		return
+	if _on_tap.is_valid():
+		_on_tap.call(region_id, cost)
+
+## 呼叫方判斷成功解鎖之後 call 呢個——更新視覺，之後就唔再接受撳。
+func mark_unlocked() -> void:
+	_unlocked = true
+	_refresh()
+
+## 呼叫方每次有最新嘅「而家有幾多錢」（例如 main.gd _refresh_hud() 每幀
+## 傳 state.cash）就 call 呢個，更新「夠唔夠錢」嘅顯示，唔使玩家撳落去
+## 先知道買唔買得起。已解鎖就乜都唔使做。
+func refresh_afford_state(available_cash: float) -> void:
+	if _unlocked:
+		return
+	var affordable := available_cash >= cost
+	if affordable == _affordable:
+		return # 冇轉變就唔使重寫 Label3D／material，慳返啲嘢（同帶升級掣個做法一致）
+	_affordable = affordable
+	_refresh()
+
+func _refresh() -> void:
+	var mat: StandardMaterial3D = _pad.material_override
+	if _unlocked:
+		_label.text = "%s\n已解鎖" % display_name
+		mat.albedo_color = (VisualFactory.PALETTE["pad_purple"] as Color).lightened(0.25)
+		return
+	_label.text = "%s\n解鎖 %s" % [display_name, _fmt_cost(cost)]
+	var base_color: Color = VisualFactory.PALETTE["pad_purple"]
+	mat.albedo_color = base_color if _affordable else base_color.darkened(0.45)
+
+## 細版 K/M 格式，同 main.gd::_fmt_num() 邏輯一樣，冇共用 util module
+## （呢個 script 唔想引用 main.gd）所以各自維護一份細 function。
+func _fmt_cost(n: float) -> String:
+	if n < 1000.0:
+		return "%d" % int(round(n))
+	var v := n / 1000.0
+	if v < 1000.0:
+		return "%.0fK" % v
+	return "%.1fM" % (v / 1000.0)

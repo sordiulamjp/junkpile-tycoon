@@ -21,6 +21,8 @@ config/icon="res://assets/icon.png"
 
 [autoload]
 
+Wallet="*res://autoload/wallet.gd"
+Save="*res://autoload/save.gd"
 AdManager="*res://ads/ad_manager.gd"
 SfxPlayer="*res://systems/sfx_player.gd"
 
