@@ -22,6 +22,15 @@ class_name MineZone
 const LAYER_WIDTH := 2.4
 const PALETTE := MineConstants.PALETTE
 
+## Reviewer round 4：層 2／3 解鎖板舊位（掛喺 `_layer_center(idx)` 上面、
+## z = 層高 + 0.3）企喺層台後面、離地 0.85 起跳——萬向車企地面（CAR_Z
+## 0.14），加上層 1 台而家有實心 collider 擋住條路，車物理上去唔到嗰個
+## 位，「駛入即觸發」得個講字。層 2／3 解鎖板唔會同時存在（一定要順序
+## 解鎖，見 `_on_layer_unlock_tap()` 嘅 `can_unlock_layer()` 判斷），所以
+## 淨係要一個車去到嘅地台位（同 `_build_push_pads()` 一樣 z=0.25、企喺
+## 層台前面），唔使逐層各自一個位。
+const LAYER_UNLOCK_PAD_POS := Vector3(0.0, -0.9, 0.25)
+
 var state: MineState
 var _game_state: GameState # main.gd 嘅共用 GameState——Wallet 背後嗰個 source of truth
 var _frenzy: FrenzyState
@@ -207,7 +216,7 @@ func _build_layer_terrace(idx: int) -> void:
 
 	var unlock_panel := UnlockPanel.new()
 	unlock_panel.name = "LayerUnlockPanel%d" % idx
-	unlock_panel.position = _layer_center(idx) + Vector3(0.0, -MineConstants.LAYER_DEPTH_STEP * 0.3, box_size.z + 0.3)
+	unlock_panel.position = LAYER_UNLOCK_PAD_POS
 	_layer_root.add_child(unlock_panel)
 	unlock_panel.setup("layer%d" % idx, state.layer_unlock_cost(idx), "礦層 %d" % (idx + 1), _on_layer_unlock_tap, "pickaxe")
 	_layer_unlock_panels.append(unlock_panel)

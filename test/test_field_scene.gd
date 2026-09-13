@@ -127,6 +127,27 @@ func test_body_entered_ignores_non_character_bodies() -> void:
 
 	assert_eq(field.mine.state.push_tier, 0)
 
+## Reviewer round 4：舊位（掛喺 `_layer_center(idx)` 上面、z=層高+0.3）
+## 離地 0.85 起跳，企喺已經有實心 collider 嘅層 1 台後面——上面
+## `test_layer_unlock_panel_triggers_on_character_body_entry()` 直接 call
+## `_on_body_entered()` 繞過咗幾何，測唔到「車實際去唔去到」。呢個補返
+## 個幾何斷言：z 一定要跌入車 collision box 嘅高度範圍（先撞得到），y
+## 一定要企喺層 1 collider 嘅 y 範圍（[0, DEPTH_STEP]）前面（先唔會俾層
+## 台實心體擋住條路）。
+func test_layer_unlock_panel_is_geometrically_reachable_by_car() -> void:
+	_load_field()
+	var panel: UnlockPanel = field.mine._layer_unlock_panels[0]
+	var car_half_z: float = 0.13 # field.gd _build_car() 車 collision box z size 0.26 嘅一半
+
+	assert_between(
+		panel.position.z, field._car.position.z - car_half_z, field._car.position.z + car_half_z,
+		"解鎖板 z 要跌入車 collision box 嘅高度範圍先撞得到"
+	)
+	assert_lt(
+		panel.position.y, 0.0,
+		"解鎖板一定要企喺層 1 collider（y ∈ [0, DEPTH_STEP]）前面，車先去得到"
+	)
+
 
 # ── 存檔：統一去返共用 Wallet／"cash" 欄位，唔再自成一格 ─────
 
