@@ -293,9 +293,9 @@ func test_ai_activates_after_idle_threshold_and_releases_on_player_input() -> vo
 	field._joy_down = false
 	field._keys_vec = Vector2.ZERO
 
-	for _i in range(5):
+	for _i in range(int(field.AI_IDLE_SECS) - 1): # 用戶 2026-09-14：放手 3 秒後接返（AI_IDLE_SECS）
 		field._physics_process(1.0)
-	assert_false(field._ai_active, "未夠 6 秒唔應該自動接手")
+	assert_false(field._ai_active, "未夠 AI_IDLE_SECS 唔應該自動接手")
 
 	field._physics_process(1.5) # 累計 idle 時間跨過 AI_IDLE_SECS
 	assert_true(field._ai_active, "6 秒冇操作應該自動揸")
