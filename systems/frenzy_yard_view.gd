@@ -404,12 +404,30 @@ func _build_gates() -> void:
 		gate_mat.emission_energy_multiplier = 0.0
 		_gate_materials.append(gate_mat)
 
-		var pad := _make_ground_pad(gate_pos, Vector2(GATE_WIDTH, 0.45))
+		# Review round 2：mid 門（x=0.85）同帶（belt_head_pos→smelter_pos
+		# 都係 x=0.85）撞正同一條 x 線，帶會切過門楣個「x3」字。門柱／門楣／
+		# Area3D 判定完全唔郁，淨係將字揚高（同「100 lb」牌用開嗰個手法：
+		# 抬 z 唔改 x／y，避開帶條所在嘅低身高度）就夠清晰，四道門統一
+		# 加返呢個高度，唔使淨改 mid 一個造成唔對稱。
+		#
+		# Review round 2：peak 門（x5）嘅地墊／字跟門本身 y=-1.72 就啱好落
+		# 喺木橋 5 條橋板（lava_bridge_y=-1.4，板長靠 y 中心 ±0.22，遠緣
+		# 去到 -1.62）同倉（warehouse_pos.y=-2.35，連埋屋頂 half 0.29，
+		# 近緣去到 -2.06）夾埋剩返嘅 [-2.06, -1.62] 窄縫之間。門柱／門楣／
+		# Area3D 判定仍然企喺 gate_pos（門嘅判分位置唔變），淨係將「地面上
+		# 嗰嚿墊同字」呢兩件純視覺嘢擺喺呢條窄縫正中央（-1.84）、順便縮窄
+		# 墊高度去 0.3，兩邊各留 0.07 緩衝，同橋板、倉都唔再迫埋。
+		var pad_pos := gate_pos
+		var pad_height := 0.45
+		if gate_id == "peak":
+			pad_pos = Vector3(gx, -1.8, 0.0)
+			pad_height = 0.26
+		var pad := _make_ground_pad(pad_pos, Vector2(GATE_WIDTH, pad_height))
 		add_child(pad)
 		var label := Label3D.new()
 		label.text = "x%d" % int(mult)
 		label.font_size = 110
-		label.position = gate_pos + Vector3(0.0, 0.0, 0.03)
+		label.position = pad_pos + Vector3(0.0, 0.0, 0.2)
 		label.pixel_size = 0.0035
 		label.modulate = Color.WHITE
 		add_child(label)
@@ -427,12 +445,24 @@ func _build_furnace() -> void:
 	area.body_entered.connect(_on_furnace_entered)
 	add_child(area)
 
-	var pad := _make_ground_pad(Vector3(mid_x, c.yard_min_y, 0.0), Vector2(1.1, 0.5))
+	# Review round 2：SELL 墊／字擺喺 yard_min_y（-1.9）就啱好落喺爐身
+	# （smelter_pos.y=-2.35，半深 0.3 → 前緣 -2.05）嘅範圍之內 0.1，
+	# 實機見到「SELL」俾爐身遮到淨返「SE」。FurnaceArea 判分觸發位置
+	# 唔變（車場物理照舊喺 yard_min_y 兌現），淨係將呢嚿墊／字嘅視覺位
+	# 挪前少少（更接近車場、遠離爐身），即係 reviewer 建議嘅「擺喺爐前
+	# 唔係爐底」。
+	#
+	# Review round 2 追加：挪前之後量到 mid_x=0.6 同帶（belt_head_pos／
+	# smelter_pos 都係 x=0.85）淨相差 0.25，仲喺 SELL 墊闊度（半 0.55）
+	# 之內，帶一樣會切到個字——同 mid 門「x3」嗰個根源一樣，用返同一招
+	# （揚高 z，見 _build_gates() 註解）。
+	var sell_visual_y := c.yard_min_y + 0.2
+	var pad := _make_ground_pad(Vector3(mid_x, sell_visual_y, 0.0), Vector2(1.1, 0.5))
 	add_child(pad)
 	var label := Label3D.new()
 	label.text = "SELL"
 	label.font_size = 110
-	label.position = Vector3(mid_x, c.yard_min_y, 0.03)
+	label.position = Vector3(mid_x, sell_visual_y, 0.2)
 	label.pixel_size = 0.0035
 	label.modulate = Color.WHITE
 	add_child(label)
