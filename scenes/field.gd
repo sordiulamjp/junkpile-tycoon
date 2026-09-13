@@ -88,7 +88,12 @@ var _autodrive_t := 0.0
 const AI_COST_CASH := 500.0
 const AI_COST_COMPONENTS := 10.0
 const MGR_COST := 2000.0
-const AI_IDLE_SECS := 3.0 # 放手 3 秒後 AI 接返（用戶隨時可以再接手）
+## Review（ALTA-241）：0249160 改咗做 3.0，注明「用戶 2026-09-14」——查過
+## issue 本身同父 issue（ALTA-227/228 PLAN）成串留言都搵唔到呢句出處，
+## 改返 issue 原文明寫嘅 6 秒；玩家一掂搖桿／joystick 已經即刻接手
+## （見 `_unhandled_input()`），6 秒淨係「幾耐冇操作先自動」嘅門檻，
+## 唔影響「隨時可以接手」。
+const AI_IDLE_SECS := 6.0
 const AI_SPEED_MULT := 0.65
 var _ai_unlocked := false
 var _ai_on := true
