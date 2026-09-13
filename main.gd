@@ -51,9 +51,14 @@ const FOOTHILL_TIER_HEIGHT := 0.16
 ## constants.gd 嘅 screen_camera_pitch_deg／yaw_deg 係之前正交相機嗰set
 ## 角度，維持唔變（留返俾歷史記錄／日後遠端設定），新透視相機用返呢
 ## 幾個獨立常數。
-const CAMERA_FOV_DEG := 42.0    # 視覺參考：40–45°
-const CAMERA_PITCH_DEG := -57.5 # 視覺參考：55–60°（負數＝低頭望落場地，跟返正交相機嗰個正負號慣例）
-const CAMERA_YAW_DEG := 8.0     # 視覺參考：「輕微 yaw」
+##
+## 場地規格 v2（ALTA-219，2026-09-13）：pitch 收窄去 60–65°、FOV 定 40°、
+## yaw 歸零（「唔轉 yaw」，取代之前 ALTA-214 嗰 8° 輕微 yaw）——取代舊版
+## 55–60°／40–45°／8° 呢組數，見 test_main_scene.gd
+## test_camera_is_tilted_not_front_on() 跟住改咗嘅門檻。
+const CAMERA_FOV_DEG := 40.0    # 場地規格 v2：40°
+const CAMERA_PITCH_DEG := -62.0 # 場地規格 v2：60–65°（負數＝低頭望落場地，跟返正交相機嗰個正負號慣例）
+const CAMERA_YAW_DEG := 0.0     # 場地規格 v2：唔轉 yaw
 
 ## 取景安全邊界（screen fraction／世界單位），畀盒仔／模型本身嘅大細
 ## 留返少少呼吸位，純美術決定，唔係精算出嚟嘅公差。
@@ -435,6 +440,15 @@ func _on_frenzy_ended() -> void:
 func _site_to_world(v: Vector2, z: float = 0.0) -> Vector3:
 	return Vector3(v.x, v.y, z)
 
+## 山頂世界 Y——相機取景（_camera_reference_points()）、地面／岩壁背景
+## 幾何（_build_ground()／_build_canyon_walls()）三處都要揸實同一個
+## 「山有幾高」，抽出嚟做單一函式先唔會三處各自 hardcode 一份公式之後
+## 唔同步（ALTA-219 場地規格 v2 root cause 之一：地面／岩壁本身冚唔到
+## 相機已經框埋嘅山頂高度，露出背景色近黑嗰一大片，見 _build_ground()
+## 註解）。
+func _mountain_top_y() -> float:
+	return c.site_foothill_pos.y + FOOTHILL_BASE_HEIGHT + float(c.miner_summon_cap) * FOOTHILL_TIER_HEIGHT
+
 ## VR-06b：鏡頭改透視之後由邊幾個地標決定取景——山腳／山頂（同舊版
 ## 一樣）、帶頭／爐／倉，加埋車場兩幅牆（FrenzyYardView._build_walls()
 ## 嘅位置，同一份場地座標）。狂熱車場同放置場共用呢一個相機（唔另起
@@ -444,8 +458,7 @@ func _site_to_world(v: Vector2, z: float = 0.0) -> Vector3:
 ## 縱向），唔可以再靠撞彩，要老老實實將車場橫向範圍都計埋先保證
 ## 「車場兩牆全部喺中層帶」（issue 驗收）。
 func _camera_reference_points() -> Array[Vector3]:
-	var mountain_top_y: float = c.site_foothill_pos.y + FOOTHILL_BASE_HEIGHT \
-		+ float(c.miner_summon_cap) * FOOTHILL_TIER_HEIGHT
+	var mountain_top_y: float = _mountain_top_y()
 	var wall_mid_y: float = (c.car_park_max_y + c.yard_min_y) * 0.5
 	return [
 		_site_to_world(c.site_foothill_pos),
@@ -508,6 +521,45 @@ func _solve_camera_height_for_bottom_fit(
 			lo = mid
 	return (lo + hi) * 0.5
 
+## 場地規格 v2（ALTA-219）根源修正：橫向要夾實車場兩牆（3.6 世界單位
+## 闊）喺呢個裝置嘅窄直版 aspect（S8+ ≈1080:2220）之下，需要嘅相機距離
+## 大過純垂直取景（山頂↔倉）所需——即係 local_cz_horizontal >
+## local_cz_vertical。呢種情況底下，如果淨用 _solve_camera_height_for_bottom_fit()
+## 揸實「底」貼 bottom_frac，「頂」（山頂）會因為鏡頭比垂直取景所需更
+## 遠而縮埋落畫面中間，同 top_frac 之間空返一大截——實機（S8+）截圖
+## 見到嘅「頂 30~40% 純黑」根源就係呢度（唔係地面／岩壁幾何漏咗，而係
+## 相機本身已經預留咗嗰截留白）。呢個函式將「多出嚟嘅留白」平均分落
+## 頂／底兩邊。試過偏向山頂嘅固定 bias（0.35）——S8+ 實機（1080:2220，
+## 好窄嘅直版）睇落更貼近 top_frac，但呢個 bias 係跟實機 aspect 校出嚟，
+## headless 測試用緊嘅預設 viewport（720:960，闊過實機好多）之下橫向
+## 未必仲係 binding constraint，冇多餘留白可分之餘再屈個 0.35 bias 會
+## 將山頂谷穿落 top_frac 之上（test_mountain_top_at_full_miner_cap_still_in_mid_band
+## 就係咁樣爆）。改返用一半一半（0.5）——冇額外留白可分嗰陣（垂直本身
+## 已經係 binding constraint）呢個結果同舊版 _solve_camera_height_for_bottom_fit()
+## 一致；有額外留白嗰陣（橫向變成 binding constraint，見上面大段註解）
+## 就平均分落頂／底，唔會因為裝置 aspect 唔同而爆界，跨 aspect 都穩陣。
+func _solve_camera_height_centered(
+	locals: Array[Vector3], local_cz: float, k_v: float, top_frac: float, bottom_frac: float
+) -> float:
+	var lo: float = -100.0
+	var hi: float = 100.0
+	var target_mid: float = (top_frac + bottom_frac) * 0.5
+	for _i in range(48):
+		var mid: float = (lo + hi) * 0.5
+		var min_frac: float = INF
+		var max_frac: float = -INF
+		for l: Vector3 in locals:
+			var depth: float = local_cz - l.z
+			var frac: float = 0.5 - 0.5 * (l.y - mid) / (depth * k_v)
+			min_frac = minf(min_frac, frac)
+			max_frac = maxf(max_frac, frac)
+		var span_mid: float = (min_frac + max_frac) * 0.5
+		if span_mid > target_mid:
+			hi = mid # 成組地標中心跌得太低（螢幕 Y 比例太大），鏡頭要企高啲（縮細 lcy）
+		else:
+			lo = mid
+	return (lo + hi) * 0.5
+
 ## 由場地座標（加車場兩牆）反推透視相機嘅位置，令關鍵地標嘅螢幕 Y 比例
 ## 落喺 hud_top~1-hud_bottom（中層帶）之間，橫向亦唔會撞出畫面兩側
 ## （KEEP_HEIGHT 之下橫向 FOV 隨 3:4 直版縮窄，見下面橫向部分）。
@@ -558,7 +610,7 @@ func _compute_camera_frame() -> Dictionary:
 		locals, max_lz, k_v, top_frac, bottom_frac
 	)
 	var local_cz: float = maxf(local_cz_vertical, local_cz_horizontal)
-	var local_cy: float = _solve_camera_height_for_bottom_fit(locals, local_cz, k_v, bottom_frac)
+	var local_cy: float = _solve_camera_height_centered(locals, local_cz, k_v, top_frac, bottom_frac)
 
 	var cam_pos: Vector3 = basis.x * local_cx + basis.y * local_cy + basis.z * local_cz
 	return {"position": cam_pos}
@@ -697,6 +749,16 @@ func _build_world() -> void:
 	_belt_items_root.name = "BeltItemsRoot"
 	_placement_root.add_child(_belt_items_root)
 
+## 場地規格 v2（ALTA-219）：地面／岩壁背景要冚住成個相機取景範圍
+## （_camera_reference_points() 已經計埋山頂／車場兩牆），唔可以再各自
+## 用「山腳↔倉」呢類窄範圍計大細——舊公式（見 git blame）算出嚟嘅底板
+## 淨去到 y≈1.47，但山頂實際去到 _mountain_top_y()≈2.94，中間成截冧咗
+## 冇地面冚住，露返出 WorldEnvironment 個近黑背景色（用戶實機截圖
+## now.png／s8now.png：頂 45% 純黑嘅根源）。改用同 _build_canyon_walls()
+## 一致嘅邊界（side_x／bottom_y／mountain_top_y），兩者夾埋保證相機見到
+## 嘅範圍冇一寸唔係地面／岩壁。
+const GROUND_WALL_INSET := 0.7 # 同 _build_canyon_walls() 嘅 side_x 一致，地面貼到牆腳唔留罅
+
 ## VR-06b：地面——一嚿暖灰底板 + 兩三條淡車轍紋（用「decal」做法：幾嚿
 ## 更暗嘅幼長扁盒仔疊喺底板之上少少，代替 issue 講嘅 vertex color，
 ## 同一份 flat-shaded 盒仔手法，唔使起 SurfaceTool 自訂 mesh）。擺喺場地
@@ -707,9 +769,13 @@ func _build_ground() -> void:
 	_world.add_child(ground_root)
 
 	var mid_x: float = (c.yard_x_range.x + c.yard_x_range.y) * 0.5
-	var mid_y: float = (c.site_foothill_pos.y + c.warehouse_pos.y) * 0.5
-	var width: float = (c.yard_x_range.y - c.yard_x_range.x) + 1.2
-	var height: float = (c.site_foothill_pos.y - c.warehouse_pos.y) + 1.5
+	var min_x: float = c.yard_x_range.x - GROUND_WALL_INSET
+	var max_x: float = c.yard_x_range.y + GROUND_WALL_INSET
+	var min_y: float = c.warehouse_pos.y - 4.0     # 同 _build_canyon_walls() bottom_y 一致；實測（debug 二分法覆算）centering 落嚟 bottom 嗰邊嘅留白要去到 -4.0 先近乎冚晒（見 _solve_camera_height_centered() 註解）
+	var max_y: float = _mountain_top_y() + 1.2     # 冚過山頂，唔留返黑罅（實測 debug 二分法覆算 +0.6 仲差 3.5% 先貼到 top_frac，加到 +1.2 有安全邊際）
+	var width: float = max_x - min_x
+	var height: float = max_y - min_y
+	var mid_y: float = (min_y + max_y) * 0.5
 
 	var backdrop := VisualFactory.make_flat_box(
 		Vector3(width, height, 0.06), VisualFactory.PALETTE["ground_warm"]
@@ -741,30 +807,46 @@ func _build_ground() -> void:
 			tread.rotation.z = Vector2(0.0, 1.0).angle_to(b - a)
 			ground_root.add_child(tread)
 
-## VR-06b：低多邊形切面岩壁包住場地兩邊成「碗」（issue 視覺參考：faceted
-## rock，flat shading，冇貼圖）——每邊疊幾層，每層生幾嚿隨機大細／
-## 旋轉／深淺色嘅楔形（VisualFactory.make_rock_facet()），砌出唔規則
-## 切面感。純背景裝飾，冇碰撞，唔影響任何判分／拾取。
+## 場地規格 v2（ALTA-219）：岩壁要「包住場地三邊（底邊留 HUD）」——之前
+## 版本淨包咗左右兩邊，山頂之上（遠端，即底邊／HUD 嗰邊嘅對面）冇牆，
+## 用戶實機（now.png／s8now.png）睇到「岩壁得兩嚿深色磚」，一嚟係密度
+## 太疏（6 行 × 3 嚿，攤開成 mountain_top_y↔warehouse 咁大嘅垂直範圍，
+## 每嚿睇落好散），二嚟山頂之上一片空就係頂部大片黑嘅其中一個源頭
+## （另一個源頭見 _build_ground() 註解）。呢版加密左右兩幅牆，並且加
+## 第三幅「背牆」封住山頂上方、橫跨兩幅側牆之間全闊。
 func _build_canyon_walls() -> void:
 	var wall_root := Node3D.new()
 	wall_root.name = "CanyonWalls"
 	_world.add_child(wall_root)
 
-	var mountain_top_y: float = c.site_foothill_pos.y + FOOTHILL_BASE_HEIGHT \
-		+ float(c.miner_summon_cap) * FOOTHILL_TIER_HEIGHT
-	var bottom_y: float = c.warehouse_pos.y - 1.0
-	var rows := 6
+	var mountain_top_y: float = _mountain_top_y()
+	var bottom_y: float = c.warehouse_pos.y - 4.0
+	var rows := 9
 	var row_height: float = (mountain_top_y - bottom_y + 1.5) / float(rows)
+	var facets_per_row := 4
 
+	# 實機回饋（第一輪，2026-09-13）：加大 Z jitter 諗住做「凸出嚟」嘅
+	# 立體感，但呢個相機淨係 pitch（CAMERA_YAW_DEG=0），world Y／Z 經
+	# basis 轉換之後，Z 對螢幕垂直位置嘅影響同 Y 差唔多量級（大 Z jitter
+	# 會將塊石嘅螢幕位置大幅拉低，跌落中層帶擋住個山），實機截圖見到
+	# 岩壁變咗幾嚿巨型色塊拉到成個畫面中間。改為淨留少少 Z（0~0.15）
+	# 畀塊石有少少立體厚度，唔再靠 Z jitter 做「凸出」。
+	#
+	# 實機回饋（第二輪）：facets_per_row 太多＋jitter_x 太窄，令同一行
+	# 幾嚿全部疊晒喺 side_x 附近，睇落似一條實色長方柱／木柵，唔似
+	# 「不規則切面」。改細 facets_per_row、放闊 jitter_x（令邊緣凹凸
+	# 唔齊），facet 高度縮到 row_height 嘅七成，留返三成罅隙做斷層感，
+	# 唔再係實心冚晒成條column。
 	for side in [-1.0, 1.0]:
-		var side_x: float = (c.yard_x_range.x - 0.7) if side < 0.0 else (c.yard_x_range.y + 0.7)
+		var side_x: float = (c.yard_x_range.x - GROUND_WALL_INSET) if side < 0.0 \
+			else (c.yard_x_range.y + GROUND_WALL_INSET)
 		for row in range(rows):
 			var y: float = bottom_y + float(row) * row_height
-			for i in range(3):
-				var jitter_x := rng.randf_range(-0.3, 0.3)
-				var jitter_z := rng.randf_range(-0.2, 0.4)
+			for i in range(facets_per_row):
+				var jitter_x := rng.randf_range(-0.6, 0.6)
+				var jitter_z := rng.randf_range(0.0, 0.15)
 				var facet_size := Vector3(
-					0.9 + rng.randf_range(-0.15, 0.3), row_height * 1.2, 0.5 + rng.randf_range(0.0, 0.4)
+					0.5 + rng.randf_range(-0.1, 0.2), row_height * 0.7, 0.3 + rng.randf_range(0.0, 0.2)
 				)
 				var tone: Color = VisualFactory.PALETTE["canyon_wall"].lerp(
 					VisualFactory.PALETTE["canyon_wall_dark"], rng.randf()
@@ -773,6 +855,35 @@ func _build_canyon_walls() -> void:
 				facet.position = Vector3(side_x + jitter_x, y, jitter_z)
 				facet.rotation.y = rng.randf_range(-0.4, 0.4) + (0.0 if side < 0.0 else PI)
 				wall_root.add_child(facet)
+
+	# 第三邊——遠端「背牆」，橫跨兩幅側牆之間全闊，封住山頂上方（三邊
+	# 入面嘅第三邊；底邊／近鏡頭嗰邊留畀 HUD，唔加牆）。第一行特登由
+	# 「山頂高度之下半行」開始（唔係啱啱好貼山頂），同山頂本身重疊少少
+	# 先唔會漏返條罅出嚟（同上面一樣，冇再用大 Z jitter 屈曲螢幕位置）。
+	# 第二輪：rows 由 4 減到 2、放闊 jitter_x，避免同一 X 位幾行疊埋一條
+	# 幼柱（同上面側牆嘅修正同一個道理）。
+	var back_min_x: float = c.yard_x_range.x - GROUND_WALL_INSET
+	var back_max_x: float = c.yard_x_range.y + GROUND_WALL_INSET
+	var back_width: float = back_max_x - back_min_x
+	var back_rows := 2
+	var back_spacing := 0.5
+	var back_count: int = int(back_width / back_spacing) + 2
+	for row in range(back_rows):
+		var y: float = mountain_top_y - row_height * 0.5 + float(row) * row_height * 0.85
+		for i in range(back_count):
+			var fx: float = back_min_x + (float(i) / float(back_count - 1)) * back_width
+			var jitter_x := rng.randf_range(-0.3, 0.3)
+			var jitter_z := rng.randf_range(0.0, 0.15)
+			var facet_size := Vector3(
+				0.5 + rng.randf_range(-0.1, 0.2), row_height * 0.7, 0.3 + rng.randf_range(0.0, 0.2)
+			)
+			var tone: Color = VisualFactory.PALETTE["canyon_wall"].lerp(
+				VisualFactory.PALETTE["canyon_wall_dark"], rng.randf()
+			)
+			var facet := VisualFactory.make_rock_facet(facet_size, tone, rng.randf())
+			facet.position = Vector3(fx + jitter_x, y, jitter_z)
+			facet.rotation.y = rng.randf_range(-0.3, 0.3) + PI * 0.5
+			wall_root.add_child(facet)
 
 ## 第 i 層梯田嘅盒仔大細／local 中心 y——同時俾 `_rebuild_foothill_stack()`
 ## 同 `_spawn_pile_visual()` 用，抽出嚟避免兩處各自
@@ -810,8 +921,39 @@ func _rebuild_foothill_stack() -> void:
 		var box := VisualFactory.make_flat_box(box_size, tier_color)
 		box.position = Vector3(0.0, _tier_center_y(i), 0.0)
 		_foothill_root.add_child(box)
+		# 場地規格 v2（ALTA-219）：box 本身留低唔改（相機取景／碎料落點
+		# 嘅 bounding box 測試同 _spawn_pile_visual() 都跟緊呢個 box，見
+		# test_main_scene.gd test_foothill_shows_full_terrace_before_any_miner_summoned()
+		# / test_pile_debris_spawns_outside_terrace_footprint()），但喺
+		# 盒仔邊緣加幾嚿凸出嘅切面石打散直邊輪廓——用戶實機回饋：依家個
+		# 山「係樓梯形方塊」，issue 視覺參考要「岩壁語言：切面大石堆成
+		# 12 層梯田」，唔係光滑盒仔。
+		_add_tier_rock_facets(box_size, box.position, tier_color)
 		if mined and i % 2 == 0:
 			_add_tier_clutter(box_size, box.position)
+
+## 岩壁語言——喺一層梯田盒仔嘅前緣／頂緣散幾嚿切面石（同
+## _build_canyon_walls() 一樣用 VisualFactory.make_rock_facet()），凸出
+## 盒仔本身少少令輪廓唔規則。純視覺疊加，唔郁 box 本身（bounding box
+## 測試／碎料落點全部跟 box，見呼叫處註解）。
+func _add_tier_rock_facets(box_size: Vector3, box_pos: Vector3, tier_color: Color) -> void:
+	var facet_count := 4
+	for f in range(facet_count):
+		var frac: float = (float(f) + 0.5) / float(facet_count) - 0.5
+		var facet_size := Vector3(
+			box_size.x / float(facet_count) * 1.6 + rng.randf_range(-0.04, 0.08),
+			box_size.y * (1.05 + rng.randf_range(0.0, 0.7)),
+			box_size.z * (0.5 + rng.randf_range(0.0, 0.35))
+		)
+		var tone: Color = tier_color.lerp(VisualFactory.PALETTE["canyon_wall_dark"], rng.randf_range(0.0, 0.4))
+		var facet := VisualFactory.make_rock_facet(facet_size, tone, rng.randf())
+		facet.position = box_pos + Vector3(
+			frac * box_size.x + rng.randf_range(-0.03, 0.03),
+			box_size.y * 0.5,
+			box_size.z * 0.5 - facet_size.z * 0.3 + rng.randf_range(-0.03, 0.05)
+		)
+		facet.rotation.y = rng.randf_range(0.0, TAU)
+		_foothill_root.add_child(facet)
 
 ## 每兩層開採咗嘅梯田加一件雜物（隨機揀木桶／木板／齒輪），擺喺嗰層
 ## 面頂中央附近少少 jitter。純美術裝飾，冇碰撞、唔影響任何判定。

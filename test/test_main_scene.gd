@@ -496,8 +496,9 @@ func test_cached_remote_override_applies_before_game_state_init() -> void:
 	assert_almost_eq(main.c.starting_cash, 777.0, 0.001, "c 本身要覆寫咗")
 	assert_almost_eq(main.state.cash, 777.0, 0.001, "GameState._init() 讀 c.starting_cash 嗰刻已經要係新值")
 
-## 2. 相機視角：VR-06b 改透視（issue 視覺參考：pitch 55–60°、FOV
-## 40–45°），唔再係正面平視（rotation=0），亦唔再係 VR-03 嗰陣嘅正交
+## 2. 相機視角：場地規格 v2（ALTA-219）收窄去 pitch 60–65°、FOV 定
+## 40°、yaw 歸零（取代 VR-06b 舊版 pitch 55–60°／FOV 40–45°／8° 輕微
+## yaw），唔再係正面平視（rotation=0），亦唔再係 VR-03 嗰陣嘅正交
 ## （screen_camera_pitch_deg／yaw_deg 依家淨係歷史記錄，冇再用喺相機）。
 func test_camera_is_tilted_not_front_on() -> void:
 	var scene: PackedScene = load("res://main.tscn")
@@ -509,8 +510,9 @@ func test_camera_is_tilted_not_front_on() -> void:
 	assert_almost_eq(cam.rotation_degrees.x, main.CAMERA_PITCH_DEG, 0.01)
 	assert_almost_eq(cam.rotation_degrees.y, main.CAMERA_YAW_DEG, 0.01)
 	assert_ne(cam.rotation_degrees, Vector3.ZERO, "相機唔應該再係正面平視")
-	assert_between(absf(main.CAMERA_PITCH_DEG), 55.0, 60.0, "pitch 應該跟視覺參考 55–60°")
-	assert_between(cam.fov, 40.0, 45.0, "FOV 應該跟視覺參考 40–45°")
+	assert_between(absf(main.CAMERA_PITCH_DEG), 60.0, 65.0, "pitch 應該跟場地規格 v2 60–65°")
+	assert_eq(main.CAMERA_YAW_DEG, 0.0, "場地規格 v2：唔轉 yaw")
+	assert_between(cam.fov, 39.0, 41.0, "FOV 應該跟場地規格 v2 定 40°")
 
 ## 3. 碎料視覺：放大到至少 0.25 世界單位，撳中有回饋（放大 tween）
 ## 先消失（唔係即刻 free），開場提示第一次剷完就收起。

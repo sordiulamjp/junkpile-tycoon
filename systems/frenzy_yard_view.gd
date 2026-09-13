@@ -255,7 +255,9 @@ func _build_car() -> void:
 	car.add_to_group("frenzy_car")
 	car.sync_to_physics = true
 
-	_car_mesh = VisualFactory.make_metal_box(CAR_BODY_SIZE, Color(0.38, 0.39, 0.42))
+	# 場地規格 v2（ALTA-219）：車身黃 #F2C230／鏟斗紅 #D9432B（issue 色板
+	# 「車黃鏟斗紅」），代替之前嘅灰色車身。
+	_car_mesh = VisualFactory.make_metal_box(CAR_BODY_SIZE, Color("#F2C230"))
 	_car_mat = _car_mesh.material_override # _flash_car() 撞岩浆閃身用
 	car.add_child(_car_mesh)
 
@@ -266,7 +268,7 @@ func _build_car() -> void:
 	# headless unproject_position() 量過鏟斗投影喺車身上方——依家改擺
 	# -Y（車身底下，向落嘅方向），Y 係「厚度」（伸出去 body 底之外一截），
 	# Z 同車身一樣深，唔再伸出去 Z 方向。
-	_blade_mesh = VisualFactory.make_metal_box(CAR_BLADE_SIZE, Color(0.55, 0.15, 0.15))
+	_blade_mesh = VisualFactory.make_metal_box(CAR_BLADE_SIZE, Color("#D9432B"))
 	_blade_mat = _blade_mesh.material_override
 	_blade_mesh.position = Vector3(0.0, -(CAR_BODY_SIZE.y * 0.5 + CAR_BLADE_SIZE.y * 0.5 - 0.02), 0.0)
 	car.add_child(_blade_mesh)
@@ -320,6 +322,33 @@ func _build_bridge() -> void:
 	bridge_mesh.position = Vector3(safe_mid, c.lava_bridge_y, 0.0)
 	add_child(bridge_mesh)
 
+	# 場地規格 v2（ALTA-219）：木橋加幾條橫紋板（issue 視覺參考 k_368：
+	# 木板一條條併埋），代替之前一嚿實色扁盒仔冇木紋感。純裝飾，唔改
+	# bridge_mesh／collision 本身（安全闊度仍然跟 lava_bridge_safe_x_range）。
+	var plank_count := 5
+	for i in range(plank_count):
+		var frac: float = (float(i) + 0.5) / float(plank_count) - 0.5
+		var plank := VisualFactory.make_flat_box(
+			Vector3(safe_width / float(plank_count) * 0.7, 0.01, 0.46), VisualFactory.PALETTE["canyon_wall_dark"]
+		)
+		plank.position = Vector3(safe_mid + frac * safe_width, c.lava_bridge_y + 0.03, 0.0)
+		add_child(plank)
+
+	# 「100 lb」橋頭牌（issue 視覺參考 k_400/k_368）——擺喺橋一端，純裝飾。
+	var sign_post := VisualFactory.make_flat_box(Vector3(0.03, 0.16, 0.03), VisualFactory.PALETTE["bridge_wood"])
+	sign_post.position = Vector3(c.lava_bridge_safe_x_range.x - 0.08, c.lava_bridge_y + 0.08, 0.0)
+	add_child(sign_post)
+	var sign_board := VisualFactory.make_flat_box(Vector3(0.14, 0.09, 0.02), Color(0.85, 0.15, 0.1))
+	sign_board.position = sign_post.position + Vector3(0.0, 0.1, 0.0)
+	add_child(sign_board)
+	var sign_label := Label3D.new()
+	sign_label.text = "100 lb"
+	sign_label.position = sign_board.position + Vector3(0.0, 0.0, 0.02)
+	sign_label.pixel_size = 0.002
+	sign_label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	sign_label.modulate = Color.WHITE
+	add_child(sign_label)
+
 	# 岩浆：加發光，睇落有少少熱感（純裝飾，唔影響 _on_bridge_entered 判定）。
 	var lava_mesh := VisualFactory.make_metal_box(
 		Vector3(width, 0.04, 0.5), VisualFactory.PALETTE["lava"], VisualFactory.PALETTE["lava"], 0.8
@@ -327,42 +356,70 @@ func _build_bridge() -> void:
 	lava_mesh.position = Vector3(mid_x, c.lava_bridge_y - 0.03, 0.0)
 	add_child(lava_mesh)
 
+## 場地規格 v2（ALTA-219）：門改「門框＋兩柱＋頂部數字」語言（issue 視覺
+## 參考 k_304：木框＋橫樑），紫色（PALETTE["pad_purple"]，白字），代替
+## 之前地上一塊按倍數變色嘅平板。Area3D 觸發區大細／位置完全唔變
+## （_on_gate_entered() 判分邏輯淨係睇 body_entered，唔理視覺）。
+##
+## 闊度／高度跟 issue「闊 2.5 高 1.5」嘅比例，但世界單位縮細——嗰組數
+## 係跟 IZM 片「車闊＝1」嘅畫面量度單位，唔係呢個場景嘅世界座標刻度；
+## main/mid/west 三道門喺 3.4 闊車場相鄰淨得 1.0~1.4 個世界單位，字面
+## 跟 2.5 闊會相鄰門框互撞，所以縮到 GATE_WIDTH 夾實際門距。
+const GATE_WIDTH := 0.8
+const GATE_POST_HEIGHT := 0.42
+const GATE_POST_THICKNESS := 0.09
+const GATE_LINTEL_HEIGHT := 0.09
+
 func _build_gates() -> void:
 	for gate_id: String in c.gates.keys():
 		var gate: Dictionary = c.gates[gate_id]
 		var gx: float = gate["x"]
 		var gy: float = gate.get("y", c.gate_y)
+		var mult: float = float(gate.get("mult", 1.0))
+		var gate_pos := Vector3(gx, gy, 0.0)
+
 		var area := _make_area(Vector3(0.5, 0.08, 0.6))
 		area.name = "Gate_%s" % gate_id
-		area.position = Vector3(gx, gy, 0.0)
+		area.position = gate_pos
 		area.body_entered.connect(_on_gate_entered.bind(gate_id))
 		add_child(area)
 
-		var plate := VisualFactory.make_flat_box(Vector3(0.5, 0.04, 0.6), _gate_color(float(gate.get("mult", 1.0))))
-		plate.position = area.position
-		add_child(plate)
+		var half_w: float = GATE_WIDTH * 0.5
+		for side in [-1.0, 1.0]:
+			var post := VisualFactory.make_flat_box(
+				Vector3(GATE_POST_THICKNESS, GATE_POST_HEIGHT, GATE_POST_THICKNESS * 1.4),
+				VisualFactory.PALETTE["pad_purple"]
+			)
+			post.position = gate_pos + Vector3(side * half_w, GATE_POST_HEIGHT * 0.5, 0.0)
+			add_child(post)
+
+		var lintel := VisualFactory.make_flat_box(
+			Vector3(GATE_WIDTH + GATE_POST_THICKNESS, GATE_LINTEL_HEIGHT, GATE_POST_THICKNESS * 1.4),
+			VisualFactory.PALETTE["pad_purple"]
+		)
+		lintel.position = gate_pos + Vector3(0.0, GATE_POST_HEIGHT + GATE_LINTEL_HEIGHT * 0.5, 0.0)
+		add_child(lintel)
 
 		# ALTA-153 round2：「門亮」——material 一開始已經 emission_enabled，
 		# 但 energy 由 _set_active_visual() 揸（開場暗住，見 _ready()）。
-		var gate_mat: StandardMaterial3D = plate.material_override
+		var gate_mat: StandardMaterial3D = lintel.material_override
 		gate_mat.emission_enabled = true
 		gate_mat.emission = gate_mat.albedo_color
 		gate_mat.emission_energy_multiplier = 0.0
 		_gate_materials.append(gate_mat)
 
 		var label := Label3D.new()
-		label.text = "x%s" % str(gate.get("mult", 1.0))
-		label.position = area.position + Vector3(0.0, 0.18, 0.0)
-		label.pixel_size = 0.003
+		label.text = "x%s" % str(mult)
+		label.position = gate_pos + Vector3(0.0, GATE_POST_HEIGHT + GATE_LINTEL_HEIGHT + 0.14, 0.0)
+		label.pixel_size = 0.004
 		label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+		label.modulate = Color.WHITE
 		add_child(label)
 
-func _gate_color(mult: float) -> Color:
-	if mult >= 5.0: return Color(0.9, 0.2, 0.9)
-	if mult >= 4.0: return Color(0.9, 0.5, 0.1)
-	if mult >= 3.0: return Color(0.9, 0.85, 0.1)
-	return Color(0.5, 0.8, 0.3)
-
+## 場地規格 v2（ALTA-219）：地面墊統一語言——紫色圓角矩形（呢度冇圓角
+## mesh 現成用，用扁平盒仔代替，見 _make_ground_pad()）+ 白色大字，
+## issue 定義爐前墊即係「SELL」（熔爐入口）。FurnaceArea 觸發判分唔變，
+## 呢度加返視覺（之前呢個墊完全冇 mesh，實機淨見到爐本身）。
 func _build_furnace() -> void:
 	var width: float = c.yard_x_range.y - c.yard_x_range.x
 	var mid_x: float = (c.yard_x_range.x + c.yard_x_range.y) * 0.5
@@ -372,28 +429,45 @@ func _build_furnace() -> void:
 	area.body_entered.connect(_on_furnace_entered)
 	add_child(area)
 
+	var pad := _make_ground_pad(Vector3(mid_x, c.yard_min_y, 0.0), Vector2(1.0, 0.5))
+	add_child(pad)
+	var label := Label3D.new()
+	label.text = "SELL"
+	label.position = Vector3(mid_x, c.yard_min_y, 0.02) + Vector3(0.0, 0.16, 0.0)
+	label.pixel_size = 0.004
+	label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	label.modulate = Color.WHITE
+	add_child(label)
+
+## 場地規格 v2：紫色圓角矩形墊（#5B3A8C，2×1.2 世界單位比例，呢度用一
+## 個扁平盒仔近似「圓角」——Godot 冇現成 rounded-box primitive mesh，起
+## SurfaceTool 自訂幾何超出呢個純視覺調整嘅範圍，用邊角削細少少嘅扁盒
+## 頂替，同其餘 flat-shaded box 手法一致）。
+func _make_ground_pad(pos: Vector3, size: Vector2) -> MeshInstance3D:
+	var pad := VisualFactory.make_flat_box(Vector3(size.x, 0.04, size.y), VisualFactory.PALETTE["pad_purple"])
+	pad.position = pos
+	return pad
+
 func _build_upgrade_pad() -> void:
 	var area := _make_area(Vector3(0.5, 0.3, 0.5))
 	area.name = "UpgradePadArea"
 	area.position = Vector3(c.upgrade_pad_pos.x, c.upgrade_pad_pos.y, 0.0)
 	area.body_entered.connect(_on_upgrade_pad_entered)
 	add_child(area)
-	var visual := VisualFactory.make_metal_box(
-		Vector3(0.45, 0.05, 0.45), Color(0.2, 0.8, 0.9), Color(0.2, 0.8, 0.9), 0.8
-	)
-	visual.position = area.position
+	var visual := _make_ground_pad(area.position, Vector2(0.6, 0.5))
 	add_child(visual)
 
-	# VR-06b：地上大字代替彈窗——同倍數門嘅 Label3D 一樣做法（issue 視覺
-	# 參考：「地上 SELL／UPGRADE 墊…用地上大字 + 價錢，唔用彈窗」；呢個
+	# 場地規格 v2：地上大字代替彈窗——同倍數門嘅 Label3D 一樣做法（issue
+	# 視覺參考：「地上 SELL／UPGRADE 墊…用地上大字，唔用彈窗」）；呢個
 	# 墊本身冇 Cash 價錢（免費踩過就升級，見 FrenzyState.try_upgrade_pad()），
-	# 所以淨顯示墊名）。
+	# 所以淨顯示墊名。字色改白（跟返墊紫底＋白字嘅統一語言，取代之前
+	# 同墊本身撞唔埋一齊嘅青色）。
 	var label := Label3D.new()
 	label.text = "UPGRADE"
 	label.position = area.position + Vector3(0.0, 0.18, 0.0)
 	label.pixel_size = 0.003
 	label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-	label.modulate = Color(0.75, 0.95, 1.0)
+	label.modulate = Color.WHITE
 	add_child(label)
 
 
@@ -585,7 +659,13 @@ func _build_ore_pool() -> void:
 		total_weight += float(w)
 	if total_weight <= 0.0:
 		return
-	var y_min: float = c.yard_min_y + c.ore_pool_ball_radius * 2.0
+	# 場地規格 v2（ALTA-219）：波池之前鋪滿成條 y 走廊（車頂到爐前），
+	# 完全冚住咗滾筒／木橋／岩浆／倍數門（實機截圖見唔到呢幾樣嘢，成幅
+	# 畫面淨係一嚿波）。呢啲波池粒本身純粹「set dressing」，冇判分意義
+	# （見上面註解），縮到車頭一截（滾筒之前），行返落去嗰截地面淨返
+	# 俾滾筒／木橋／岩浆／門呢啲有結構嘅裝置露面，同 issue 視覺參考
+	# 「地面墊／門／木橋／岩浆帶要睇得見」對齊。
+	var y_min: float = c.spike_roller_pos.y + 0.15
 	var y_max: float = c.car_park_max_y - c.ore_pool_ball_radius * 2.0
 	for tier: String in weights.keys():
 		var count: int = int(round(float(c.ore_pool_total_count) * float(weights[tier]) / total_weight))
