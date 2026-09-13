@@ -183,11 +183,18 @@ enum Resource3 { CASH, COMPONENTS, ECO }
 @export var barrel_spawn_ratio: float = 0.35   # TUNE：生成池入面藍波佔比，其餘係散幣
 @export var debris_spawn_interval_secs: float = 0.08 # TUNE：狂熱期間隔幾耐生一粒新碎料（未撞 cap 先生）
 @export var debris_fake_fall_speed: float = 1.4      # TUNE：假物理（位置插值）落速，低階機用嚟代替剛體
-@export var debris_gravity_scale: float = 1.0        # TUNE：實機 playtest 發現預設重力（9.8）跌 spawn_y→yard_min_y 成個車場淨使 <1s，車追唔切；夾細落速等剛體有時間畀車撞／過滾筒／過門
+## VR-06b 場地攤平之後車場都用真實地面＋正常重力（碎料由生成高度跌落
+## 地面嗰一小截先要重力，落地之後留喺地面畀車推），唔再需要之前「Y 當
+## 前進方向」嗰種夾細重力等車追得切嘅補償（舊版 0.12 嘅理由已經唔
+## 適用），改返 Godot 預設。
+@export var debris_gravity_scale: float = 1.0 # TUNE
 
 ## -- 刺滾筒（藍波 → 金幣） --
 @export var spike_roller_pos: Vector2 = Vector2(1.75, -0.45)           # TUNE
-@export var spike_roller_half_extents: Vector3 = Vector3(0.4, 0.12, 0.12) # TUNE
+## Review（round 1）：呢個純視覺場地重排嘅回合唔應該連帶縮細判定範圍
+## ——復原返 VR-04 訂嘅原值（0.5, 0.3, 0.25），波池唔再入侵滾筒範圍改用
+## _build_ore_pool() 嘅排除區處理（見該處註解），唔靠縮細觸發區走位。
+@export var spike_roller_half_extents: Vector3 = Vector3(0.5, 0.3, 0.25) # TUNE
 
 ## -- 窄岩浆 + 木橋（車跌落唔即死，只加溢滿；溢滿上限見 A1 trash_meter_cap） --
 @export var lava_bridge_x_range: Vector2 = Vector2(1.15, 2.45) # 場地 v3：岩浆橫帶只佔右半，木橋通去 peak ×5 門
@@ -234,10 +241,14 @@ enum Resource3 { CASH, COMPONENTS, ECO }
 @export var ore_pool_tier_weights: Dictionary = {
 	"stone": 40, "coal": 24, "copper": 16, "gold": 10, "diamond": 7, "crown": 3,
 } # TUNE：波池顏色分佈（純視覺 flavor，同 GameState 山腳礦物機率獨立，冇判分意義）
-@export var ore_pool_total_count: int = 4000        # TUNE：靜態 MultiMesh 波總粒數（issue：「成千粒」）
+## Review（round 1）：issue 要求「每 blob 2,000–4,000 粒」，之前 4 個
+## blob 中心分 4000 粒 ≈ 每 blob 1,000，唔夠。改做 3 個中心（同時貼返
+## description「2–3 個礦堆 blob」）＋加大總數，令每 blob 平均 ≈2,200，
+## 夠哂門檻仲有餘裕（見 frenzy_yard_view.gd _build_ore_pool()）。
+@export var ore_pool_total_count: int = 6600        # TUNE：靜態 MultiMesh 波總粒數（issue：「成千粒」）
 @export var ore_pool_ball_radius: float = 0.035     # TUNE：普通波半徑
 @export var ore_pool_gold_scale_mult: float = 1.6   # TUNE：金波大粒過普通波（issue 明文要求，鑽／皇冠淨係自發光唔放大）
-## 波池夠密（3000 粒鋪成千粒喺成條車場 y 走廊），半徑同時活躍粒數大致
+## 波池夠密（幾千粒鋪成千粒喺成條車場 y 走廊），半徑同時活躍粒數大致
 ## 成平方關係——實測（headless 單元測試量過）0.35 會一次過驚動 100+ 粒，
 ## 完全唔似「一小圈」；縮到 0.15 先夾到「一嚿波集中喺車鏟附近散開」嘅
 ## 手感，同時將同一時間新增嘅 rigid body 數量控制喺對 S8+ 友善嘅範圍。

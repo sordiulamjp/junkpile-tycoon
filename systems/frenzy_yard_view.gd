@@ -10,11 +10,12 @@ class_name FrenzyYardView
 ## 設計取態（docx 淨係質性描述，冇實數，全部 TUNE，見 constants.gd
 ## D 部）：車唔係留喺頂固定，而係不斷向落巡航（car_descent_speed），
 ## 玩家淨係跟指控制橫向（x），車去到 yard_min_y 即刻返頂再落，形成
-## 「不斷落嚟緊嘅剷斗」；世界沿用 Godot 3D 預設重力（-Y），啱好同
-## main.gd 「y 向上」嘅座標系一致，散幣／藍波生成之後自己跌落去，
-## 車負責將佢哋撞去邊條門嘅 x 車道。實際物理表現（跟真係跌成點）
-## 留返俾實機／編輯器playtest 微調 TUNE 數值，呢度負責嘅係結構同
-## 判分事件接駁啱唔啱。
+## 「不斷落嚟緊嘅剷斗」。VR-06b 場地攤平之後，呢度嘅 (x, y) 係地面
+## 平面（y 係「向落」嘅深度，唔係企起身嘅高度），世界沿用 Godot 3D
+## 預設重力（-世界 Y＝-site z，見 main.gd SITE_BASIS 註解），散幣／
+## 藍波生成之後自己跌落地面，車負責將佢哋撞去邊條門嘅 x 車道。實際
+## 物理表現（跟真係跌成點）留返俾實機／編輯器playtest 微調 TUNE 數值，
+## 呢度負責嘅係結構同判分事件接駁啱唔啱。
 ##
 ## 場景複用放置場個 camera／world（同一個 3D 座標系，見 constants.gd
 ## 註解），唔另起爐灶起多個 camera。
@@ -291,7 +292,7 @@ func _build_car() -> void:
 
 	var col := CollisionShape3D.new()
 	var shape := BoxShape3D.new()
-	shape.size = Vector3(0.5, 0.3, 0.3)
+	shape.size = Vector3(0.5, 0.22, 0.4)
 	col.shape = shape
 	car.add_child(col)
 	car.position = Vector3(0.0, c.car_park_max_y, CAR_Z)
@@ -342,11 +343,16 @@ func _build_bridge() -> void:
 		var plank := VisualFactory.make_flat_box(Vector3(safe_width, 0.06, 0.02), VisualFactory.PALETTE["bridge_wood"].darkened(0.25))
 		plank.position = Vector3(safe_mid, c.lava_bridge_y - 0.22 + float(i) * 0.11, 0.06)
 		add_child(plank)
+	# Review（round 1）：呢個 +0.4 本身係想「揚高少少等睇得清楚」，但攤平
+	# 之後 y 唔再係高度（係深度）——加落 y 度變咗將個牌推咗出木橋自己個
+	# footprint（±0.28）之外，撞正西門（west，x 啱啱好同呢度嘅 safe_mid
+	# 同一個 1.85）嘅 y 範圍，實機見到「100 lb」同「x4」疊埋。改用 z（呢
+	# 個場地嘅高度軸）揚高，y 留喺木橋自己中心，唔會再撞西門。
 	var lb_label := Label3D.new()
 	lb_label.text = "100 lb"
 	lb_label.font_size = 56
 	lb_label.pixel_size = 0.003
-	lb_label.position = Vector3(safe_mid, c.lava_bridge_y + 0.4, 0.04)
+	lb_label.position = Vector3(safe_mid, c.lava_bridge_y, 0.3)
 	add_child(lb_label)
 
 ## 場地規格 v2（ALTA-219）：門改「門框＋兩柱＋頂部數字」語言（issue 視覺
@@ -652,6 +658,23 @@ func _build_ore_pool() -> void:
 	# 「地面墊／門／木橋／岩浆帶要睇得見」對齊。
 	var y_min: float = c.gate_y + 0.35
 	var y_max: float = c.car_park_max_y - 0.1
+	# Review（round 1）：呢個 y 走廊入面本身企住個滾筒（spike_roller_pos），
+	# 波池隨機散落成個矩形範圍會將滾筒淹冚返（同波池疊埋，判分冇影響但
+	# 睇落實機一嚿波蓋晒個滾筒）。落面 rejection sampling 排除返滾筒個
+	# footprint（半徑加返滾筒視覺圓柱嘅半徑 + 少少邊界），數粒 tries 之後
+	# 攞唔到就將就攞最後一次（極罕有，唔值得為咗呢幾粒犧牲效能起 while true）。
+	var roller_center := c.spike_roller_pos
+	var roller_exclude_half := Vector2(
+		c.spike_roller_half_extents.x + 0.08, maxf(c.spike_roller_half_extents.y, c.spike_roller_half_extents.z) + 0.08
+	)
+	# 有機 blob：3 個中心（同 description「2–3 個礦堆 blob」對齊），粒圍住
+	# 中心散佈（IZM「堆」語言）；同一個中心組合俾所有礦物階分享，冚一次
+	# 就夠——之前呢個 literal 擺咗喺 count 內圈，等於每粒都重建一次陣列。
+	var centers := [
+		Vector2(c.yard_x_range.x + 0.7, y_min + (y_max - y_min) * 0.6),
+		Vector2(c.yard_x_range.x + 1.9, y_min + (y_max - y_min) * 0.25),
+		Vector2(c.yard_x_range.y - 0.5, y_min + (y_max - y_min) * 0.7),
+	]
 	for tier: String in weights.keys():
 		var count: int = int(round(float(c.ore_pool_total_count) * float(weights[tier]) / total_weight))
 		if count <= 0:
@@ -666,21 +689,17 @@ func _build_ore_pool() -> void:
 		add_child(mmi)
 		_pool_mesh_by_tier[tier] = mmi
 		for i in range(count):
-			# 有機 blob：三個中心，粒圍住中心散佈（IZM「堆」語言）。
-			var centers := [
-				Vector2(c.yard_x_range.x + 0.6, y_min + (y_max - y_min) * 0.55),
-				Vector2(c.yard_x_range.x + 1.5, y_min + (y_max - y_min) * 0.2),
-				Vector2(c.yard_x_range.y - 1.1, y_min + (y_max - y_min) * 0.8),
-				Vector2(c.yard_x_range.y - 0.4, y_min + (y_max - y_min) * 0.45),
-			]
-			var ctr: Vector2 = centers[rng.randi_range(0, centers.size() - 1)]
-			var ang: float = rng.randf_range(0.0, TAU)
-			var rad: float = sqrt(rng.randf()) * 0.42
-			var pos := Vector3(
-				clampf(ctr.x + cos(ang) * rad * 1.15, c.yard_x_range.x, c.yard_x_range.y),
-				clampf(ctr.y + sin(ang) * rad, y_min, y_max),
-				c.ore_pool_ball_radius * float(scale_mult)
-			)
+			var px := 0.0
+			var py := 0.0
+			for _attempt in range(6):
+				var ctr: Vector2 = centers[rng.randi_range(0, centers.size() - 1)]
+				var ang: float = rng.randf_range(0.0, TAU)
+				var rad: float = sqrt(rng.randf()) * 0.42
+				px = clampf(ctr.x + cos(ang) * rad * 1.15, c.yard_x_range.x, c.yard_x_range.y)
+				py = clampf(ctr.y + sin(ang) * rad, y_min, y_max)
+				if absf(px - roller_center.x) > roller_exclude_half.x or absf(py - roller_center.y) > roller_exclude_half.y:
+					break
+			var pos := Vector3(px, py, c.ore_pool_ball_radius * float(scale_mult))
 			mmi.multimesh.set_instance_transform(
 				i, Transform3D(Basis.IDENTITY.scaled(Vector3.ONE * scale_mult), pos)
 			)

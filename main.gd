@@ -11,20 +11,14 @@ extends Node3D
 ## 輸入轉接（tap-to-scoop）；核心數值邏輯全部喺 systems/game_state.gd，
 ## 方便 GUT 獨立測試（見 test/test_game_state.gd）。
 ##
-## 座標：docx 場地座標 (x, y) 直接當世界單位用，y 向上（山向上長），Z
-## 俾盒仔少少立體厚度——**成個放置場＋車場（VR-03／VR-04 共用）實際上
-## 全部住喺世界 Z=0 呢個平面**，斜視相機淨係改咗「點睇呢個平面」，冇
-## 將場地重新擺去地面 (XZ) 平面。（Review 意見，ALTA-150 round 3：
-## 曾經考慮改做「地面平面＋真垂直 Y」嘅古典等角視角，但 VR-04 車場
-## 一大堆已審過嘅座標常數（gates／spike_roller_pos／lava_bridge_y／
-## yard_x_range 等）全部跟緊現有 Z=0 平面假設，改嗰個要重新過晒 VR-04
-## 判分／物理，超出呢個 playtest-fix issue 嘅範圍，所以維持現狀；
-## touch→world 嘅映射（FrenzyYardView._unhandled_input()）已經改用
-## 射線同 Z=0 平面求交，唔再假設相機正面望 -Z，所以呢個決定唔會再
-## 逼手指映射嗰段代碼重做多次。副作用：帶／車道／四道門呢類橫向佈局
-## 斜視之後會睇落斜咗（唔再係水平線），純美術取捨，留返俾日後獨立
-## 設計 issue 處理。VR-06b（ALTA-214）用戶已經拍板接受呢個斜線取捨，
-## 對應嘅「改地面平面」issue ALTA-198 已 cancelled，所以呢個決定不變。）
+## 座標（VR-06b／ALTA-219 場地規格 v2 起，取代之前「成個場地住喺世界
+## Z=0 直立面」嘅舊做法——嗰個做法連同「改地面平面」issue ALTA-198
+## 當時 cancelled 嘅決定已經唔適用，見 git blame）：docx 場地座標
+## (x, y) 係地面平面，唔企起身嘅嘢淨用呢兩個分量；企起身嘅結構（門柱、
+## 礦堆粒等）額外加一個「高度」分量先落第三維。`SITE_BASIS`（見下面）
+## 將呢個地面平面攤平做世界地面，site z（高度）先接得落 Godot 預設嘅
+## 「上」（世界 +y）——重力／碰撞直接用得，唔使再夾細 debris_gravity_scale
+## 補償。相機轉用透視、由上方斜望落（IZM 峽谷構圖）。
 ##
 ## VR-06b：相機由正交改透視（issue 視覺參考 ALTA-153 最後一則留言，IZM
 ## 截圖構圖：高角度望落一條由畫面頂延伸到底嘅峽谷，前景大後景細）。
@@ -452,9 +446,6 @@ func _site_to_world(v: Vector2, z: float = 0.0) -> Vector3:
 func _site_to_global(v: Vector2, z: float = 0.0) -> Vector3:
 	return SITE_BASIS * Vector3(v.x, v.y, z)
 
-func _mountain_top_y() -> float:
-	return c.site_foothill_pos.y + FOOTHILL_BASE_HEIGHT + float(c.miner_summon_cap) * FOOTHILL_TIER_HEIGHT
-
 ## VR-06b：鏡頭改透視之後由邊幾個地標決定取景——山腳／山頂（同舊版
 ## 一樣）、帶頭／爐／倉，加埋車場兩幅牆（FrenzyYardView._build_walls()
 ## 嘅位置，同一份場地座標）。狂熱車場同放置場共用呢一個相機（唔另起
@@ -769,12 +760,10 @@ func _build_world() -> void:
 ## 場地規格 v2（ALTA-219）：地面／岩壁背景要冚住成個相機取景範圍
 ## （_camera_reference_points() 已經計埋山頂／車場兩牆），唔可以再各自
 ## 用「山腳↔倉」呢類窄範圍計大細——舊公式（見 git blame）算出嚟嘅底板
-## 淨去到 y≈1.47，但山頂實際去到 _mountain_top_y()≈2.94，中間成截冧咗
-## 冇地面冚住，露返出 WorldEnvironment 個近黑背景色（用戶實機截圖
-## now.png／s8now.png：頂 45% 純黑嘅根源）。改用同 _build_canyon_walls()
-## 一致嘅邊界（side_x／bottom_y／mountain_top_y），兩者夾埋保證相機見到
-## 嘅範圍冇一寸唔係地面／岩壁。
-const GROUND_WALL_INSET := 0.7 # 同 _build_canyon_walls() 嘅 side_x 一致，地面貼到牆腳唔留罅
+## 冚唔到實際山頂，中間成截冧咗冇地面冚住，露返出 WorldEnvironment 個
+## 近黑背景色（用戶實機截圖 now.png／s8now.png：頂 45% 純黑嘅根源）。
+## 改用同 `_build_canyon_walls()` 一致嘅邊界（下面 `_build_ground()` 嘅
+## top_y／bottom_y），兩者夾埋保證相機見到嘅範圍冇一寸唔係地面／岩壁。
 
 ## VR-06b：地面——一嚿暖灰底板 + 兩三條淡車轍紋（用「decal」做法：幾嚿
 ## 更暗嘅幼長扁盒仔疊喺底板之上少少，代替 issue 講嘅 vertex color，
@@ -933,6 +922,12 @@ func _rebuild_foothill_stack() -> void:
 		box.name = "Tier%d" % (i + 1)
 		box.position = _tier_center_local(i)
 		_foothill_root.add_child(box)
+		# Review（round 1）：`_add_tier_rock_facets()` 一直有定義但冇 call
+		# 過——梯田淨返 box 本身，睇落係「樓梯形平板」而唔係 issue 要求嘅
+		# 「切面大石」語言（同 `_build_canyon_walls()` 一致嘅打散直邊做法）。
+		# 每層前緣散幾嚿切面石打散直邊輪廓，box 本身留低唔改（bounding box
+		# 測試／碎料落點全部跟 box，見 test_pile_debris_spawns_outside_terrace_footprint）。
+		_add_tier_rock_facets(box_size, box.position, tier_color)
 		# 每層前緣鋪一排雜物（油桶／木箱／輪胎／廢鐵），廢料山要似「堆滿嘢」。
 		_add_tier_clutter(box_size, box.position, 3 if mined else 2)
 
@@ -1080,18 +1075,12 @@ func _on_pile_spawn_timeout() -> void:
 ## 車場跟指守衛之下，狂熱期間撳中會連車都拖埋）——一味郁 Z 去避開梯田
 ## 幾何，先係跌落車場範圍嘅根源。
 ##
-## 改用「揸實一層 tier 嘅高度＋淨係用嗰層自己嘅前面緣」代替：揀一層
-## PILE_CHUNK_MIN_TIER~MAX_TIER 之間嘅梯田（用 _compute_camera_frame()
-## 同一套相機、實測呢個範圍嘅螢幕位置穩陣噉留喺山腳帶，見 round2 修正
-## 二留言），企喺嗰層自己中心 y（唔會撞第啲層，因為每層 y 範圍唔重疊），
-## x 揀喺嗰層闊度以內（睇落似擺喺層面），z 淨係推出嗰一層自己嘅半深
-## （比成隻山嘅最闊半徑細好多）加少少邊——先可以同時做到「唔陷落」＋
-## 「唔跌落車場螢幕範圍」。
-const PILE_CHUNK_MIN_TIER := 5
-const PILE_CHUNK_MAX_TIER := 9
-const PILE_CHUNK_FRONT_CLEARANCE_MIN := 0.06
-const PILE_CHUNK_FRONT_CLEARANCE_MAX := 0.16
-
+## 改用「揸實 tier 0（山最前、最大嗰層）嘅高度＋淨係用佢自己嘅前面緣」
+## 代替：企喺 tier 0 自己中心 y、x 揀喺 tier 0 闊度以內、z 淨係推出
+## tier 0 自己嘅半深——tier 0 係全山最闊最深嗰層，前緣一定喺全部其他
+## tier 前面，唔會陷落任何一層，唔使再揀「邊層先安全」（Review round 1：
+## 曾經諗住喺一個 tier 範圍隨機揀，但 tier 0 本身已經滿足晒「唔陷落」＋
+## 「唔跌落車場螢幕範圍」兩個條件，冇必要加呢層複雜度）。
 func _spawn_pile_visual(ore_key: String) -> void:
 	var chunk := VisualFactory.make_ore_chunk(PILE_CHUNK_VISUAL_SIZE, _ore_color(ore_key))
 	var tier_index: int = 0
