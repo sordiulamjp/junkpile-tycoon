@@ -314,8 +314,10 @@ func _build_roller() -> void:
 	add_child(_roller_visual)
 
 func _build_bridge() -> void:
-	var width: float = c.yard_x_range.y - c.yard_x_range.x
-	var mid_x: float = (c.yard_x_range.x + c.yard_x_range.y) * 0.5
+	var x0: float = c.lava_bridge_x_range.x
+	var x1: float = c.lava_bridge_x_range.y
+	var width: float = x1 - x0
+	var mid_x: float = (x0 + x1) * 0.5
 	var area := _make_area(Vector3(width, 0.1, 0.5))
 	area.name = "BridgeArea"
 	area.position = Vector3(mid_x, c.lava_bridge_y, 0.0)
@@ -324,53 +326,28 @@ func _build_bridge() -> void:
 
 	var safe_width: float = c.lava_bridge_safe_x_range.y - c.lava_bridge_safe_x_range.x
 	var safe_mid: float = (c.lava_bridge_safe_x_range.x + c.lava_bridge_safe_x_range.y) * 0.5
-	var bridge_mesh := VisualFactory.make_flat_box(Vector3(safe_width, 0.5, 0.05), VisualFactory.PALETTE["bridge_wood"])
-	bridge_mesh.position = Vector3(safe_mid, c.lava_bridge_y, 0.03)
-	add_child(bridge_mesh)
-	for i in range(5): # 木板紋
-		var plank := VisualFactory.make_flat_box(Vector3(safe_width, 0.06, 0.02), VisualFactory.PALETTE["bridge_wood"].darkened(0.25))
-		plank.position = Vector3(safe_mid, c.lava_bridge_y - 0.2 + float(i) * 0.1, 0.06)
-		add_child(plank)
-	var lb_label := Label3D.new()
-	lb_label.text = "100 lb"
-	lb_label.font_size = 64
-	lb_label.pixel_size = 0.003
-	lb_label.position = Vector3(safe_mid, c.lava_bridge_y + 0.36, 0.08)
-	add_child(lb_label)
-
-	# 場地規格 v2（ALTA-219）：木橋加幾條橫紋板（issue 視覺參考 k_368：
-	# 木板一條條併埋），代替之前一嚿實色扁盒仔冇木紋感。純裝飾，唔改
-	# bridge_mesh／collision 本身（安全闊度仍然跟 lava_bridge_safe_x_range）。
-	var plank_count := 5
-	for i in range(plank_count):
-		var frac: float = (float(i) + 0.5) / float(plank_count) - 0.5
-		var plank := VisualFactory.make_flat_box(
-			Vector3(safe_width / float(plank_count) * 0.7, 0.01, 0.46), VisualFactory.PALETTE["canyon_wall_dark"]
-		)
-		plank.position = Vector3(safe_mid + frac * safe_width, c.lava_bridge_y + 0.03, 0.0)
-		add_child(plank)
-
-	# 「100 lb」橋頭牌（issue 視覺參考 k_400/k_368）——擺喺橋一端，純裝飾。
-	var sign_post := VisualFactory.make_flat_box(Vector3(0.03, 0.16, 0.03), VisualFactory.PALETTE["bridge_wood"])
-	sign_post.position = Vector3(c.lava_bridge_safe_x_range.x - 0.08, c.lava_bridge_y + 0.08, 0.0)
-	add_child(sign_post)
-	var sign_board := VisualFactory.make_flat_box(Vector3(0.14, 0.09, 0.02), Color(0.85, 0.15, 0.1))
-	sign_board.position = sign_post.position + Vector3(0.0, 0.1, 0.0)
-	add_child(sign_board)
-	var sign_label := Label3D.new()
-	sign_label.text = "100 lb"
-	sign_label.position = sign_board.position + Vector3(0.0, 0.0, 0.02)
-	sign_label.pixel_size = 0.002
-	sign_label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-	sign_label.modulate = Color.WHITE
-	add_child(sign_label)
-
-	# 岩浆：加發光，睇落有少少熱感（純裝飾，唔影響 _on_bridge_entered 判定）。
 	var lava_mesh := VisualFactory.make_metal_box(
-		Vector3(width, 0.5, 0.03), VisualFactory.PALETTE["lava"], VisualFactory.PALETTE["lava"], 1.2
+		Vector3(width, 0.5, 0.03), VisualFactory.PALETTE["lava"], VisualFactory.PALETTE["lava"], 1.8
 	)
 	lava_mesh.position = Vector3(mid_x, c.lava_bridge_y, 0.0)
 	add_child(lava_mesh)
+	for _i in range(8):
+		var crust := VisualFactory.make_flat_box(Vector3(rng.randf_range(0.06, 0.14), rng.randf_range(0.05, 0.1), 0.03), Color(0.3, 0.1, 0.05))
+		crust.position = Vector3(rng.randf_range(x0, x1), c.lava_bridge_y + rng.randf_range(-0.2, 0.2), 0.01)
+		add_child(crust)
+	var bridge_mesh := VisualFactory.make_flat_box(Vector3(safe_width, 0.56, 0.05), VisualFactory.PALETTE["bridge_wood"])
+	bridge_mesh.position = Vector3(safe_mid, c.lava_bridge_y, 0.03)
+	add_child(bridge_mesh)
+	for i in range(5):
+		var plank := VisualFactory.make_flat_box(Vector3(safe_width, 0.06, 0.02), VisualFactory.PALETTE["bridge_wood"].darkened(0.25))
+		plank.position = Vector3(safe_mid, c.lava_bridge_y - 0.22 + float(i) * 0.11, 0.06)
+		add_child(plank)
+	var lb_label := Label3D.new()
+	lb_label.text = "100 lb"
+	lb_label.font_size = 56
+	lb_label.pixel_size = 0.003
+	lb_label.position = Vector3(safe_mid, c.lava_bridge_y + 0.4, 0.04)
+	add_child(lb_label)
 
 ## 場地規格 v2（ALTA-219）：門改「門框＋兩柱＋頂部數字」語言（issue 視覺
 ## 參考 k_304：木框＋橫樑），紫色（PALETTE["pad_purple"]，白字），代替
@@ -673,7 +650,7 @@ func _build_ore_pool() -> void:
 	# （見上面註解），縮到車頭一截（滾筒之前），行返落去嗰截地面淨返
 	# 俾滾筒／木橋／岩浆／門呢啲有結構嘅裝置露面，同 issue 視覺參考
 	# 「地面墊／門／木橋／岩浆帶要睇得見」對齊。
-	var y_min: float = c.lava_bridge_y + 0.2
+	var y_min: float = c.gate_y + 0.35
 	var y_max: float = c.car_park_max_y - 0.1
 	for tier: String in weights.keys():
 		var count: int = int(round(float(c.ore_pool_total_count) * float(weights[tier]) / total_weight))
@@ -691,10 +668,10 @@ func _build_ore_pool() -> void:
 		for i in range(count):
 			# 有機 blob：三個中心，粒圍住中心散佈（IZM「堆」語言）。
 			var centers := [
-				Vector2(c.yard_x_range.x + 0.55, y_min + (y_max - y_min) * 0.7),
-				Vector2(c.yard_x_range.x + 1.35, y_min + (y_max - y_min) * 0.25),
-				Vector2(c.yard_x_range.y - 1.0, y_min + (y_max - y_min) * 0.75),
-				Vector2(c.yard_x_range.y - 0.35, y_min + (y_max - y_min) * 0.3),
+				Vector2(c.yard_x_range.x + 0.6, y_min + (y_max - y_min) * 0.55),
+				Vector2(c.yard_x_range.x + 1.5, y_min + (y_max - y_min) * 0.2),
+				Vector2(c.yard_x_range.y - 1.1, y_min + (y_max - y_min) * 0.8),
+				Vector2(c.yard_x_range.y - 0.4, y_min + (y_max - y_min) * 0.45),
 			]
 			var ctr: Vector2 = centers[rng.randi_range(0, centers.size() - 1)]
 			var ang: float = rng.randf_range(0.0, TAU)

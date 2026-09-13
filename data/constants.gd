@@ -31,9 +31,9 @@ enum Resource3 { CASH, COMPONENTS, ECO }
 @export var site_mid_pos: Vector2 = Vector2(0.52, 2.18)       # docx：中層，解鎖 1
 @export var site_upper_pos: Vector2 = Vector2(0.28, 3.48)     # docx：上層，解鎖 2
 @export var car_park_max_y: float = 0.08                      # docx：車場上限，車唔上山
-@export var belt_head_pos: Vector2 = Vector2(0.85, -0.05)     # docx：單一入口
-@export var smelter_pos: Vector2 = Vector2(1.85, -1.55)       # docx
-@export var warehouse_pos: Vector2 = Vector2(1.85, -2.18)     # docx
+@export var belt_head_pos: Vector2 = Vector2(0.85, 0.3)       # 場地 v3（2026-09-13 用戶要求重排）：帶頭喺礦工前，直落穿 ×3 門入爐
+@export var smelter_pos: Vector2 = Vector2(0.85, -2.35)       # 場地 v3：爐喺正下方中央
+@export var warehouse_pos: Vector2 = Vector2(1.95, -2.35)     # 場地 v3：倉喺爐右邊
 
 @export var screen_aspect: Vector2 = Vector2(3.0, 4.0) # docx：畫面 3:4
 @export var screen_kx: float = 0.82  # docx
@@ -186,17 +186,18 @@ enum Resource3 { CASH, COMPONENTS, ECO }
 @export var debris_gravity_scale: float = 1.0        # TUNE：實機 playtest 發現預設重力（9.8）跌 spawn_y→yard_min_y 成個車場淨使 <1s，車追唔切；夾細落速等剛體有時間畀車撞／過滾筒／過門
 
 ## -- 刺滾筒（藍波 → 金幣） --
-@export var spike_roller_pos: Vector2 = Vector2(1.3, -0.4)            # TUNE
+@export var spike_roller_pos: Vector2 = Vector2(1.75, -0.45)           # TUNE
 @export var spike_roller_half_extents: Vector3 = Vector3(0.4, 0.12, 0.12) # TUNE
 
 ## -- 窄岩浆 + 木橋（車跌落唔即死，只加溢滿；溢滿上限見 A1 trash_meter_cap） --
-@export var lava_bridge_y: float = -0.9                        # TUNE
-@export var lava_bridge_safe_x_range: Vector2 = Vector2(-0.22, 0.22) # TUNE：木橋安全闊度
+@export var lava_bridge_x_range: Vector2 = Vector2(1.15, 2.45) # 場地 v3：岩浆橫帶只佔右半，木橋通去 peak ×5 門
+@export var lava_bridge_y: float = -1.4                        # TUNE
+@export var lava_bridge_safe_x_range: Vector2 = Vector2(1.6, 2.1)  # TUNE：木橋安全闊度
 @export var lava_fall_overflow_amount: float = 6.0              # TUNE：跌一次溢滿條加幾多
 @export var lava_fall_stun_secs: float = 0.6                    # TUNE：跌落之後車短暫定住先返回橋面
 
 ## -- UPGRADE 墊（即換模型，灰模用色塊／大細分身分，冇實際換 mesh） --
-@export var upgrade_pad_pos: Vector2 = Vector2(-0.6, -1.5) # TUNE
+@export var upgrade_pad_pos: Vector2 = Vector2(-0.6, -1.65) # TUNE
 @export var upgrade_pad_rearm_secs: float = 6.0             # TUNE：同一墊重複觸發嘅冷卻
 @export var car_upgrade_tiers: Array[Dictionary] = [
 	{"name": "拖拉機", "scale": 1.0, "speed_mult": 1.0, "push_mult": 1.0, "color": Color("#D9432B")}, # 場地規格 v2：鏟斗紅
