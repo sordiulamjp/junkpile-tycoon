@@ -690,11 +690,11 @@ func _build_world() -> void:
 	_rebuild_foothill_stack()
 
 	var belt_track := VisualFactory.make_flat_box(
-		Vector3(0.26, 0.05, (c.belt_head_pos - c.smelter_pos).length()), VisualFactory.PALETTE["belt"]
+		Vector3(0.2, 0.03, (c.belt_head_pos - c.smelter_pos).length()), VisualFactory.PALETTE["belt"]
 	)
 	belt_track.name = "BeltTrack"
 	var belt_mid := (c.belt_head_pos + c.smelter_pos) * 0.5
-	belt_track.position = _site_to_world(belt_mid, 0.06)
+	belt_track.position = _site_to_world(belt_mid, 0.03)
 	_placement_root.add_child(belt_track)
 	belt_track.look_at(_placement_root.to_global(_site_to_world(c.smelter_pos)), _site_root.global_transform.basis.z)
 
@@ -708,7 +708,7 @@ func _build_world() -> void:
 		var frac: float = (float(i) / float(roller_count - 1)) - 0.5 if roller_count > 1 else 0.0
 		var roller := VisualFactory.make_low_poly_cylinder(0.05, 0.22, VisualFactory.PALETTE["gear_metal"], 8, 0.6)
 		roller.rotation_degrees.z = 90.0
-		roller.position = Vector3(0.0, 0.04, frac * belt_len)
+		roller.position = Vector3(0.0, 0.02, frac * belt_len)
 		belt_track.add_child(roller)
 		_belt_rollers.append(roller)
 
