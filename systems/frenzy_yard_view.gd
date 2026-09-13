@@ -417,16 +417,30 @@ func _build_gates() -> void:
 		# Area3D 判定仍然企喺 gate_pos（門嘅判分位置唔變），淨係將「地面上
 		# 嗰嚿墊同字」呢兩件純視覺嘢擺喺呢條窄縫正中央（-1.84）、順便縮窄
 		# 墊高度去 0.3，兩邊各留 0.07 緩衝，同橋板、倉都唔再迫埋。
+		# ALTA-231 round 2（實機截圖）：main/mid/west 而家沿車道串聯（同 x，
+		# 靠 y 逐級落），相鄰兩級中心距離得返 0.3~0.45，舊 pad_height=0.45
+		# 會令相鄰墊嘅 footprint 直接疊埋（實機見到「X3／SELL／X4」三嚿字
+		# 疊晒一嚿）。縮到 0.15（同 peak 早已用緊嗰招一樣手法），兩邊各
+		# 留返緩衝，Area3D 判定位置／大細完全唔郁。
+		#
+		# ALTA-231 round 3（第二次實機截圖，縮完 pad 仲係疊）：真正撞緊嘅
+		# 唔止 pad mesh，係 font_size=110 嘅字本身（世界高度 ≈font_size×
+		# pixel_size≈0.385，比縮完嘅 pad_height 仲要高好多）——串聯三門
+		# 中心距離淨得 0.3~0.45，字本身已經夠大隻疊落隔籬個門。main／
+		# mid／west 三門字縮細去 70（peak 唔使，佢喺右側支線自己一個，
+		# 冇串聯鄰居迫埋身，維持 110 同「100 lb」牌一致）。
 		var pad_pos := gate_pos
-		var pad_height := 0.45
+		var pad_height := 0.15
+		var label_font_size := 70
 		if gate_id == "peak":
 			pad_pos = Vector3(gx, -1.8, 0.0)
 			pad_height = 0.26
+			label_font_size = 110
 		var pad := _make_ground_pad(pad_pos, Vector2(GATE_WIDTH, pad_height))
 		add_child(pad)
 		var label := Label3D.new()
 		label.text = "x%d" % int(mult)
-		label.font_size = 110
+		label.font_size = label_font_size
 		label.position = pad_pos + Vector3(0.0, 0.0, 0.2)
 		label.pixel_size = 0.0035
 		label.modulate = Color.WHITE
@@ -456,13 +470,33 @@ func _build_furnace() -> void:
 	# smelter_pos 都係 x=0.85）淨相差 0.25，仲喺 SELL 墊闊度（半 0.55）
 	# 之內，帶一樣會切到個字——同 mid 門「x3」嗰個根源一樣，用返同一招
 	# （揚高 z，見 _build_gates() 註解）。
-	var sell_visual_y := c.yard_min_y + 0.2
-	var pad := _make_ground_pad(Vector3(mid_x, sell_visual_y, 0.0), Vector2(1.1, 0.5))
+	#
+	# ALTA-231 round 2：west 門（×4）而家企喺 y=-1.75（串聯車道尾），
+	# 同 SELL 墊中心距離收緊到 0.25~0.3，墊高度（0.5）會撞——縮到 0.2，
+	# 同時將「墊喺 yard_min_y 之上幾多」由 0.2 收窄到 0.15，車場總長先
+	# 唔使拉太盡（見 constants.gd yard_min_y 註解）。
+	#
+	# ALTA-231 round 3：同 _build_gates() 嗰個根源一樣——font_size=110 個
+	# 字本身（世界高度 ≈0.385）遠大過收緊咗嘅 west↔SELL 中心距離，實機
+	# 見到「SELL」同「x4」疊埋。字縮細去 70（同串聯三門睇齊）。
+	#
+	# ALTA-231 round 3 追加：sell_visual_y（-2.05）啱啱好企喺 smelter_pos
+	# 前緣（smelter_pos.y=-2.35，半深 0.3 → -2.05），同爐身正面幾乎同一個
+	# y——舊 z=0.2 淨係夠高過帶條（見上面 review round 2 註解），仲喺爐身
+	# 本身高度（Smelter body 0.6 高，企喺 z≈0~0.6，屋簷去到 z≈0.63）之內，
+	# 實機見到「SELL」俾爐身正面遮到淨返「S」。揚高去 0.75，企過成個爐
+	# 頂（包括屋簷）先至唔會撞。
+	var sell_visual_y := c.yard_min_y + 0.15
+	var pad := _make_ground_pad(Vector3(mid_x, sell_visual_y, 0.0), Vector2(1.1, 0.2))
 	add_child(pad)
 	var label := Label3D.new()
 	label.text = "SELL"
-	label.font_size = 110
-	label.position = Vector3(mid_x, sell_visual_y, 0.2)
+	label.font_size = 70
+	# ALTA-231 round 3 追加二：揚高去 0.75 之後喺螢幕度同 west 門「x4」
+	# （x=0.85）幾乎同一行（「SELLx4」擠埋）。試過挪 0.35 又撞埋左邊
+	# 「UPGRADE」，改用細一啲嘅 0.15，兩邊都留返空隙。SELL 字本身淨係
+	# 裝飾，冇判分意義，墊本身（判分位置參考）位置唔變。
+	label.position = Vector3(mid_x - 0.15, sell_visual_y, 0.75)
 	label.pixel_size = 0.0035
 	label.modulate = Color.WHITE
 	add_child(label)
@@ -683,10 +717,15 @@ func _build_ore_pool() -> void:
 	# 場地規格 v2（ALTA-219）：波池之前鋪滿成條 y 走廊（車頂到爐前），
 	# 完全冚住咗滾筒／木橋／岩浆／倍數門（實機截圖見唔到呢幾樣嘢，成幅
 	# 畫面淨係一嚿波）。呢啲波池粒本身純粹「set dressing」，冇判分意義
-	# （見上面註解），縮到車頭一截（滾筒之前），行返落去嗰截地面淨返
+	# （見上面註解），縮到車頭一截（main 門之前），行返落去嗰截地面淨返
 	# 俾滾筒／木橋／岩浆／門呢啲有結構嘅裝置露面，同 issue 視覺參考
 	# 「地面墊／門／木橋／岩浆帶要睇得見」對齊。
-	var y_min: float = c.gate_y + 0.35
+	#
+	# ALTA-231：main（×2）門而家企喺 y=-0.5（沿車道串聯，唔再係
+	# gate_y=-1.08 嗰行），波池上限一齊跟住縮（廢料山縮做礦源——山腳
+	# 瀉落嚟嘅礦源集中喺車頭一小截，唔再洗版成條車場）。改用 main 門
+	# 自己嘅 y 做基準，唔再靠已經冇任何門用緊嘅 gate_y。
+	var y_min: float = float(c.gates["main"]["y"]) + 0.15
 	var y_max: float = c.car_park_max_y - 0.1
 	# Review（round 1）：呢個 y 走廊入面本身企住個滾筒（spike_roller_pos），
 	# 波池隨機散落成個矩形範圍會將滾筒淹冚返（同波池疊埋，判分冇影響但
