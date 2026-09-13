@@ -52,14 +52,33 @@ enum Resource3 { CASH, COMPONENTS, ECO }
 @export var belt_connect_lv: Dictionary = {"east": 1, "mid": 5, "west": 10} # docx：東／中／西接通等級
 @export var belt_collect_lv: int = 8 # docx：後層碎料一齊送回收；已 belted 碎料不可 scoop
 
-## -- A5. 倍數門（y ≈ -1.08）--
-@export var gate_y: float = -1.08 # docx
+## -- A5. 倍數門 --
+## ALTA-231「峽谷礦道」場地改版：main/mid/west 三道門由之前並排一行
+## （同 gate_y，靠 x 分岔揀一條門）改做沿車道串聯（同 x=0.85，即
+## belt_head_pos／smelter_pos 嗰條中線，靠 y 逐級落）——car 一路向落會
+## 依次穿 ×2 → ×3 → ×4，combined_gate_multiplier() 三個都中就係
+## 2×3×4=24（已有邏輯，見 frenzy_state.score_item()，呢度淨係擺位）。
+## peak（×5）維持喺右側岩浆＋木橋支線盡頭，唔喺主線车道上，係額外
+## risk/reward 分支（見 lava_bridge_* 同 frenzy_yard_view._build_bridge()）。
+## gate_y 保留做舊有 camera 取景參考點（main.gd _camera_reference_points()），
+## 唔再係任何門嘅預設 y——三門全部帶明確 "y"。
+##
+## 實機截圖 round 1（S8+）發現：門墊／SELL 墊本身有真實 y 深度（見
+## frenzy_yard_view._build_gates() GATE_WIDTH／pad_height），三門＋SELL
+## 全部擠喺原本 gate_y 嗰截窄 y 範圍（-1.08~-1.9）會令相鄰墊嘅 3D
+## footprint 直接互撞（唔止透視壓縮，係真係疊埋），實機見到「X3／
+## SELL／X4」三嚿字疊晒一嚿。round 2 改做：每級中心距離 ≥ 兩鄰墊嘅
+## 半深相加 + 緩衝，pad_height 亦都跟住縮（見 frenzy_yard_view.gd
+## _build_gates()／_build_furnace()），車場總長微調到 yard_min_y=-2.2
+## （見 D 部）——啱好夾喺 smelter_pos.y=-2.35 前緣（半深 0.3 → -2.05），
+## 沿用原有「SELL 擺喺爐前」設計，唔使連帶搬 smelter_pos／warehouse_pos。
+@export var gate_y: float = -1.08 # docx（camera 取景參考，唔再係門嘅預設 y）
 @export var gates: Dictionary = {
-	"main": {"x": -0.55, "mult": 2.0},
-	"mid": {"x": 0.85, "mult": 3.0},
-	"west": {"x": 1.85, "mult": 4.0},
+	"main": {"x": 0.85, "y": -0.55, "mult": 2.0},
+	"mid": {"x": 0.85, "y": -1.45, "mult": 3.0},
+	"west": {"x": 0.85, "y": -1.75, "mult": 4.0},
 	"peak": {"x": 1.85, "y": -1.72, "mult": 5.0},
-} # docx
+} # docx 定倍數／串聯質性描述；座標 TUNE（ALTA-231 v4 場地，round 2：加大 y 距離避免墊互撞）
 
 ## -- A6. 半自動升級 --
 @export var miner_summon_cap: int = 12 # docx：召喚礦工上限
@@ -179,7 +198,10 @@ enum Resource3 { CASH, COMPONENTS, ECO }
 ## 剷斗」，唔係揸住車留喺頂。呢個先解釋到點解木橋／滾筒都要車親身
 ## 經過（唔即死＝車跌落岩浆唔會令狂熱完場，只加溢滿）。
 @export var yard_x_range: Vector2 = Vector2(-1.1, 2.3) # TUNE：跟指橫向可去嘅範圍，包晒四道門 x
-@export var yard_min_y: float = -1.9                   # TUNE：車場最深（近爐前），碎料過咗呢度即入爐兌現
+## ALTA-231 round 2（實機截圖驗到墊互撞之後）：串聯 main→mid→west 三道門
+## 逐級落，中間仲要夾返個滾筒，車場要拉長少少先夠位每級唔撞——由 -1.9
+## 拉到 -2.2（見 gates／spike_roller_pos 註解嘅逐級距離推算）。
+@export var yard_min_y: float = -2.2                   # TUNE：車場最深（近爐前），碎料過咗呢度即入爐兌現
 @export var yard_spawn_y: float = 0.02                 # TUNE：車＋碎料初始生成 y（< car_park_max_y）
 @export var car_descent_speed: float = 0.4             # TUNE：車向落嘅巡航速度，去到 yard_min_y 即刻返頂再落
 
@@ -197,11 +219,12 @@ enum Resource3 { CASH, COMPONENTS, ECO }
 @export var debris_gravity_scale: float = 1.0 # TUNE
 
 ## -- 刺滾筒（藍波 → 金幣） --
-@export var spike_roller_pos: Vector2 = Vector2(1.75, -0.45)           # TUNE
-## Review（round 1）：呢個純視覺場地重排嘅回合唔應該連帶縮細判定範圍
-## ——復原返 VR-04 訂嘅原值（0.5, 0.3, 0.25），波池唔再入侵滾筒範圍改用
-## _build_ore_pool() 嘅排除區處理（見該處註解），唔靠縮細觸發區走位。
-@export var spike_roller_half_extents: Vector3 = Vector3(0.5, 0.3, 0.25) # TUNE
+## ALTA-231：滾筒由右側（west 門前）搬去主車道正中，企喺串聯門 main（×2，
+## y=-0.5）同 mid（×3，y=-1.2）之間（y=-0.85），「橫過車道」——x 半徑加大
+## （0.5→0.65，圓柱視覺闊度 1.3）等佢睇落真係打橫封住成條車道，唔止乜
+## 一嚿踎喺門口側。
+@export var spike_roller_pos: Vector2 = Vector2(0.85, -1.0)             # TUNE（ALTA-231 round 2：main／mid 門距加大之後跟住挪）
+@export var spike_roller_half_extents: Vector3 = Vector3(0.65, 0.3, 0.25) # TUNE（ALTA-231：x 加闊，橫過車道）
 
 ## -- 窄岩浆 + 木橋（車跌落唔即死，只加溢滿；溢滿上限見 A1 trash_meter_cap） --
 @export var lava_bridge_x_range: Vector2 = Vector2(1.15, 2.45) # 場地 v3：岩浆橫帶只佔右半，木橋通去 peak ×5 門

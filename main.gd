@@ -39,8 +39,13 @@ const FOOTHILL_BASE_HEIGHT := 0.22
 const FOOTHILL_TIER_HEIGHT := 0.1
 ## VR-06b 場地規格 v2：廢料山（12 層梯田）嘅平面尺寸——闊約 2.6（車闊≈0.5，
 ## 即 ~5 車闊）、由山腳向後（+y）伸 1.7；每層向後縮、向上疊。
-const MOUNTAIN_WIDTH := 2.9
-const MOUNTAIN_DEPTH := 1.6
+## ALTA-231「峽谷礦道」v4：廢料山縮做礦源——山縮細後淨係做礦道入口嘅
+## 「礦源」（山腳瀉落車道嘅波池，見 frenzy_yard_view._build_ore_pool()），
+## 唔再係成幅畫面嘅視覺主體，讓路俾車場串聯門／滾筒／岩浆木橋做主角。
+## 山頂／山腳仍然經 _camera_reference_points() 動態解相機距離，縮細之後
+## 純粹令解出嚟嘅相機可以貼近少少，唔會令山頂／山腳跌出中層帶。
+const MOUNTAIN_WIDTH := 2.3
+const MOUNTAIN_DEPTH := 1.2
 ## 場地（site）座標 → 世界：site 平面攤平做地面（site y → 世界 -z，site z → 世界 +y）。
 ## 成個場地掛喺 _site_root（rotation.x = -90°）之下，物件仍然用 site 座標寫。
 const SITE_BASIS := Basis(Vector3(1, 0, 0), Vector3(0, 0, -1), Vector3(0, 1, 0))
