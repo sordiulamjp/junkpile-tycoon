@@ -141,7 +141,7 @@ func _animate_miner(node: Node3D, phase: float) -> void:
 	sw.tween_property(node, "rotation:x", deg_to_rad(90.0), 0.24).set_trans(Tween.TRANS_SINE)
 
 func _animate_cart(delta: float) -> void:
-	_cart_anim_t += delta * 0.6
+	_cart_anim_t += delta * (0.6 + 0.12 * float(state.cart_level - 1)) # 升級礦車即見到行快咗
 	var rail_len: float = float(MineConstants.LAYER_COUNT) * MineConstants.LAYER_DEPTH_STEP
 	var frac: float = (sin(_cart_anim_t) + 1.0) * 0.5
 	_cart_mesh.position.y = frac * rail_len

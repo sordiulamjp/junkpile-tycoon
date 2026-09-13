@@ -143,6 +143,7 @@ func _ready() -> void:
 	_build_zone1(saved.get("mine_zone", {}))
 	_build_car()
 	_build_ore_pool()
+	_clear_ore_around(Vector2(_car.position.x, _car.position.y), 1.0)
 	_build_hud()
 	mine.attach_panel(_hud)
 	get_viewport().physics_object_picking = true
@@ -346,20 +347,12 @@ func _build_car() -> void:
 	_car.motion_mode = CharacterBody3D.MOTION_MODE_FLOATING
 	var col := CollisionShape3D.new()
 	var shape := BoxShape3D.new()
-	shape.size = Vector3(0.44, 0.36, 0.26)
+	# 用戶：車出世踩住礦會卡——車身碰撞底部抬高到 0.09，礦粒（高 0.08）可以喺車底穿過，
+	# 只有鏟斗掂地推礦
+	shape.size = Vector3(0.44, 0.36, 0.16)
 	col.shape = shape
-	col.position = Vector3(0.0, -0.05, 0.0)
+	col.position = Vector3(0.0, -0.05, 0.06)
 	_car.add_child(col)
-	# 用戶：鏟車要「鏟」碎料——鏟斗做真碰撞（弧形 5 段 + 底唇），礦被物理推入弧內堆住
-	for i in range(5):
-		var a: float = (float(i) - 2.0) * 0.32
-		var bc := CollisionShape3D.new()
-		var bs := BoxShape3D.new()
-		bs.size = Vector3(0.17, 0.05, 0.22)
-		bc.shape = bs
-		bc.position = Vector3(sin(a) * 0.34, 0.2 + cos(a) * 0.14, -0.03)
-		bc.rotation.z = -a
-		_car.add_child(bc)
 	_car.position = _site_to_local(CAR_START, CAR_Z)
 	_site.add_child(_car)
 
@@ -377,15 +370,39 @@ func _build_car() -> void:
 		var track := VisualFactory.make_metal_box(Vector3(0.09, 0.4, 0.1), Color("#26262B"))
 		track.position = Vector3(sx * 0.2, 0.0, -0.05)
 		_car_body.add_child(track)
-	# curved blade: 5 segments in an arc in front (+y)
+	_rebuild_blade()
+
+## 鏟斗按 tier 變闊變高（升級要「見得到」）：視覺 + 真碰撞一齊重砌
+const BLADE_SCALE := [1.0, 1.35, 1.7]
+var _blade_nodes: Array = []
+var _blade_tier_built := -1
+func _blade_w() -> float:
+	return float(BLADE_SCALE[clampi(mine.state.push_tier if mine != null else 0, 0, 2)])
+func _rebuild_blade() -> void:
+	for n in _blade_nodes:
+		if is_instance_valid(n):
+			n.queue_free()
+	_blade_nodes.clear()
+	var w: float = _blade_w()
+	_blade_tier_built = mine.state.push_tier if mine != null else 0
+	var col_tint := Color("#F2C230").darkened(0.1) if w < 1.2 else (Color("#F2A030") if w < 1.6 else Color("#FF8C2A"))
 	for i in range(5):
 		var a: float = (float(i) - 2.0) * 0.32
-		var seg := VisualFactory.make_metal_box(Vector3(0.16, 0.04, 0.16), Color("#F2C230").darkened(0.1))
-		seg.position = Vector3(sin(a) * 0.34, 0.2 + cos(a) * 0.14, 0.0)
+		var seg := VisualFactory.make_metal_box(Vector3(0.16 * w, 0.04, 0.16 + 0.05 * (w - 1.0)), col_tint)
+		seg.position = Vector3(sin(a) * 0.34 * w, 0.2 + cos(a) * 0.14 * w, 0.0)
 		seg.rotation.z = -a
 		_car_body.add_child(seg)
+		_blade_nodes.append(seg)
 		if i == 2:
 			_blade = seg
+		var bc := CollisionShape3D.new()
+		var bs := BoxShape3D.new()
+		bs.size = Vector3(0.17 * w, 0.05, 0.22)
+		bc.shape = bs
+		bc.position = Vector3(sin(a) * 0.34 * w, 0.2 + cos(a) * 0.14 * w, -0.03)
+		bc.rotation.z = -a
+		_car.add_child(bc)
+		_blade_nodes.append(bc)
 
 func _physics_process(delta: float) -> void:
 	var input_vec: Vector2 = _joy_vec if _joy_down else _keys_vec
@@ -507,6 +524,16 @@ func _build_ore_pool() -> void:
 			mmi.multimesh.set_instance_transform(i, Transform3D(Basis.IDENTITY.scaled(Vector3.ONE * float(tiers[tier][2])), pos))
 			_slots.append({"tier": tier, "idx": i, "pos": pos, "scale": float(tiers[tier][2]), "active": false, "gone": false})
 
+func _clear_ore_around(center: Vector2, radius: float) -> void:
+	var r2 := radius * radius
+	for s: Dictionary in _slots:
+		if s["gone"] or s["active"]:
+			continue
+		var p: Vector3 = s["pos"]
+		if Vector2(p.x, p.y).distance_squared_to(center) < r2:
+			s["gone"] = true
+			_hide_slot(s)
+
 func _hide_slot(s: Dictionary) -> void:
 	(_pool_mmi[s["tier"]] as MultiMeshInstance3D).multimesh.set_instance_transform(s["idx"], Transform3D(Basis.IDENTITY.scaled(Vector3.ZERO), Vector3.ZERO))
 
@@ -533,7 +560,7 @@ func _rigidize_front_tick() -> void:
 		if p.distance_squared_to(cp) > r2:
 			continue
 		var lp: Vector3 = inv * p
-		if lp.y < -0.4 or lp.y > 1.2 or absf(lp.x) > 0.75:
+		if lp.y < -0.4 or lp.y > 1.2 * _blade_w() or absf(lp.x) > 0.75 * _blade_w():
 			continue
 		cands.append([lp.y, s])
 	cands.sort_custom(func(a, b): return a[0] < b[0]) # 最貼近車頭嘅先轉（佔用預算最有用）
@@ -683,7 +710,7 @@ func _sell_bucket_ore() -> void:
 			_kicked.erase(k)
 			continue
 		var lp: Vector3 = inv * node.position
-		if lp.y < -0.1 or lp.y > 0.9 or absf(lp.x) > 0.6:
+		if lp.y < -0.1 or lp.y > 0.9 * _blade_w() or absf(lp.x) > 0.6 * _blade_w():
 			continue
 		var s: Dictionary = k["slot"]
 		var value: float = mine.state.c.ore_value(s["tier"]) * mult * fmult
@@ -813,6 +840,7 @@ func _process(delta: float) -> void:
 	if ev.get("ended", false):
 		SfxPlayer.play("frenzy_start")
 	_follow_camera(delta)
+	_watch_upgrades()
 	_manager_tick(delta)
 	_surface_team_tick(delta)
 	_refresh_hud()
@@ -1049,11 +1077,68 @@ func _bucket_count() -> int:
 		if not is_instance_valid(node):
 			continue
 		var lp: Vector3 = inv * node.position
-		if lp.y > 0.0 and lp.y < 0.7 and absf(lp.x) < 0.5:
+		if lp.y > 0.0 and lp.y < 0.7 * _blade_w() and absf(lp.x) < 0.5 * _blade_w():
 			n += 1
 	return n
 
 # ══════════════════════ VR-16：掛機自動化 ══════════════════════
+
+var _seen_push_tier := -1
+var _seen_layer_levels: Array = []
+var _seen_cart := -1
+var _seen_wh := -1
+var _seen_unlocked := -1
+## 升級要「見得到」：鏟斗變大、礦車轉快、對應物件彈字＋跳一跳
+func _watch_upgrades() -> void:
+	var ms := mine.state
+	if _seen_push_tier == -1:
+		_seen_push_tier = ms.push_tier
+		_seen_layer_levels = ms.layer_level.duplicate()
+		_seen_cart = ms.cart_level
+		_seen_wh = ms.warehouse_level
+		_seen_unlocked = ms.layer_unlocked.count(true)
+		return
+	if ms.push_tier != _seen_push_tier:
+		_seen_push_tier = ms.push_tier
+		_rebuild_blade()
+		_popup_at(Vector3(_car.position.x, _car.position.y, 0.4), "鏟斗 ↑ 載 %d" % CARGO_CAP[clampi(ms.push_tier, 0, 2)], Color(1.0, 0.85, 0.3))
+		_bounce(_car_body)
+	for idx in range(ms.layer_level.size()):
+		if idx < _seen_layer_levels.size() and ms.layer_level[idx] != _seen_layer_levels[idx]:
+			_seen_layer_levels[idx] = ms.layer_level[idx]
+			var at: Vector3 = mine.position + mine._layer_center(idx) + Vector3(0.0, 0.0, 0.5)
+			_popup_at(at, "礦層 %d 速度 ↑ Lv%d" % [idx + 1, ms.layer_level[idx]], Color(0.75, 1.0, 0.75))
+	if ms.cart_level != _seen_cart:
+		_seen_cart = ms.cart_level
+		_popup_at(mine.position + Vector3(mine.LAYER_WIDTH * 0.5 + 0.2, 0.6, 0.5), "礦車 ↑ Lv%d" % ms.cart_level, Color(0.75, 0.9, 1.0))
+	if ms.warehouse_level != _seen_wh:
+		_seen_wh = ms.warehouse_level
+		_popup_at(mine.position + Vector3(mine.LAYER_WIDTH * 0.5 + 0.65, -0.25, 0.8), "倉庫 ↑ Lv%d" % ms.warehouse_level, Color(0.75, 0.9, 1.0))
+	var unlocked_now: int = ms.layer_unlocked.count(true)
+	if unlocked_now != _seen_unlocked:
+		_seen_unlocked = unlocked_now
+		_popup_at(mine.position + mine._layer_center(unlocked_now - 1) + Vector3(0.0, 0.0, 0.6), "礦層 %d 開通！" % unlocked_now, Color(1.0, 0.8, 0.4))
+
+func _popup_at(at: Vector3, text: String, col: Color) -> void:
+	var lbl := Label3D.new()
+	lbl.text = text
+	lbl.font_size = 84
+	lbl.pixel_size = 0.004
+	lbl.outline_size = 14
+	lbl.modulate = col
+	lbl.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	lbl.position = at
+	_site.add_child(lbl)
+	var tw := create_tween()
+	tw.set_parallel(true)
+	tw.tween_property(lbl, "position:z", at.z + 1.2, 1.4).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+	tw.tween_property(lbl, "modulate:a", 0.0, 1.4).set_delay(0.6)
+	tw.chain().tween_callback(lbl.queue_free)
+
+func _bounce(node: Node3D) -> void:
+	var tw := create_tween()
+	tw.tween_property(node, "scale", Vector3.ONE * 1.25, 0.12).set_trans(Tween.TRANS_BACK)
+	tw.tween_property(node, "scale", Vector3.ONE, 0.18).set_trans(Tween.TRANS_SINE)
 
 func _pipeline_rate() -> float:
 	var ms := mine.state
