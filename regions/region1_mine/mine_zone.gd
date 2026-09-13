@@ -29,7 +29,7 @@ const PALETTE := MineConstants.PALETTE
 ## 解鎖，見 `_on_layer_unlock_tap()` 嘅 `can_unlock_layer()` 判斷），所以
 ## 淨係要一個車去到嘅地台位（同 `_build_push_pads()` 一樣 z=0.25、企喺
 ## 層台前面），唔使逐層各自一個位。
-const LAYER_UNLOCK_PAD_POS := Vector3(0.0, -0.9, 0.25)
+const LAYER_UNLOCK_PAD_POS := Vector3(1.75, -1.1, 0.12) # 倉庫下面、車到得嘅地面位（Analyst polish）
 
 var state: MineState
 var _game_state: GameState # main.gd 嘅共用 GameState——Wallet 背後嗰個 source of truth
@@ -127,6 +127,19 @@ func tick(delta: float) -> void:
 	_animate_cart(delta)
 	panel.refresh() # 面板自己 visible=false 就即刻 return，收埋嗰陣冇額外成本
 
+func _animate_miner(node: Node3D, phase: float) -> void:
+	var base_z := node.position.z
+	var tw := create_tween()
+	tw.set_loops()
+	tw.tween_interval(phase)
+	tw.tween_property(node, "position:z", base_z + 0.05, 0.2).set_trans(Tween.TRANS_SINE)
+	tw.tween_property(node, "position:z", base_z, 0.2).set_trans(Tween.TRANS_SINE)
+	var sw := create_tween()
+	sw.set_loops()
+	sw.tween_interval(phase)
+	sw.tween_property(node, "rotation:x", deg_to_rad(90.0) + 0.35, 0.18).set_trans(Tween.TRANS_SINE)
+	sw.tween_property(node, "rotation:x", deg_to_rad(90.0), 0.24).set_trans(Tween.TRANS_SINE)
+
 func _animate_cart(delta: float) -> void:
 	_cart_anim_t += delta * 0.6
 	var rail_len: float = float(MineConstants.LAYER_COUNT) * MineConstants.LAYER_DEPTH_STEP
@@ -195,11 +208,14 @@ func _build_layer_terrace(idx: int) -> void:
 
 	if unlocked:
 		# issue：「每層：自己嘅礦工（層 1 開場 1 隻）」。
-		var miner := VisualFactory.make_miner()
-		miner.name = "LayerMiner%d" % idx
-		miner.position = _layer_center(idx) + Vector3(-0.35, -MineConstants.LAYER_DEPTH_STEP * 0.25, box_size.z * 0.5 + 0.02)
-		miner.rotation_degrees.x = 90.0 # glTF up 本身係 +z，企直唔使額外繞 x（同 main.gd 礦工擺位一致）
-		_layer_root.add_child(miner)
+		# Analyst polish：每層 3 個礦工沿前緣分佈，面向岩壁揮鎬（tween）
+		for m in range(3):
+			var miner := VisualFactory.make_miner()
+			miner.name = "LayerMiner%d_%d" % [idx, m]
+			miner.position = _layer_center(idx) + Vector3(-0.7 + float(m) * 0.7, -MineConstants.LAYER_DEPTH_STEP * 0.25, box_size.z * 0.5 + 0.02)
+			miner.rotation_degrees.x = 90.0
+			_layer_root.add_child(miner)
+			_animate_miner(miner, float(m) * 0.13)
 		return
 
 	# 鎖住：未鑿岩壁（岩石切面）+ UnlockPanel「解鎖 N」牌。
@@ -336,7 +352,7 @@ func _build_push_pads() -> void:
 	for i in range(state.c.push_tier_cost.size()):
 		var p := UnlockPanel.new()
 		p.name = "PushPad%d" % i
-		p.position = Vector3(-LAYER_WIDTH * 0.5 - 1.3 + float(i) * 1.1, -0.2, 0.25)
+		p.position = Vector3(-LAYER_WIDTH * 0.5 - 0.55 + float(i) * 1.05, -0.2, 0.12)
 		add_child(p)
 		var region_id := "push%d" % i
 		p.setup(region_id, state.c.push_tier_cost[i], state.c.push_tier_names[i], _on_push_tap, ["blade", "furnace", "blade_big"][i])

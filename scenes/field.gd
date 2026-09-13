@@ -57,6 +57,8 @@ var _scan_accum := 0.0
 var _respawn_accum := 0.0
 var _furnace_glow: StandardMaterial3D
 var _furnace_flash := 0.0
+var _spill_accum := 0.0
+var _bottleneck_icons: Dictionary = {}
 
 var _hud: CanvasLayer
 var _cash_label: Label
@@ -447,9 +449,28 @@ func _pool_tick(delta: float) -> void:
 				s["gone"] = false
 				_show_slot(s)
 				break
+	# ore spill: nuggets tumble out of the mine entrance into the heap (visual only)
+	_spill_accum += delta * 3.0
+	while _spill_accum >= 1.0:
+		_spill_accum -= 1.0
+		_spawn_spill_nugget()
 	if _furnace_flash > 0.0:
 		_furnace_flash -= delta
 		_furnace_glow.emission_energy_multiplier = 1.8 + 2.5 * clampf(_furnace_flash, 0.0, 1.0)
+
+func _spawn_spill_nugget() -> void:
+	var gold: bool = rng.randf() < 0.15
+	var n := VisualFactory.make_ore_ball(ORE_RADIUS * (1.3 if gold else 1.0), Color(MineConstants.PALETTE["ore_gold"] if gold else MineConstants.PALETTE["ore_silver"]), 0.3 if gold else 0.0)
+	var start := Vector3(MINE_POS.x + rng.randf_range(-0.25, 0.25), MINE_POS.y + 0.1, 0.45)
+	var target := Vector3(rng.randf_range(-0.6, 0.6), rng.randf_range(0.35, 0.85), ORE_RADIUS)
+	n.position = start
+	_site.add_child(n)
+	var tw := create_tween()
+	tw.set_parallel(true)
+	tw.tween_property(n, "position:x", target.x, 0.7)
+	tw.tween_property(n, "position:y", target.y, 0.7)
+	tw.tween_property(n, "position:z", target.z, 0.7).set_trans(Tween.TRANS_BOUNCE).set_ease(Tween.EASE_OUT)
+	tw.chain().tween_callback(n.queue_free).set_delay(0.6)
 
 func _activate_slot(s: Dictionary) -> void:
 	s["active"] = true
@@ -554,13 +575,30 @@ func _build_hud() -> void:
 	_cash_label = _hud_label(row, "● 0")
 	_comp_label = _hud_label(row, "⚙ 0")
 	_eco_label = _hud_label(row, "♻ 0")
-	_status_label = Label.new()
-	_status_label.anchor_top = 0.0
-	_status_label.offset_top = 92
-	_status_label.anchor_right = 1.0
-	_status_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_status_label.add_theme_font_size_override("font_size", 22)
-	_status_label.add_theme_color_override("font_color", Color(1, 0.85, 0.5))
+	# bottleneck as icons: 礦層 ▶ 礦車 ▶ 倉庫 (the slow stage pulses red)
+	var brow_top := HBoxContainer.new()
+	brow_top.anchor_left = 0.5
+	brow_top.anchor_right = 0.5
+	brow_top.offset_top = 96
+	brow_top.offset_left = -150
+	brow_top.offset_right = 150
+	brow_top.alignment = BoxContainer.ALIGNMENT_CENTER
+	brow_top.add_theme_constant_override("separation", 14)
+	_hud.add_child(brow_top)
+	for stage in ["layers", "cart", "warehouse"]:
+		var ic := _make_stage_icon(stage)
+		brow_top.add_child(ic)
+		_bottleneck_icons[stage] = ic
+		if stage != "warehouse":
+			var arrow := TextureRect.new()
+			arrow.texture = load("res://assets/icons/arrowRight.png")
+			arrow.custom_minimum_size = Vector2(28, 28)
+			arrow.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+			arrow.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+			arrow.modulate = Color(1, 1, 1, 0.6)
+			brow_top.add_child(arrow)
+	_status_label = Label.new() # kept for tests / debug, hidden
+	_status_label.visible = false
 	_hud.add_child(_status_label)
 
 	var bottom := PanelContainer.new()
@@ -575,13 +613,17 @@ func _build_hud() -> void:
 	brow.add_theme_constant_override("separation", 30)
 	bottom.add_child(brow)
 	_frenzy_button = Button.new()
-	_frenzy_button.text = "狂熱！"
+	_frenzy_button.icon = load("res://assets/icons/star.png")
+	_frenzy_button.expand_icon = true
+	_frenzy_button.text = ""
 	_frenzy_button.custom_minimum_size = Vector2(220, 70)
 	_frenzy_button.add_theme_font_size_override("font_size", 28)
 	_frenzy_button.pressed.connect(_on_frenzy_pressed)
 	brow.add_child(_frenzy_button)
 	var mine_btn := Button.new()
-	mine_btn.text = "礦道剖面"
+	mine_btn.icon = load("res://assets/icons/wrench.png")
+	mine_btn.expand_icon = true
+	mine_btn.text = ""
 	mine_btn.custom_minimum_size = Vector2(220, 70)
 	mine_btn.add_theme_font_size_override("font_size", 28)
 	mine_btn.pressed.connect(func() -> void: if mine.panel.visible: mine.panel.close() else: mine.panel.open())
@@ -621,16 +663,59 @@ func _refresh_hud() -> void:
 	_comp_label.text = "⚙ %s" % _fmt(state.components)
 	_eco_label.text = "♻ %s" % _fmt(state.eco)
 	if frenzy.active:
-		_frenzy_button.text = "狂熱中 %ds" % int(ceil(frenzy.time_remaining))
+		_frenzy_button.text = " %ds" % int(ceil(frenzy.time_remaining))
 		_frenzy_button.disabled = true
 	else:
-		var cd: float = frenzy.cooldown_remaining if "cooldown_remaining" in frenzy else 0.0
+		var cd: float = frenzy.cooldown_remaining
 		_frenzy_button.disabled = cd > 0.0
-		_frenzy_button.text = ("冷卻 %ds" % int(ceil(cd))) if cd > 0.0 else "狂熱！"
+		_frenzy_button.text = (" %ds" % int(ceil(cd))) if cd > 0.0 else ""
 	var stage: String = mine.state.bottleneck_stage()
-	var names := {"layers": "瓶頸：礦層開採太慢", "cart": "瓶頸：礦車運載太慢", "warehouse": "瓶頸：倉庫收集太慢"}
-	_status_label.text = str(names.get(stage, ""))
+	_status_label.text = stage
+	var pulse: float = 0.55 + 0.45 * sin(Time.get_ticks_msec() / 180.0)
+	for k: String in _bottleneck_icons.keys():
+		var ic: Control = _bottleneck_icons[k]
+		ic.modulate = Color(1.0, 0.35, 0.3, 1.0) if k == stage else Color(1, 1, 1, 0.85)
+		ic.scale = Vector2.ONE * (1.0 + 0.12 * pulse) if k == stage else Vector2.ONE
 	mine.refresh_afford_state()
+
+## 2D stage icons drawn with ColorRects (no emoji font needed): 礦層＝梯級, 礦車＝車+輪, 倉庫＝屋
+func _make_stage_icon(stage: String) -> Control:
+	var root := Control.new()
+	root.custom_minimum_size = Vector2(44, 44)
+	root.pivot_offset = Vector2(22, 22)
+	var col := Color(0.93, 0.9, 1.0)
+	match stage:
+		"layers":
+			for i in range(3):
+				var r := ColorRect.new()
+				r.color = col
+				r.position = Vector2(4 + i * 6, 30 - i * 10)
+				r.size = Vector2(36 - i * 12, 8)
+				root.add_child(r)
+		"cart":
+			var body := ColorRect.new()
+			body.color = col
+			body.position = Vector2(6, 14)
+			body.size = Vector2(32, 16)
+			root.add_child(body)
+			for x in [10, 28]:
+				var w := ColorRect.new()
+				w.color = col
+				w.position = Vector2(x, 32)
+				w.size = Vector2(8, 8)
+				root.add_child(w)
+		_:
+			var house := ColorRect.new()
+			house.color = col
+			house.position = Vector2(8, 18)
+			house.size = Vector2(28, 20)
+			root.add_child(house)
+			var roof := ColorRect.new()
+			roof.color = col.darkened(0.25)
+			roof.position = Vector2(4, 10)
+			roof.size = Vector2(36, 8)
+			root.add_child(roof)
+	return root
 
 func _fmt(v: float) -> String:
 	if v >= 1_000_000.0: return "%.1fM" % (v / 1_000_000.0)
