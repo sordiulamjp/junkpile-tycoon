@@ -170,6 +170,20 @@ func _build_layer_terrace(idx: int) -> void:
 	platform.position = _layer_center(idx)
 	_layer_root.add_child(platform)
 
+	# Reviewer round 3（field.tscn 萬向車）：VisualFactory.make_flat_box()
+	# 純粹係 MeshInstance3D，冇 collider——萬向車冇嘢擋會直穿層台。加一個
+	# StaticBody3D 貼實個台，同 `_rebuild_layers()` 一齊生命週期（解鎖／
+	# 重起都會喺 _layer_root 底下重新起一份，唔使另外管理）。
+	var collider := StaticBody3D.new()
+	collider.name = "LayerCollider%d" % idx
+	var col := CollisionShape3D.new()
+	var shape := BoxShape3D.new()
+	shape.size = box_size
+	col.shape = shape
+	collider.add_child(col)
+	collider.position = platform.position
+	_layer_root.add_child(collider)
+
 	if unlocked:
 		# issue：「每層：自己嘅礦工（層 1 開場 1 隻）」。
 		var miner := VisualFactory.make_miner()

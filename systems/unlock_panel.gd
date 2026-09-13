@@ -65,6 +65,7 @@ func _build_visual() -> void:
 	_area.add_child(col)
 	add_child(_area)
 	_area.input_event.connect(_on_input_event)
+	_area.body_entered.connect(_on_body_entered)
 
 func _on_input_event(
 	_camera: Node, event: InputEvent, _pos: Vector3, _normal: Vector3, _shape_idx: int
@@ -72,6 +73,21 @@ func _on_input_event(
 	if _unlocked:
 		return
 	if not (event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT):
+		return
+	if _on_tap.is_valid():
+		_on_tap.call(region_id, cost)
+
+## ALTA-228 round 4（field.tscn 萬向車，用戶 18:41 規格）：「墊／解鎖板：
+## 車駛入 Area3D 即觸發（IG 式），唔使撳掣」——駛入淨係轉發返 on_tap
+## callback，同 `_on_input_event()` 一樣，夠唔夠錢／扣邊個欄位一律由
+## 呼叫方判斷，呢度自己乜都唔識。淨認 `CharacterBody3D`（field.gd 嘅
+## 車）——礦粒係 RigidBody3D、地面／岩壁係 StaticBody3D，唔會誤觸發。
+## main.tscn 場景冇 CharacterBody3D，呢個 signal 冇嘢會觸發，唔影響舊有
+## 純 tap 流程。
+func _on_body_entered(body: Node3D) -> void:
+	if _unlocked:
+		return
+	if not (body is CharacterBody3D):
 		return
 	if _on_tap.is_valid():
 		_on_tap.call(region_id, cost)

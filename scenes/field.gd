@@ -75,11 +75,21 @@ func _ready() -> void:
 	state = GameState.new(c)
 	frenzy = FrenzyState.new(c)
 	_autodrive = "--autodrive" in OS.get_cmdline_user_args()
-	var saved := SaveManager.load_state()
-	if saved.has("field_cash"):
-		state.cash = float(saved.get("field_cash", 0.0))
-		state.components = float(saved.get("field_components", 0.0))
-		state.eco = float(saved.get("field_eco", 0.0))
+	# Reviewer round 3：舊碼用私家 field_cash／field_components／field_eco
+	# 三個欄位讀寫存檔，繞過 VR-11 嘅 Wallet／Save autoload 同共用嘅
+	# "cash"／"components"／"eco" 欄位——同一份存檔兩個錢包。跟返
+	# main.gd _ready() 同一套做法：有存檔先讀（冇存檔就維持
+	# GameState._init() 啱啱設低嘅 c.starting_cash 開場值，唔會俾
+	# default_state() 嘅 cash=0 冚咗），讀完／冇讀都經 _sync_wallet_from_state()
+	# 令 Wallet 同 state 一致。
+	var save_exists := FileAccess.file_exists(SaveManager.SAVE_PATH)
+	var saved: Dictionary = {}
+	if save_exists:
+		saved = Save.load_and_apply_wallet()
+		state.cash = Wallet.cash
+		state.components = Wallet.components
+		state.eco = Wallet.eco
+	_sync_wallet_from_state()
 	_build_world()
 	_build_zone1(saved.get("mine_zone", {}))
 	_build_car()
@@ -231,6 +241,16 @@ func _build_zone1(saved: Dictionary) -> void:
 	var body := VisualFactory.make_metal_box(Vector3(0.9, 0.7, 0.55), Color(MineConstants.PALETTE["furnace"]))
 	body.position = Vector3(0.0, 0.2, 0.275)
 	furnace.add_child(body)
+	# Reviewer round 3：熔爐本體純粹係 mesh，冇 collider，車可以直穿——
+	# 加 StaticBody3D 貼實爐身，SellArea（下面）維持獨立 Area3D 唔受影響。
+	var body_collider := StaticBody3D.new()
+	var body_col := CollisionShape3D.new()
+	var body_shape := BoxShape3D.new()
+	body_shape.size = Vector3(0.9, 0.7, 0.55)
+	body_col.shape = body_shape
+	body_collider.add_child(body_col)
+	body_collider.position = body.position
+	furnace.add_child(body_collider)
 	var chimney := VisualFactory.make_metal_box(Vector3(0.22, 0.22, 0.35), Color(MineConstants.PALETTE["furnace"]).lightened(0.1))
 	chimney.position = Vector3(0.28, 0.35, 0.7)
 	furnace.add_child(chimney)
@@ -475,7 +495,11 @@ func _on_sell_area_entered(body: Node3D) -> void:
 	if not (body is RigidBody3D) or not body.has_meta("slot"):
 		return
 	var s: Dictionary = body.get_meta("slot")
-	var mult: float = mine.state.c.push_tier_scoop_mult[clampi(mine.state.push_tier, 0, 2)]
+	# 舊碼 `push_tier_scoop_mult[clampi(push_tier, 0, 2)]` 錯咗一格——
+	# push_tier=1／2 嗰陣攞咗下一級嘅倍率，等同預支未買嘅升級。改用
+	# MineState 自己嗰個方法（同礦堆 tap 收礦、mine_zone.gd
+	# `_on_pile_tap()` 同一條公式），唔再喺呢度重複一份索引邏輯。
+	var mult: float = mine.state.scoop_value_mult()
 	var value: float = mine.state.c.ore_value(s["tier"]) * mult * (mine.state.c.frenzy_income_mult if frenzy.active else 1.0)
 	state.cash += value
 	s["active"] = false
@@ -617,13 +641,22 @@ func _on_frenzy_pressed() -> void:
 	if frenzy.start(state.current_income_rate()):
 		SfxPlayer.play("frenzy_start")
 
+## main.gd 同一個名／同一個做法——存檔之前一定要 call 一次，等 Wallet
+## 記憶體嗰份同即將存落 disk 嗰份一致（見 autoload/wallet.gd 頂部註解）。
+func _sync_wallet_from_state() -> void:
+	Wallet.cash = state.cash
+	Wallet.components = state.components
+	Wallet.eco = state.eco
+
 func _save_game() -> void:
+	_sync_wallet_from_state()
 	var d := SaveManager.load_state()
-	d["field_cash"] = state.cash
-	d["field_components"] = state.components
-	d["field_eco"] = state.eco
+	d["cash"] = state.cash
+	d["components"] = state.components
+	d["eco"] = state.eco
 	d["mine_zone"] = mine.to_save_dict()
-	SaveManager.save_state(d)
+	d["last_save_unix"] = Time.get_unix_time_from_system()
+	Save.save_raw(d)
 
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_WM_CLOSE_REQUEST or what == NOTIFICATION_APPLICATION_PAUSED:
