@@ -195,7 +195,7 @@ func _build_layer_terrace(idx: int) -> void:
 	unlock_panel.name = "LayerUnlockPanel%d" % idx
 	unlock_panel.position = _layer_center(idx) + Vector3(0.0, -MineConstants.LAYER_DEPTH_STEP * 0.3, box_size.z + 0.3)
 	_layer_root.add_child(unlock_panel)
-	unlock_panel.setup("layer%d" % idx, state.layer_unlock_cost(idx), "礦層 %d" % (idx + 1), _on_layer_unlock_tap)
+	unlock_panel.setup("layer%d" % idx, state.layer_unlock_cost(idx), "礦層 %d" % (idx + 1), _on_layer_unlock_tap, "pickaxe")
 	_layer_unlock_panels.append(unlock_panel)
 
 func _on_layer_unlock_tap(region_id: String, cost: float) -> void:
@@ -236,12 +236,16 @@ func _build_warehouse() -> void:
 	roof.position = wh.position + Vector3(0.0, 0.0, 0.28)
 	add_child(roof)
 
-	var label := Label3D.new()
-	label.text = "倉庫"
-	label.font_size = 48
-	label.pixel_size = 0.004
-	label.position = wh.position + Vector3(0.0, 0.0, 0.45)
-	add_child(label)
+	# 用戶 2026-09-14：圖示代替文字——屋頂放一個木箱圖示 + 正面門
+	var crate := VisualFactory.make_flat_box(Vector3(0.24, 0.24, 0.2), Color("#B8894A"))
+	crate.position = wh.position + Vector3(0.0, 0.0, 0.41)
+	add_child(crate)
+	var band := VisualFactory.make_flat_box(Vector3(0.26, 0.06, 0.22), Color("#6B4A24"))
+	band.position = crate.position
+	add_child(band)
+	var door := VisualFactory.make_flat_box(Vector3(0.3, 0.02, 0.32), Color(PALETTE["wall_dark"]).darkened(0.3))
+	door.position = wh.position + Vector3(0.0, -0.28, -0.08)
+	add_child(door)
 
 
 # ══════════════════════ 3D 視覺：礦道入口（toggle 剖面面板） ══════════════════════
@@ -258,18 +262,24 @@ func _build_entrance() -> void:
 	var h0 := MineConstants.LAYER_HEIGHT_STEP # idx0 層高——同 _build_layer_terrace() 嗰個 h 一致
 	var sign_pos: Vector3 = _layer_center(0) + Vector3(0.0, -MineConstants.LAYER_DEPTH_STEP * 0.3, h0 + 0.3)
 
-	var sign := VisualFactory.make_metal_box(Vector3(0.5, 0.08, 0.35), Color(PALETTE["pad"]))
+	# 用戶 2026-09-14：圖示代替文字——礦道入口做木框拱門 + 兩盞燈，撳門開剖面
+	var sign := Node3D.new()
 	sign.name = "EntranceSign"
 	sign.position = sign_pos
 	add_child(sign)
-
-	var label := Label3D.new()
-	label.text = "礦道入口\n（撳開剖面）"
-	label.font_size = 40
-	label.pixel_size = 0.0035
-	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	label.position = sign.position + Vector3(0.0, 0.0, 0.28)
-	add_child(label)
+	for px in [-0.32, 0.32]:
+		var post := VisualFactory.make_flat_box(Vector3(0.09, 0.09, 0.55), Color("#8B5A2B"))
+		post.position = Vector3(px, 0.0, 0.0)
+		sign.add_child(post)
+		var lamp := VisualFactory.make_lamp(0.045, Color("#FFD27A"))
+		lamp.position = Vector3(px, -0.08, 0.2)
+		sign.add_child(lamp)
+	var lintel := VisualFactory.make_flat_box(Vector3(0.8, 0.12, 0.09), Color("#6B4A24"))
+	lintel.position = Vector3(0.0, 0.0, 0.31)
+	sign.add_child(lintel)
+	var dark := VisualFactory.make_flat_box(Vector3(0.6, 0.02, 0.5), Color("#1A1420"))
+	dark.position = Vector3(0.0, 0.08, 0.0)
+	sign.add_child(dark)
 
 	var area := Area3D.new()
 	area.input_ray_pickable = true
@@ -306,7 +316,7 @@ func _build_push_pads() -> void:
 		p.position = Vector3(-LAYER_WIDTH * 0.5 - 1.3 + float(i) * 1.1, -0.2, 0.25)
 		add_child(p)
 		var region_id := "push%d" % i
-		p.setup(region_id, state.c.push_tier_cost[i], state.c.push_tier_names[i], _on_push_tap)
+		p.setup(region_id, state.c.push_tier_cost[i], state.c.push_tier_names[i], _on_push_tap, ["blade", "furnace", "blade_big"][i])
 		if i < state.push_tier:
 			p.mark_unlocked()
 		_push_panels.append(p)

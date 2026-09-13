@@ -24,6 +24,8 @@ var _affordable: bool = false
 var _label: Label3D
 var _pad: MeshInstance3D
 var _area: Area3D
+var icon_kind: String = "" # "blade" | "blade_big" | "furnace" | "pickaxe" | "" — 用戶 2026-09-14：墊上用圖示，唔用文字
+var _icon: Node3D
 
 
 ## region_id／cost／display_name：呢個解鎖板代表邊個區域、幾錢、卡面
@@ -31,12 +33,14 @@ var _area: Area3D
 ## Callable(region_id: String, cost: float)，由呼叫方決定通唔通過（夠唔
 ## 夠錢）、扣邊個欄位、記唔記存檔；成功之後呼叫方要自己 call 返
 ## mark_unlocked()——呢個元件自己唔扣錢、唔存檔、唔自動判定「已解鎖」。
-func setup(p_region_id: String, p_cost: float, p_display_name: String, on_tap: Callable) -> void:
+func setup(p_region_id: String, p_cost: float, p_display_name: String, on_tap: Callable, p_icon_kind: String = "") -> void:
 	region_id = p_region_id
 	cost = p_cost
 	display_name = p_display_name
 	_on_tap = on_tap
+	icon_kind = p_icon_kind
 	_build_visual()
+	_build_icon()
 	_refresh()
 
 func _build_visual() -> void:
@@ -44,9 +48,10 @@ func _build_visual() -> void:
 	add_child(_pad)
 
 	_label = Label3D.new()
-	_label.font_size = 64
+	_label.font_size = 96
 	_label.pixel_size = 0.0035
-	_label.position = Vector3(0.0, 0.0, 0.24)
+	_label.position = Vector3(0.0, -0.17, 0.05)
+	_label.outline_size = 14
 	_label.modulate = Color.WHITE
 	_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	add_child(_label)
@@ -91,10 +96,10 @@ func refresh_afford_state(available_cash: float) -> void:
 func _refresh() -> void:
 	var mat: StandardMaterial3D = _pad.material_override
 	if _unlocked:
-		_label.text = "%s\n已解鎖" % display_name
+		_label.text = "✓"
 		mat.albedo_color = (VisualFactory.PALETTE["pad_purple"] as Color).lightened(0.25)
 		return
-	_label.text = "%s\n解鎖 %s" % [display_name, _fmt_cost(cost)]
+	_label.text = _fmt_cost(cost)
 	var base_color: Color = VisualFactory.PALETTE["pad_purple"]
 	mat.albedo_color = base_color if _affordable else base_color.darkened(0.45)
 
@@ -107,3 +112,64 @@ func _fmt_cost(n: float) -> String:
 	if v < 1000.0:
 		return "%.0fK" % v
 	return "%.1fM" % (v / 1000.0)
+
+
+# ══════════════════════ 圖示（代替文字，IG 廣告語言：墊上放物件預覽 + 價錢） ══════════════════════
+
+static func ghost_material(color: Color, alpha: float = 0.55) -> StandardMaterial3D:
+	var m := VisualFactory.flat_material(color)
+	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	m.albedo_color = Color(color.r, color.g, color.b, alpha)
+	return m
+
+func _build_icon() -> void:
+	if icon_kind == "":
+		return
+	_icon = Node3D.new()
+	_icon.name = "Icon"
+	_icon.position = Vector3(0.0, 0.08, 0.03)
+	add_child(_icon)
+	match icon_kind:
+		"blade", "blade_big":
+			var big: bool = icon_kind == "blade_big"
+			var w: float = 0.5 if big else 0.36
+			var h: float = 0.22 if big else 0.15
+			var ghost := ghost_material(Color("#B4E1F0"))
+			for i in range(5):
+				var a: float = (float(i) - 2.0) * 0.3
+				var seg := MeshInstance3D.new()
+				var box := BoxMesh.new()
+				box.size = Vector3(w * 0.26, 0.04, h)
+				seg.mesh = box
+				seg.material_override = ghost
+				seg.position = Vector3(sin(a) * w * 0.5, cos(a) * 0.12, h * 0.5)
+				seg.rotation.z = -a
+				_icon.add_child(seg)
+			var body := MeshInstance3D.new()
+			var bb := BoxMesh.new()
+			bb.size = Vector3(0.18, 0.2, 0.1)
+			body.mesh = bb
+			body.material_override = ghost
+			body.position = Vector3(0.0, -0.12, 0.05)
+			_icon.add_child(body)
+		"furnace":
+			var fb := VisualFactory.make_metal_box(Vector3(0.34, 0.26, 0.24), Color("#2E2E33"))
+			fb.position = Vector3(0.0, 0.0, 0.12)
+			_icon.add_child(fb)
+			var fire := VisualFactory.make_metal_box(Vector3(0.2, 0.03, 0.12), Color("#FF7A1E"), Color("#FF7A1E"), 1.6)
+			fire.position = Vector3(0.0, -0.14, 0.09)
+			_icon.add_child(fire)
+			var ch := VisualFactory.make_metal_box(Vector3(0.08, 0.08, 0.14), Color("#3A3A40"))
+			ch.position = Vector3(0.1, 0.06, 0.3)
+			_icon.add_child(ch)
+		"pickaxe":
+			var handle := VisualFactory.make_flat_box(Vector3(0.05, 0.05, 0.4), Color("#8B5A2B"))
+			handle.position = Vector3(0.0, 0.0, 0.2)
+			handle.rotation.y = 0.5
+			_icon.add_child(handle)
+			var head := VisualFactory.make_metal_box(Vector3(0.3, 0.06, 0.07), Color("#C9CFD6"))
+			head.position = Vector3(0.0, 0.0, 0.38)
+			head.rotation.y = 0.5
+			_icon.add_child(head)
+		_:
+			pass
