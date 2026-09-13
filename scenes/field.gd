@@ -9,10 +9,10 @@ const SITE_BASIS := Basis(Vector3(1, 0, 0), Vector3(0, 0, -1), Vector3(0, 1, 0))
 const CAM_PITCH_DEG := -60.0
 const CAM_FOV := 40.0
 const CAM_DIST := 10.5
-const FIELD_MIN := Vector2(-4.0, -4.2)   # site bounds (x, y) — 用戶：場地太細，放大
-const FIELD_MAX := Vector2(4.0, 4.4)
-const MINE_POS := Vector2(0.0, 2.4)      # MineZone origin (its terraces extend +y)
-const FURNACE_POS := Vector2(2.6, -2.4)
+const FIELD_MIN := Vector2(-5.2, -5.4)   # site bounds (x, y) — 用戶：再放大
+const FIELD_MAX := Vector2(5.2, 5.6)
+const MINE_POS := Vector2(0.0, 3.3)      # MineZone origin (its terraces extend +y)
+const FURNACE_POS := Vector2(3.4, -3.2)
 const CAR_START := Vector2(0.0, -0.4)
 const CAR_Z := 0.14
 const JOY_RADIUS_PX := 110.0
@@ -25,10 +25,10 @@ const CARGO_CAP := [30, 60, 100] # 鏟斗 tier 0/1/2 可以載幾多粒
 const CAPTURE_R := 0.9
 const PUSH_IMPULSE := 0.35
 const ORE_RADIUS := 0.04
-const ORE_COUNT := 4200
-const KICK_RADIUS := 0.42
-const KICK_LIFETIME := 1.4
-const KICK_BUDGET := 120
+const ORE_COUNT := 5600
+const KICK_RADIUS := 1.0   # 車前方呢個半徑內嘅礦轉做真剛體，俾鏟斗物理推
+const KICK_LIFETIME := 1.0
+const KICK_BUDGET := 170
 const RESPAWN_PER_SEC := 6.0
 
 var c: GameConstants
@@ -304,9 +304,20 @@ func _build_car() -> void:
 	_car.motion_mode = CharacterBody3D.MOTION_MODE_FLOATING
 	var col := CollisionShape3D.new()
 	var shape := BoxShape3D.new()
-	shape.size = Vector3(0.44, 0.5, 0.26)
+	shape.size = Vector3(0.44, 0.36, 0.26)
 	col.shape = shape
+	col.position = Vector3(0.0, -0.05, 0.0)
 	_car.add_child(col)
+	# 用戶：鏟車要「鏟」碎料——鏟斗做真碰撞（弧形 5 段 + 底唇），礦被物理推入弧內堆住
+	for i in range(5):
+		var a: float = (float(i) - 2.0) * 0.32
+		var bc := CollisionShape3D.new()
+		var bs := BoxShape3D.new()
+		bs.size = Vector3(0.17, 0.05, 0.22)
+		bc.shape = bs
+		bc.position = Vector3(sin(a) * 0.34, 0.2 + cos(a) * 0.14, -0.03)
+		bc.rotation.z = -a
+		_car.add_child(bc)
 	_car.position = _site_to_local(CAR_START, CAR_Z)
 	_site.add_child(_car)
 
@@ -350,7 +361,7 @@ func _physics_process(delta: float) -> void:
 	_car.move_and_slide()
 	# keep on the ground plane
 	_car.position.z = CAR_Z
-	_capture_tick()
+	_rigidize_front_tick()
 	# face movement direction
 	if _car_vel.length() > 0.05:
 		var ang: float = atan2(_car_vel.y, _car_vel.x) - PI * 0.5
@@ -402,7 +413,7 @@ func _build_ore_pool() -> void:
 	_kick_root.name = "KickedOre"
 	_site.add_child(_kick_root)
 	var tiers := {"silver": [0.85, Color(MineConstants.PALETTE["ore_silver"]), 1.0], "gold": [0.15, Color(MineConstants.PALETTE["ore_gold"]), 1.3]}
-	var blobs := [Vector2(-2.2, 0.4), Vector2(1.4, 0.2), Vector2(-0.6, -1.6), Vector2(0.9, 1.3), Vector2(-2.4, -2.4)]
+	var blobs := [Vector2(-2.6, 0.6), Vector2(1.8, 0.4), Vector2(-0.8, -1.9), Vector2(1.1, 1.8), Vector2(-3.2, -3.0), Vector2(3.0, -0.8), Vector2(-0.2, 0.2)]
 	for tier: String in tiers.keys():
 		var count: int = int(ORE_COUNT * float(tiers[tier][0]))
 		var mmi := VisualFactory.make_ore_pool_multimesh(ORE_RADIUS, tiers[tier][1], 0.35 if tier == "gold" else 0.0, count)
@@ -412,7 +423,7 @@ func _build_ore_pool() -> void:
 		for i in range(count):
 			var ctr: Vector2 = blobs[rng.randi_range(0, blobs.size() - 1)]
 			var a := rng.randf_range(0.0, TAU)
-			var r := sqrt(rng.randf()) * 0.75
+			var r := sqrt(rng.randf()) * 0.8
 			var pos := Vector3(ctr.x + cos(a) * r * 1.2, ctr.y + sin(a) * r, ORE_RADIUS * float(tiers[tier][2]))
 			mmi.multimesh.set_instance_transform(i, Transform3D(Basis.IDENTITY.scaled(Vector3.ONE * float(tiers[tier][2])), pos))
 			_slots.append({"tier": tier, "idx": i, "pos": pos, "scale": float(tiers[tier][2]), "active": false, "gone": false})
@@ -423,16 +434,41 @@ func _hide_slot(s: Dictionary) -> void:
 func _show_slot(s: Dictionary) -> void:
 	(_pool_mmi[s["tier"]] as MultiMeshInstance3D).multimesh.set_instance_transform(s["idx"], Transform3D(Basis.IDENTITY.scaled(Vector3.ONE * float(s["scale"])), s["pos"]))
 
+## 車前方半徑內嘅靜態礦轉做真剛體（無衝力），俾弧形鏟斗物理推住、堆喺鏟內
+func _rigidize_front_tick() -> void:
+	_scan_accum += get_physics_process_delta_time()
+	if _scan_accum < 0.08:
+		return
+	_scan_accum = 0.0
+	var budget: int = KICK_BUDGET - _kicked.size()
+	if budget <= 0:
+		return
+	var cp: Vector3 = _car.position
+	var r2: float = KICK_RADIUS * KICK_RADIUS
+	var inv: Transform3D = _car.transform.affine_inverse()
+	for s: Dictionary in _slots:
+		if budget <= 0:
+			break
+		if s["active"] or s["gone"]:
+			continue
+		var p: Vector3 = s["pos"]
+		if p.distance_squared_to(cp) > r2:
+			continue
+		if (inv * p).y < -0.25:
+			continue # 車尾唔理
+		_activate_slot(s)
+		budget -= 1
+
 func _pool_tick(delta: float) -> void:
-	_scan_accum += delta
 	for k: Dictionary in _kicked.duplicate():
 		var node: RigidBody3D = k["node"]
 		if not is_instance_valid(node):
 			_kicked.erase(k)
 			continue
 		k["t"] += delta
-		var far: bool = node.position.distance_to(_car.position) > KICK_RADIUS * 2.2
-		if k["t"] >= KICK_LIFETIME and far:
+		var far: bool = node.position.distance_to(_car.position) > KICK_RADIUS * 1.5
+		var still: bool = node.linear_velocity.length() < 0.05
+		if k["t"] >= KICK_LIFETIME and far and still:
 			_settle_kick(k)
 	# respawn: ore flows out of the mine over time
 	_respawn_accum += delta * RESPAWN_PER_SEC
@@ -549,6 +585,49 @@ func _dump_cargo() -> void:
 	_spawn_cash_popup(mouth_local, total)
 	SfxPlayer.play("pile_mine")
 
+## 車入爐區：鏟斗弧內（車前方）嘅剛體礦全部賣出，逐粒飛入爐口
+func _sell_bucket_ore() -> void:
+	var inv: Transform3D = _car.transform.affine_inverse()
+	var mult: float = mine.state.c.push_tier_scoop_mult[clampi(mine.state.push_tier, 0, 2)]
+	var fmult: float = mine.state.c.frenzy_income_mult if frenzy.active else 1.0
+	var mouth_local: Vector3 = _furnace_node.position + Vector3(0.0, 0.2, 0.55)
+	var total := 0.0
+	var i := 0
+	for k: Dictionary in _kicked.duplicate():
+		var node: RigidBody3D = k["node"]
+		if not is_instance_valid(node):
+			_kicked.erase(k)
+			continue
+		var lp: Vector3 = inv * node.position
+		if lp.y < -0.1 or lp.y > 0.9 or absf(lp.x) > 0.6:
+			continue
+		var s: Dictionary = k["slot"]
+		var value: float = mine.state.c.ore_value(s["tier"]) * mult * fmult
+		total += value
+		s["gone"] = true
+		s["active"] = false
+		_kicked.erase(k)
+		node.freeze = true
+		node.collision_layer = 0
+		node.collision_mask = 0
+		var tw := create_tween()
+		tw.tween_interval(float(i) * 0.02)
+		tw.set_parallel(true)
+		tw.tween_property(node, "position:x", mouth_local.x, 0.32).set_trans(Tween.TRANS_SINE)
+		tw.tween_property(node, "position:y", mouth_local.y, 0.32).set_trans(Tween.TRANS_SINE)
+		tw.tween_property(node, "position:z", mouth_local.z + 0.45, 0.16).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+		tw.chain().tween_property(node, "position:z", mouth_local.z, 0.16).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
+		tw.parallel().tween_property(node, "scale", Vector3.ONE * 0.3, 0.16)
+		tw.chain().tween_callback(func() -> void:
+			state.cash += value
+			_furnace_flash = 1.0
+			_spawn_spark(mouth_local)
+			node.queue_free())
+		i += 1
+	if total > 0.0:
+		_spawn_cash_popup(mouth_local, total)
+		SfxPlayer.play("pile_mine")
+
 func _spawn_spark(at: Vector3) -> void:
 	for _i in range(2):
 		var sp := VisualFactory.make_metal_box(Vector3(0.04, 0.04, 0.04), Color(MineConstants.PALETTE["furnace_fire"]), Color(MineConstants.PALETTE["furnace_fire"]), 2.0)
@@ -591,15 +670,15 @@ func _activate_slot(s: Dictionary) -> void:
 	body.add_child(col)
 	body.position = s["pos"]
 	var mat := PhysicsMaterial.new()
-	mat.friction = 0.8
+	mat.friction = 0.7
+	mat.bounce = 0.05
 	body.physics_material_override = mat
-	body.linear_damp = 1.2
+	body.mass = 0.05
+	body.linear_damp = 2.5
+	body.angular_damp = 4.0
+	body.continuous_cd = true
+	body.axis_lock_linear_y = false
 	_kick_root.add_child(body)
-	var away: Vector3 = (s["pos"] as Vector3) - _car.position
-	away.z = 0.0
-	if away.length() < 0.01:
-		away = Vector3(rng.randf_range(-1, 1), rng.randf_range(-1, 1), 0)
-	body.apply_central_impulse(away.normalized() * 0.08 + Vector3(0, 0, 0.05))
 	_kicked.append({"slot": s, "node": body, "t": 0.0})
 
 func _settle_kick(k: Dictionary) -> void:
@@ -618,7 +697,7 @@ func _settle_kick(k: Dictionary) -> void:
 
 func _on_sell_area_entered(body: Node3D) -> void:
 	if body == _car:
-		_dump_cargo()
+		_sell_bucket_ore()
 		return
 	if not (body is RigidBody3D) or not body.has_meta("slot"):
 		return
@@ -797,7 +876,7 @@ func _refresh_hud() -> void:
 	_update_furnace_arrow()
 
 func _update_furnace_arrow() -> void:
-	if _cargo.is_empty() or _furnace_node == null:
+	if _bucket_count() == 0 or _furnace_node == null:
 		_furnace_arrow.visible = false
 		return
 	var vp := get_viewport().get_visible_rect().size
@@ -851,6 +930,18 @@ func _make_stage_icon(stage: String) -> Control:
 			roof.size = Vector2(36, 8)
 			root.add_child(roof)
 	return root
+
+func _bucket_count() -> int:
+	var inv: Transform3D = _car.transform.affine_inverse()
+	var n := 0
+	for k: Dictionary in _kicked:
+		var node: Node3D = k["node"]
+		if not is_instance_valid(node):
+			continue
+		var lp: Vector3 = inv * node.position
+		if lp.y > 0.0 and lp.y < 0.7 and absf(lp.x) < 0.5:
+			n += 1
+	return n
 
 func _fmt(v: float) -> String:
 	if v >= 1_000_000.0: return "%.1fM" % (v / 1_000_000.0)
