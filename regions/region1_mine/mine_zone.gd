@@ -246,10 +246,21 @@ func _build_warehouse() -> void:
 
 # ══════════════════════ 3D 視覺：礦道入口（toggle 剖面面板） ══════════════════════
 
+## Reviewer round 3：舊位置（0, -0.3, 0.35）同「大鏟斗」推堆墊
+## （push2 = _build_push_pads() i=2，x=0.25/y=-0.2/z=0.25）Area3D 重疊——
+## 牌身俾墊擋住、撳落去仲會撞埋第二個 Area3D（邊個先中 ray 邊個食）。
+## 層 1 開場恆常解鎖，_build_layer_terrace() unlocked 分支唔會幫佢起
+## UnlockPanel（果段邏輯淨係鎖住層先有），即係層 2／3 UnlockPanel 嗰條掛
+## 牌公式（`_layer_center(idx) + (0, -DEPTH_STEP*0.3, h+0.3)`）套用落層 1
+## 會得出嚟嘅位一直得閒——搬去嗰度：z 企得夠高（0.65 起跳），同推堆墊
+## z 上限（0.4）完全唔再重疊，唔使郁推堆墊本身（已通過 round 2 嘅取景）。
 func _build_entrance() -> void:
+	var h0 := MineConstants.LAYER_HEIGHT_STEP # idx0 層高——同 _build_layer_terrace() 嗰個 h 一致
+	var sign_pos: Vector3 = _layer_center(0) + Vector3(0.0, -MineConstants.LAYER_DEPTH_STEP * 0.3, h0 + 0.3)
+
 	var sign := VisualFactory.make_metal_box(Vector3(0.5, 0.08, 0.35), Color(PALETTE["pad"]))
 	sign.name = "EntranceSign"
-	sign.position = Vector3(0.0, -0.3, 0.35)
+	sign.position = sign_pos
 	add_child(sign)
 
 	var label := Label3D.new()

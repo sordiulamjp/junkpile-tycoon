@@ -98,6 +98,32 @@ func test_cannot_unlock_layer_three_before_layer_two_via_tap() -> void:
 	assert_false(mine.state.layer_unlocked[2], "層 2 未解鎖，撳層 3 塊板都唔應該通過")
 
 
+# ── 礦道入口牌：唔可以同推堆墊 Area3D 重疊（Reviewer round 3） ──
+
+func _aabb_from(center: Vector3, size: Vector3) -> AABB:
+	return AABB(center - size * 0.5, size)
+
+## round 3 review：入口牌（0,-0.3,0.35，box 0.6×0.4×0.5）同「大鏟斗」
+## push2（0.25,-0.2,0.25，box 0.9×0.5×0.3）Area3D 重疊，牌身藏喺墊後面、
+## 撳落去仲會撞埋第二個 Area3D。修正後入口牌搬去層 1 專屬「解鎖板」
+## 空位（z 企高咗），呢個測試鎖住「入口牌 AABB 唔可以同任何一個推堆墊
+## AABB 重疊」，避免退返舊 bug。
+func test_entrance_sign_does_not_overlap_any_push_pad() -> void:
+	_load_main()
+	var mine: MineZone = main._mine_zone
+	var entrance: Node3D = mine.get_node("EntranceSign")
+	# 兩組 box size 抄自 mine_zone.gd _build_entrance() / systems/unlock_panel.gd
+	# _build_visual() 嘅 BoxShape3D.size——冇公開常數可以引用，改嗰邊記得同步呢度。
+	var entrance_aabb := _aabb_from(entrance.position, Vector3(0.6, 0.4, 0.5))
+	for i in range(mine._push_panels.size()):
+		var pad: UnlockPanel = mine._push_panels[i]
+		var pad_aabb := _aabb_from(pad.position, Vector3(0.9, 0.5, 0.3))
+		assert_false(
+			entrance_aabb.intersects(pad_aabb),
+			"入口牌 Area3D 唔應該同推堆墊 %d 重疊" % i
+		)
+
+
 # ── 推堆墊：順序買，扣共用 cash，提高鏟斗倍率 ──────────────
 
 func test_push_tier_upgrade_deducts_shared_cash_and_raises_scoop_mult() -> void:
