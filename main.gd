@@ -45,8 +45,8 @@ const FOOTHILL_BASE_HEIGHT := 0.22
 const FOOTHILL_TIER_HEIGHT := 0.1
 ## VR-06b 場地規格 v2：廢料山（12 層梯田）嘅平面尺寸——闊約 2.6（車闊≈0.5，
 ## 即 ~5 車闊）、由山腳向後（+y）伸 1.7；每層向後縮、向上疊。
-const MOUNTAIN_WIDTH := 2.6
-const MOUNTAIN_DEPTH := 1.7
+const MOUNTAIN_WIDTH := 2.9
+const MOUNTAIN_DEPTH := 1.6
 ## 場地（site）座標 → 世界：site 平面攤平做地面（site y → 世界 -z，site z → 世界 +y）。
 ## 成個場地掛喺 _site_root（rotation.x = -90°）之下，物件仍然用 site 座標寫。
 const SITE_BASIS := Basis(Vector3(1, 0, 0), Vector3(0, 0, -1), Vector3(0, 1, 0))
@@ -788,7 +788,7 @@ func _build_dressing() -> void:
 
 	# 右側岩浆帶（闊 2 車闊≈1.0）由車場頂直落到倉。
 	var lava_x: float = c.yard_x_range.y + 0.42
-	var lava_top: float = c.site_foothill_pos.y + 0.3
+	var lava_top: float = c.site_foothill_pos.y + 0.9
 	var lava_bottom: float = c.warehouse_pos.y - 0.6
 	var lava := VisualFactory.make_metal_box(
 		Vector3(0.5, lava_top - lava_bottom, 0.03), VisualFactory.PALETTE["lava"], VisualFactory.PALETTE["lava"], 1.8
@@ -801,24 +801,12 @@ func _build_dressing() -> void:
 		crust.rotation.z = rng.randf_range(0.0, TAU)
 		dress.add_child(crust)
 
-	# 爐前 SELL 大字墊（紫底白字）。
-	var sell_pad := VisualFactory.make_flat_box(Vector3(1.0, 0.6, 0.02), Color(0.36, 0.23, 0.55))
-	sell_pad.position = Vector3(c.smelter_pos.x, c.smelter_pos.y + 0.55, 0.01)
-	dress.add_child(sell_pad)
-	var sell_label := Label3D.new()
-	sell_label.text = "SELL"
-	sell_label.font_size = 96
-	sell_label.pixel_size = 0.004
-	sell_label.modulate = Color(1, 1, 1)
-	sell_label.position = Vector3(c.smelter_pos.x, c.smelter_pos.y + 0.55, 0.03)
-	dress.add_child(sell_label)
-
 	# 油桶方陣（障礙兼裝飾）喺車場左下角。
 	for row in range(3):
 		for col_i in range(3):
 			var barrel := VisualFactory.make_low_poly_cylinder(0.11, 0.24, Color(0.2, 0.42, 0.75) if (row + col_i) % 2 == 0 else Color(0.25, 0.5, 0.85), 8, 0.35)
 			barrel.rotation_degrees.x = 90.0
-			barrel.position = Vector3(c.yard_x_range.x + 0.3 + float(col_i) * 0.25, c.warehouse_pos.y + 0.1 - float(row) * 0.25, 0.12)
+			barrel.position = Vector3(c.yard_x_range.x + 0.3 + float(col_i) * 0.25, c.warehouse_pos.y + 0.25 - float(row) * 0.25, 0.12)
 			dress.add_child(barrel)
 
 func _build_ground() -> void:

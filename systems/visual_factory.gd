@@ -65,7 +65,7 @@ const MINER_MODEL_PATH := "res://assets/models/character-g.glb"
 ## 拉到好遠嘅正交相機），所以呢個世界單位數字底下，礦工實際喺螢幕
 ## 顯得大好多。跟返用戶畀嘅實數（0.35），唔用自己嗰個「感覺上應該更大」
 ## 嘅估算。
-const MINER_VISUAL_SCALE := 0.13
+const MINER_VISUAL_SCALE := 0.2
 
 static var _miner_scene: PackedScene = null
 static var _miner_load_attempted := false
