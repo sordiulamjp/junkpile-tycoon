@@ -90,12 +90,22 @@ const CAMERA_MAX_PAN := 2.6            # 美術取景常數：最多拖幾遠先
 const REGION2_PANEL_SITE_POS := Vector2(-1.3, 2.6)
 const REGION2_PANEL_HEIGHT := 0.3
 
-## ALTA-228（VR-12）區域 1（開場）場內礦坑——擺喺山腳梯田右手邊、車場
-## 車道（yard_x_range 上限 2.3）之外，深度貼近山腳（唔使好似區域 2 咁
-## 要拖成 2.6 先睇到）。第一版擺位，實機睇落層 2 解鎖板同山頂輪廓喺
-## 透視底下疊埋一齊，留返俾下一輪 review 精調（同 VR-03～06 場地幾輪
-## 先夾啱嘅慣例一致）。
-const MINE_ZONE_SITE_POS := Vector2(2.8, 1.1)
+## ALTA-228（VR-12，Reviewer round 2 修正）：區域 1 場內礦坑擺位。
+## 第一版（2.8, 1.1）撞正 `_build_canyon_walls()` 右側石柱（x≈2.45~4.25，
+## y 去到 2.82）—— 礦坑梯級／倉庫實際上俾成排切面石完全遮咗，實機睇
+## 唔到（Reviewer round 2 截圖淨見入口牌／解鎖板）。改做企中（同山腳
+## 同一 X 中心 0.85，避開兩側石柱），深度擺喺峽谷「後方一排高石」
+## （`back_y` ≈ 2.82，jitter 去到 3.12）之後——即「後壁梯級」字面意思：
+## 企喺成個峽谷最後面，山＋峽谷牆都遮唔到，同時避開哂側柱／後排石嘅
+## bounding box。鏡頭要見到就要將呢個位置嘅 bounding corners 算入
+## `_camera_reference_points()`（見 `_mine_zone_camera_points()`）。
+const MINE_ZONE_SITE_POS := Vector2(0.85, 2.4)
+## 山頂 12 層梯田恆常起足全高（`test_foothill_shows_full_terrace_before_any_miner_summoned`），
+## 唔理礦坑擺幾深都會被山（高 1.42）連同峽谷後排石（高去到 2.0）從呢個
+## 鏡頭角度遮住——梯級／倉庫本身高度（≤1.05）唔夠高企出嚟。將成個
+## MineZone 掂起 1.6（超過山頂＋峽谷石嘅高度），等佢企喺山後面「浮高咗
+## 一層」，先真係見到（同 UnlockPanel／entrance 等企出嚟嘅高度一致計法）。
+const MINE_ZONE_ELEVATION := 1.6
 
 ## 山腳碎料嘅 tap 拾取範圍——刻意獨立於 0.12 嘅視覺盒仔尺寸（ALTA-195，
 ## 實機驗收見 Reviewer 喺 ALTA-150 嘅提醒）。720×960 下依家個相機要一次
@@ -565,6 +575,15 @@ func _camera_reference_points() -> Array[Vector3]:
 		_site_to_global(Vector2(c.yard_x_range.y + 0.1, c.car_park_max_y)),
 		_site_to_global(Vector2(c.yard_x_range.y + 0.7, c.gate_y)),
 	]
+	# ALTA-228（Reviewer round 2）：試過將礦坑 bounding corners 加落嚟
+	# 一齊解相機——的確令礦坑入哂預設取景，但迫使鏡頭整體再退後，將
+	# `test_frenzy_ignores_touches_above_yard_top_row()` 嗰條 2% 螢幕高度
+	# 嘅安全邊（撳山腳唔應該拖埋車）壓穿咗（山腳同車場最頂行嘅螢幕 Y
+	# 距離縮到唔夠）。改用 Reviewer 提出嘅另一個方案：唔郁呢個既有嘅
+	# 相機解算，礦坑本身「浮高咗」（`MINE_ZONE_ELEVATION`，見
+	# `_build_region_expansion()`）解決俾山／峽谷石遮住嘅問題，靠現有
+	# 「鏡頭可拖」（`_apply_camera_drag()`）睇到——同區域 2 解鎖板一致
+	# 嘅做法，唔額外郁動已經夾啱嘅山腳／車場取景。
 
 func _solve_camera_distance_for_vertical_fit(
 	locals: Array[Vector3], max_lz: float, k_v: float, top_frac: float, bottom_frac: float
@@ -881,7 +900,7 @@ func _build_region_expansion() -> void:
 	# 場景（見 regions/region1_mine/mine_zone.gd 頂部註解）。
 	_mine_zone = MineZone.new()
 	_mine_zone.name = "MineZone"
-	_mine_zone.position = _site_to_world(MINE_ZONE_SITE_POS)
+	_mine_zone.position = _site_to_world(MINE_ZONE_SITE_POS, MINE_ZONE_ELEVATION)
 	_placement_root.add_child(_mine_zone)
 	_mine_zone.setup(state, frenzy, _mine_zone_saved_data)
 
@@ -1537,6 +1556,11 @@ func _build_hud() -> void:
 
 	_build_offline_panel(hud)
 	_build_prestige_confirm_panel(hud)
+
+	# ALTA-228（Reviewer round 2）：剖面面板一定要掛落呢個 hud CanvasLayer
+	# （同離線／威望彈窗一樣），先唔會俾頂／底 HUD bar 冚住／擋撳——
+	# 見 mine_zone.gd attach_panel() 註解。
+	_mine_zone.attach_panel(hud)
 
 ## VR-05b：離線報告／威望確認兩個彈窗共用嘅底——scrim（擋背後撳掣）+
 ## CenterContainer 置中一張深色圓角卡片，同 _make_circular_icon()／
