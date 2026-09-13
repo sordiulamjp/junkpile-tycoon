@@ -14,29 +14,30 @@ extends RefCounted
 ## 唔靠貼圖。色板見 PALETTE，礦工用 Kenney CC0 機械人 glTF（見
 ## CREDITS.md），其餘全部係 Godot 原生 Mesh。
 
+## 場地規格 v2（ALTA-219，2026-09-13）色板——取代 VR-06b 嗰組「爐口藍火
+## 對比」決定：呢版 issue 明文規定「爐藍 #2E5C9E + 橙光」，唔再刻意同
+## IZM 反差（"furnace_glow" 由藍改返橙）；岩壁／地面／岩浆／墊門紫／
+## 車色全部跟返 issue 「色板（暖色）」段嘅十六進位值。
 const PALETTE := {
 	"cave": Color(0.42, 0.36, 0.3),
 	"cave_light": Color(0.5, 0.44, 0.36),
 	"belt": Color(0.35, 0.35, 0.38),
-	"furnace_body": Color(0.16, 0.34, 0.58),
-	# VR-06b：色板刻意同 IZM 參考唔同——暖色洞穴之下，爐口改用藍火做
-	# 對比（issue 視覺參考 ALTA-153 留言：「爐口藍火對比」），代替 VR-06
-	# 嗰陣嘅橙光。
-	"furnace_glow": Color(0.25, 0.55, 0.95),
+	"furnace_body": Color("#2E5C9E"), # 場地規格 v2：爐藍
+	"furnace_glow": Color("#FF5A1F"), # 場地規格 v2：爐口橙光（跟岩浆同一團暖橙）
 	"warehouse_body": Color(0.2, 0.4, 0.65),
 	"warehouse_roof": Color(0.14, 0.28, 0.46),
-	"lava": Color(0.85, 0.25, 0.05),
+	"lava": Color("#FF5A1F"),        # 場地規格 v2：岩浆
 	"bridge_wood": Color(0.45, 0.3, 0.15),
 	"gear_metal": Color(0.6, 0.62, 0.66),
 	"wall": Color(0.25, 0.25, 0.28, 0.5),
-	# VR-06b：峽谷岩壁（faceted rock）+ 地面——暖色洞穴，同 furnace_glow
-	# 嘅冷藍火成對比色（見上）。
-	"canyon_wall": Color(0.42, 0.28, 0.16),
-	"canyon_wall_dark": Color(0.24, 0.15, 0.09),
-	"ground_warm": Color(0.36, 0.32, 0.28),
-	"ground_tread": Color(0.28, 0.25, 0.22),
+	"canyon_wall": Color("#6B4A3A"),      # 場地規格 v2：岩壁底色
+	"canyon_wall_light": Color("#8C6A55"), # 場地規格 v2：岩壁頂面淺一級
+	"canyon_wall_dark": Color(0.16, 0.1, 0.06),
+	"ground_warm": Color("#B79C7E"),  # 場地規格 v2：地面
+	"ground_tread": Color(0.55, 0.46, 0.36),
 	"entrance_eave": Color(0.5, 0.3, 0.15),
 	"lamp_warm": Color(1.0, 0.78, 0.4),
+	"pad_purple": Color("#5B3A8C"),   # 場地規格 v2：墊／門紫
 }
 
 ## VR-06c：波池礦物階色板——同 main.gd::_ore_color() 用同一套礦物階名
@@ -47,9 +48,9 @@ const PALETTE := {
 const ORE_TIER_COLOR := {
 	"stone": Color(0.55, 0.55, 0.55),
 	"coal": Color(0.15, 0.15, 0.15),
-	"copper": Color(0.72, 0.42, 0.2),
-	"gold": Color(0.95, 0.8, 0.15),
-	"diamond": Color(0.6, 0.9, 0.95),
+	"copper": Color("#C8742A"),  # 場地規格 v2：礦粒銅
+	"gold": Color("#F2B830"),    # 場地規格 v2：礦粒金
+	"diamond": Color("#9FE3F0"), # 場地規格 v2：礦粒鑽
 	"crown": Color(0.85, 0.65, 0.95),
 }
 ## 金／鑽／皇冠三階波「少少自發光」（issue 視覺參考），其餘唔發光。

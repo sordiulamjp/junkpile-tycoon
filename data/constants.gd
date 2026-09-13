@@ -199,7 +199,8 @@ enum Resource3 { CASH, COMPONENTS, ECO }
 @export var upgrade_pad_pos: Vector2 = Vector2(-0.9, -0.95) # TUNE
 @export var upgrade_pad_rearm_secs: float = 6.0             # TUNE：同一墊重複觸發嘅冷卻
 @export var car_upgrade_tiers: Array[Dictionary] = [
-	{"name": "拖拉機", "scale": 1.0, "speed_mult": 1.0, "push_mult": 1.0, "color": Color(0.55, 0.15, 0.15)},
+	{"name": "拖拉機", "scale": 1.0, "speed_mult": 1.0, "push_mult": 1.0, "color": Color("#D9432B")}, # 場地規格 v2：鏟斗紅
+
 	{"name": "剷泥車", "scale": 1.15, "speed_mult": 1.15, "push_mult": 1.3, "color": Color(0.75, 0.55, 0.1)},
 	{"name": "裝甲車", "scale": 1.3, "speed_mult": 1.3, "push_mult": 1.7, "color": Color(0.35, 0.55, 0.75)},
 ] # TUNE：UPGRADE 墊逐級升嘅三級
