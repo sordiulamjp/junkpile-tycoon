@@ -15,5 +15,10 @@
   係 debug 畫面（睇／匯出／清除），同 `ads/ad_test.tscn` 一樣冇搶 `run/main_scene`
 - `systems/remote_constants.gd` + `systems/remote_constants_loader.gd`：遠端 constants 覆寫
   （VR-08），Worker 部署見 `worker/README.md`
+- `regions/`：PLAN v2（2026-09-13，父 issue 留言）嘅多區域地圖，每個區域一個獨立 Godot
+  場景，錢包／存檔跨區域共用（VR-11，未接）。`regions/region1_mine/region1_mine.tscn`
+  （VR-12，ALTA-228：礦層 → 升降機 → 倉庫側視放置）跟 `ads/ad_test.tscn` 同一慣例，冇搶
+  `run/main_scene`——想睇/測就用 Godot editor 開呢個 scene 撳 F6，或者出 APK 前臨時將
+  `run/main_scene` 改去佢
 
 設計總帳同 PLAN 見 Multica 父 issue。
