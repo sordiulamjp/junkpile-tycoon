@@ -337,8 +337,12 @@ func _build_car() -> void:
 func _physics_process(delta: float) -> void:
 	var input_vec: Vector2 = _joy_vec if _joy_down else _keys_vec
 	if _autodrive:
+		# demo/debug: drive heap -> furnace -> heap ... (waypoints in site coords)
 		_autodrive_t += delta
-		input_vec = Vector2(cos(_autodrive_t * 0.9), sin(_autodrive_t * 0.6))
+		var wps := [Vector2(-2.2, 0.4), Vector2(1.4, 0.2), FURNACE_POS + Vector2(-0.2, -0.9), Vector2(-0.6, -1.6), FURNACE_POS + Vector2(-0.9, 0.2)]
+		var wp: Vector2 = wps[int(_autodrive_t / 3.2) % wps.size()]
+		var to: Vector2 = wp - Vector2(_car.position.x, _car.position.y)
+		input_vec = to.normalized() if to.length() > 0.15 else Vector2.ZERO
 	var speed_mult: float = 1.5 if frenzy.active else 1.0
 	var target: Vector2 = input_vec.limit_length(1.0) * CAR_SPEED * speed_mult
 	_car_vel = _car_vel.move_toward(target, CAR_ACCEL * delta)
@@ -484,9 +488,9 @@ func _capture_tick() -> void:
 			continue
 		s["gone"] = true
 		_hide_slot(s)
-		_add_cargo(s["tier"], float(s["scale"]))
+		_add_cargo(s["tier"], float(s["scale"]), p)
 
-func _add_cargo(tier: String, sc: float) -> void:
+func _add_cargo(tier: String, sc: float, from_site: Vector3 = Vector3.INF) -> void:
 	var i: int = _cargo.size()
 	var ball := VisualFactory.make_ore_ball(ORE_RADIUS * sc, Color(MineConstants.PALETTE["ore_gold"] if tier == "gold" else MineConstants.PALETTE["ore_silver"]), 0.3 if tier == "gold" else 0.0)
 	var cols := 6
@@ -494,24 +498,83 @@ func _add_cargo(tier: String, sc: float) -> void:
 	var idx: int = i % (cols * 3)
 	var row: int = idx / cols
 	var col: int = idx % cols
-	ball.position = Vector3(-0.22 + float(col) * 0.088 + rng.randf_range(-0.01, 0.01), 0.24 + float(row) * 0.085, 0.02 + float(layer) * 0.07)
+	var dest := Vector3(-0.22 + float(col) * 0.088 + rng.randf_range(-0.01, 0.01), 0.24 + float(row) * 0.085, 0.02 + float(layer) * 0.07)
 	_cargo_root.add_child(ball)
 	_cargo.append({"tier": tier, "node": ball})
+	# 回收動畫：礦粒由地面「跳」上鏟斗（0.18s 弧線）
+	if from_site != Vector3.INF:
+		ball.position = _cargo_root.to_local(_site.to_global(from_site))
+		var tw := create_tween()
+		tw.set_parallel(true)
+		tw.tween_property(ball, "position:x", dest.x, 0.18).set_trans(Tween.TRANS_SINE)
+		tw.tween_property(ball, "position:y", dest.y, 0.18).set_trans(Tween.TRANS_SINE)
+		tw.tween_property(ball, "position:z", dest.z + 0.12, 0.09).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+		tw.chain().tween_property(ball, "position:z", dest.z, 0.09).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
+	else:
+		ball.position = dest
 
 func _dump_cargo() -> void:
 	if _cargo.is_empty():
 		return
 	var mult: float = mine.state.c.push_tier_scoop_mult[clampi(mine.state.push_tier, 0, 2)]
+	var fmult: float = mine.state.c.frenzy_income_mult if frenzy.active else 1.0
+	var mouth_local: Vector3 = _furnace_node.position + Vector3(0.0, 0.2, 0.55) # 爐頂口（site 座標）
 	var total := 0.0
-	for cgo: Dictionary in _cargo:
-		total += mine.state.c.ore_value(cgo["tier"]) * mult
-		(cgo["node"] as Node3D).queue_free()
+	var n: int = _cargo.size()
+	for i in range(n):
+		var cgo: Dictionary = _cargo[i]
+		var ball: Node3D = cgo["node"]
+		var value: float = mine.state.c.ore_value(cgo["tier"]) * mult * fmult
+		total += value
+		# 回收動畫：礦粒逐粒由鏟斗飛入爐口（弧線 + 縮細），每粒落爐即加錢
+		var gp: Vector3 = ball.global_position
+		_cargo_root.remove_child(ball)
+		_site.add_child(ball)
+		ball.global_position = gp
+		var delay: float = float(i) * 0.025
+		var tw := create_tween()
+		tw.tween_interval(delay)
+		tw.set_parallel(true)
+		tw.tween_property(ball, "position:x", mouth_local.x, 0.32).set_trans(Tween.TRANS_SINE)
+		tw.tween_property(ball, "position:y", mouth_local.y, 0.32).set_trans(Tween.TRANS_SINE)
+		tw.tween_property(ball, "position:z", mouth_local.z + 0.45, 0.16).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+		tw.chain().tween_property(ball, "position:z", mouth_local.z, 0.16).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
+		tw.parallel().tween_property(ball, "scale", Vector3.ONE * 0.3, 0.16)
+		tw.chain().tween_callback(func() -> void:
+			state.cash += value
+			_furnace_flash = 1.0
+			_spawn_spark(mouth_local)
+			ball.queue_free())
 	_cargo.clear()
-	if frenzy.active:
-		total *= mine.state.c.frenzy_income_mult
-	state.cash += total
-	_furnace_flash = 1.2
+	_spawn_cash_popup(mouth_local, total)
 	SfxPlayer.play("pile_mine")
+
+func _spawn_spark(at: Vector3) -> void:
+	for _i in range(2):
+		var sp := VisualFactory.make_metal_box(Vector3(0.04, 0.04, 0.04), Color(MineConstants.PALETTE["furnace_fire"]), Color(MineConstants.PALETTE["furnace_fire"]), 2.0)
+		sp.position = at
+		_site.add_child(sp)
+		var tw := create_tween()
+		tw.set_parallel(true)
+		tw.tween_property(sp, "position", at + Vector3(rng.randf_range(-0.25, 0.25), rng.randf_range(-0.15, 0.15), rng.randf_range(0.35, 0.7)), 0.45).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+		tw.tween_property(sp, "scale", Vector3.ZERO, 0.45)
+		tw.chain().tween_callback(sp.queue_free)
+
+func _spawn_cash_popup(at: Vector3, amount: float) -> void:
+	var lbl := Label3D.new()
+	lbl.text = "+%s" % _fmt(amount)
+	lbl.font_size = 120
+	lbl.pixel_size = 0.004
+	lbl.outline_size = 16
+	lbl.modulate = Color(1.0, 0.85, 0.3)
+	lbl.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	lbl.position = at + Vector3(0.0, 0.0, 0.6)
+	_site.add_child(lbl)
+	var tw := create_tween()
+	tw.set_parallel(true)
+	tw.tween_property(lbl, "position:z", at.z + 1.5, 1.1).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+	tw.tween_property(lbl, "modulate:a", 0.0, 1.1).set_delay(0.4)
+	tw.chain().tween_callback(lbl.queue_free)
 
 func _activate_slot(s: Dictionary) -> void:
 	s["active"] = true
