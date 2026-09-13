@@ -76,6 +76,28 @@ var _save_accum := 0.0
 var _autodrive := false
 var _autodrive_t := 0.0
 
+# ── VR-16 掛機自動化 ──
+const AI_COST := 500.0
+const MGR_COST := 2000.0
+const AI_IDLE_SECS := 6.0
+const AI_SPEED_MULT := 0.65
+var _ai_unlocked := false
+var _ai_on := true
+var _ai_active := false
+var _idle_t := 0.0
+var _ai_mode := "heap"
+var _ai_target := Vector2.INF
+var _ai_retarget_t := 0.0
+var _mgr_unlocked := false
+var _mgr_on := true
+var _mgr_accum := 0.0
+var _team_accum := 0.0
+var _ai_button: Button
+var _mgr_button: Button
+var _offline_panel: PanelContainer
+var _offline_label: Label
+var _offline_pending := 0.0
+
 
 func _ready() -> void:
 	rng.randomize()
@@ -83,6 +105,7 @@ func _ready() -> void:
 	state = GameState.new(c)
 	frenzy = FrenzyState.new(c)
 	_autodrive = "--autodrive" in OS.get_cmdline_user_args()
+	var _demo_ai: bool = "--ai" in OS.get_cmdline_user_args() # debug：即刻解鎖 AI 司機 + 經理（渲染示範用）
 	# Reviewer round 3：舊碼用私家 field_cash／field_components／field_eco
 	# 三個欄位讀寫存檔，繞過 VR-11 嘅 Wallet／Save autoload 同共用嘅
 	# "cash"／"components"／"eco" 欄位——同一份存檔兩個錢包。跟返
@@ -97,6 +120,13 @@ func _ready() -> void:
 		state.cash = Wallet.cash
 		state.components = Wallet.components
 		state.eco = Wallet.eco
+	_ai_unlocked = bool(saved.get("field_ai_unlocked", false))
+	_ai_on = bool(saved.get("field_ai_on", true))
+	_mgr_unlocked = bool(saved.get("field_mgr_unlocked", false))
+	_mgr_on = bool(saved.get("field_mgr_on", true))
+	if _demo_ai:
+		_ai_unlocked = true
+		_mgr_unlocked = true
 	_sync_wallet_from_state()
 	_build_world()
 	_build_zone1(saved.get("mine_zone", {}))
@@ -105,6 +135,7 @@ func _ready() -> void:
 	_build_hud()
 	mine.attach_panel(_hud)
 	get_viewport().physics_object_picking = true
+	_settle_offline(saved)
 
 
 # ══════════════════════ world / environment ══════════════════════
@@ -347,6 +378,15 @@ func _build_car() -> void:
 
 func _physics_process(delta: float) -> void:
 	var input_vec: Vector2 = _joy_vec if _joy_down else _keys_vec
+	if input_vec.length() > 0.05:
+		_idle_t = 0.0
+		_ai_active = false
+	else:
+		_idle_t += delta
+		if _ai_unlocked and _ai_on and _idle_t >= AI_IDLE_SECS and not _autodrive:
+			_ai_active = true
+	if _ai_active:
+		input_vec = _ai_steer(delta)
 	if _autodrive:
 		# demo/debug: drive heap -> furnace -> heap ... (waypoints in site coords)
 		_autodrive_t += delta
@@ -354,7 +394,7 @@ func _physics_process(delta: float) -> void:
 		var wp: Vector2 = wps[int(_autodrive_t / 3.2) % wps.size()]
 		var to: Vector2 = wp - Vector2(_car.position.x, _car.position.y)
 		input_vec = to.normalized() if to.length() > 0.15 else Vector2.ZERO
-	var speed_mult: float = 1.5 if frenzy.active else 1.0
+	var speed_mult: float = (1.5 if frenzy.active else 1.0) * (AI_SPEED_MULT if _ai_active else 1.0)
 	var target: Vector2 = input_vec.limit_length(1.0) * CAR_SPEED * speed_mult
 	_car_vel = _car_vel.move_toward(target, CAR_ACCEL * delta)
 	_car.velocity = SITE_BASIS * Vector3(_car_vel.x, _car_vel.y, 0.0)
@@ -750,6 +790,8 @@ func _process(delta: float) -> void:
 	if ev.get("ended", false):
 		SfxPlayer.play("frenzy_start")
 	_follow_camera(delta)
+	_manager_tick(delta)
+	_surface_team_tick(delta)
 	_refresh_hud()
 	_save_accum += delta
 	if _save_accum >= 10.0:
@@ -817,13 +859,13 @@ func _build_hud() -> void:
 	_hud.add_child(bottom)
 	var brow := HBoxContainer.new()
 	brow.alignment = BoxContainer.ALIGNMENT_CENTER
-	brow.add_theme_constant_override("separation", 30)
+	brow.add_theme_constant_override("separation", 14)
 	bottom.add_child(brow)
 	_frenzy_button = Button.new()
 	_frenzy_button.icon = load("res://assets/icons/star.png")
 	_frenzy_button.expand_icon = true
 	_frenzy_button.text = ""
-	_frenzy_button.custom_minimum_size = Vector2(220, 70)
+	_frenzy_button.custom_minimum_size = Vector2(150, 66)
 	_frenzy_button.add_theme_font_size_override("font_size", 28)
 	_frenzy_button.pressed.connect(_on_frenzy_pressed)
 	brow.add_child(_frenzy_button)
@@ -831,10 +873,23 @@ func _build_hud() -> void:
 	mine_btn.icon = load("res://assets/icons/wrench.png")
 	mine_btn.expand_icon = true
 	mine_btn.text = ""
-	mine_btn.custom_minimum_size = Vector2(220, 70)
+	mine_btn.custom_minimum_size = Vector2(110, 66)
 	mine_btn.add_theme_font_size_override("font_size", 28)
 	mine_btn.pressed.connect(func() -> void: if mine.panel.visible: mine.panel.close() else: mine.panel.open())
 	brow.add_child(mine_btn)
+	_ai_button = Button.new()
+	_ai_button.custom_minimum_size = Vector2(130, 66)
+	_ai_button.add_theme_font_size_override("font_size", 24)
+	_ai_button.pressed.connect(_on_ai_pressed)
+	brow.add_child(_ai_button)
+	_mgr_button = Button.new()
+	_mgr_button.icon = load("res://assets/icons/gear.png")
+	_mgr_button.expand_icon = true
+	_mgr_button.custom_minimum_size = Vector2(110, 66)
+	_mgr_button.add_theme_font_size_override("font_size", 24)
+	_mgr_button.pressed.connect(_on_mgr_pressed)
+	brow.add_child(_mgr_button)
+	_build_offline_panel()
 
 	# arrow to the furnace when carrying ore (points along screen edge)
 	_furnace_arrow = TextureRect.new()
@@ -895,6 +950,11 @@ func _refresh_hud() -> void:
 		ic.scale = Vector2.ONE * (1.0 + 0.12 * pulse) if k == stage else Vector2.ONE
 	mine.refresh_afford_state()
 	_update_furnace_arrow()
+	_ai_button.text = ("AI " + ("●" if _ai_on else "○")) if _ai_unlocked else "AI %s" % _fmt(AI_COST)
+	_ai_button.modulate = Color(0.6, 1.0, 0.6) if _ai_active else Color.WHITE
+	_ai_button.disabled = (not _ai_unlocked) and state.cash < AI_COST
+	_mgr_button.text = ("●" if _mgr_on else "○") if _mgr_unlocked else _fmt(MGR_COST)
+	_mgr_button.disabled = (not _mgr_unlocked) and state.cash < MGR_COST
 
 func _update_furnace_arrow() -> void:
 	if _bucket_count() == 0 or _furnace_node == null:
@@ -964,6 +1024,192 @@ func _bucket_count() -> int:
 			n += 1
 	return n
 
+# ══════════════════════ VR-16：掛機自動化 ══════════════════════
+
+func _pipeline_rate() -> float:
+	var ms := mine.state
+	var flow: float = minf(ms.total_mine_output(), minf(ms.cart_capacity(), ms.warehouse_capacity()))
+	return flow * (ms.c.ore_value_silver + ms.c.ore_value_gold) * 0.5
+
+func _settle_offline(saved: Dictionary) -> void:
+	if not saved.has("last_save_unix"):
+		return
+	var now := Time.get_unix_time_from_system()
+	var result := OfflineSettlement.settle(c, {"cash": state.cash, "last_save_unix": float(saved["last_save_unix"]), "prestige_count": 0}, now, _pipeline_rate())
+	var yield_cash: float = float(result["cash_yield"])
+	if yield_cash < 1.0:
+		return
+	_offline_pending = yield_cash
+	_offline_label.text = OfflineReport.raccoon_message(yield_cash, float(result["elapsed_secs"]), c.offline_cap_secs) + "\n\n+%s" % _fmt(yield_cash)
+	_offline_panel.visible = true
+
+func _build_offline_panel() -> void:
+	_offline_panel = PanelContainer.new()
+	_offline_panel.anchor_left = 0.5
+	_offline_panel.anchor_right = 0.5
+	_offline_panel.anchor_top = 0.5
+	_offline_panel.anchor_bottom = 0.5
+	_offline_panel.offset_left = -290
+	_offline_panel.offset_right = 290
+	_offline_panel.clip_contents = true
+	_offline_panel.offset_top = -160
+	_offline_panel.offset_bottom = 160
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(0.12, 0.09, 0.15, 0.96)
+	sb.set_corner_radius_all(18)
+	_offline_panel.add_theme_stylebox_override("panel", sb)
+	_offline_panel.visible = false
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 18)
+	_offline_panel.add_child(v)
+	_offline_label = Label.new()
+	_offline_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_offline_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_offline_label.add_theme_font_size_override("font_size", 24)
+	_offline_label.custom_minimum_size = Vector2(520, 0)
+	_offline_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	v.add_child(_offline_label)
+	var b := Button.new()
+	b.text = "收下"
+	b.custom_minimum_size = Vector2(200, 64)
+	b.add_theme_font_size_override("font_size", 26)
+	b.pressed.connect(func() -> void:
+		state.cash += _offline_pending
+		_offline_pending = 0.0
+		_offline_panel.visible = false
+		_save_game())
+	v.add_child(b)
+	_hud.add_child(_offline_panel)
+
+func _on_ai_pressed() -> void:
+	if not _ai_unlocked:
+		if state.cash < AI_COST:
+			return
+		state.cash -= AI_COST
+		_ai_unlocked = true
+		_ai_on = true
+	else:
+		_ai_on = not _ai_on
+		if not _ai_on:
+			_ai_active = false
+	_save_game()
+
+func _on_mgr_pressed() -> void:
+	if not _mgr_unlocked:
+		if state.cash < MGR_COST:
+			return
+		state.cash -= MGR_COST
+		_mgr_unlocked = true
+		_mgr_on = true
+	else:
+		_mgr_on = not _mgr_on
+	_save_game()
+
+## AI 司機：去最近礦堆 → 鏟到 6 成 → 去爐賣 → 循環
+func _ai_steer(delta: float) -> Vector2:
+	var cap: int = CARGO_CAP[clampi(mine.state.push_tier, 0, 2)]
+	var carrying: int = _bucket_count()
+	var pos := Vector2(_car.position.x, _car.position.y)
+	_ai_retarget_t -= delta
+	if _ai_mode == "heap":
+		if carrying >= int(float(cap) * 0.6):
+			_ai_mode = "furnace"
+			_ai_target = FURNACE_POS + Vector2(-0.3, -0.6)
+		elif _ai_target == Vector2.INF or _ai_retarget_t <= 0.0 or pos.distance_to(_ai_target) < 0.35:
+			_ai_target = _nearest_ore_pos(pos)
+			_ai_retarget_t = 2.5
+	else:
+		if carrying == 0 and pos.distance_to(_ai_target) < 1.2:
+			_ai_mode = "heap"
+			_ai_target = _nearest_ore_pos(pos)
+			_ai_retarget_t = 2.5
+		elif pos.distance_to(_ai_target) < 0.3:
+			_ai_target = FURNACE_POS + Vector2(-1.6, -0.6) # 已喺爐區未賣就行出去再入
+	if _ai_target == Vector2.INF:
+		return Vector2.ZERO
+	var to: Vector2 = _ai_target - pos
+	return to.normalized() if to.length() > 0.12 else Vector2.ZERO
+
+func _nearest_ore_pos(from: Vector2) -> Vector2:
+	var best := Vector2.INF
+	var best_d := INF
+	for _i in range(160):
+		var s: Dictionary = _slots[rng.randi_range(0, _slots.size() - 1)]
+		if s["gone"] or s["active"]:
+			continue
+		var p: Vector3 = s["pos"]
+		var d2: float = from.distance_squared_to(Vector2(p.x, p.y))
+		if d2 < best_d:
+			best_d = d2
+			best = Vector2(p.x, p.y)
+	return best
+
+## 經理自動升級：每 5 秒睇瓶頸，留返 20% 現金
+func _manager_tick(delta: float) -> void:
+	if not (_mgr_unlocked and _mgr_on):
+		return
+	_mgr_accum += delta
+	if _mgr_accum < 5.0:
+		return
+	_mgr_accum = 0.0
+	var ms := mine.state
+	var reserve: float = state.cash * 0.2
+	var stage: String = ms.bottleneck_stage()
+	var options: Array = []
+	for idx in range(ms.layer_unlocked.size()):
+		if ms.layer_unlocked[idx] and (stage == "layers" or stage == "balanced"):
+			options.append([ms.next_layer_speed_cost(idx), func() -> void: ms.apply_layer_speed_upgrade(idx)])
+	if (stage == "cart" or stage == "balanced") and ms.can_upgrade_cart():
+		options.append([ms.next_cart_cost(), func() -> void: ms.apply_cart_upgrade()])
+	if (stage == "warehouse" or stage == "balanced") and ms.can_upgrade_warehouse():
+		options.append([ms.next_warehouse_cost(), func() -> void: ms.apply_warehouse_upgrade()])
+	if options.is_empty():
+		return
+	options.sort_custom(func(a, b): return a[0] < b[0])
+	var cost: float = options[0][0]
+	if state.cash - cost >= reserve:
+		state.cash -= cost
+		(options[0][1] as Callable).call()
+
+## 地面運輸隊：每 10 秒一個小機械人由倉庫去最近礦堆撿 3 粒返倉（礦值 5 折）
+func _surface_team_tick(delta: float) -> void:
+	_team_accum += delta
+	if _team_accum < 10.0:
+		return
+	_team_accum = 0.0
+	var wh := Vector2(MINE_POS.x + 1.85, MINE_POS.y - 0.25)
+	var target: Vector2 = _nearest_ore_pos(wh)
+	if target == Vector2.INF:
+		return
+	var bot := VisualFactory.make_miner()
+	bot.rotation_degrees.x = 90.0
+	bot.position = Vector3(wh.x, wh.y - 0.4, 0.0)
+	_site.add_child(bot)
+	var trip: float = clampf(wh.distance_to(target) / 1.2, 0.8, 4.0)
+	var tw := create_tween()
+	tw.tween_property(bot, "position", Vector3(target.x, target.y, 0.0), trip).set_trans(Tween.TRANS_SINE)
+	tw.tween_callback(func() -> void:
+		var picked: Array = []
+		for _i in range(80):
+			var s: Dictionary = _slots[rng.randi_range(0, _slots.size() - 1)]
+			if s["gone"] or s["active"]:
+				continue
+			var p: Vector3 = s["pos"]
+			if Vector2(p.x, p.y).distance_to(target) < 0.5:
+				s["gone"] = true
+				_hide_slot(s)
+				picked.append(s["tier"])
+				if picked.size() >= 3:
+					break
+		bot.set_meta("picked", picked))
+	tw.tween_property(bot, "position", Vector3(wh.x, wh.y - 0.4, 0.0), trip).set_trans(Tween.TRANS_SINE)
+	tw.tween_callback(func() -> void:
+		var total := 0.0
+		for tier in bot.get_meta("picked", []):
+			total += mine.state.c.ore_value(tier) * 0.5
+		state.cash += total
+		bot.queue_free())
+
 func _fmt(v: float) -> String:
 	if v >= 1_000_000.0: return "%.1fM" % (v / 1_000_000.0)
 	if v >= 1_000.0: return "%.1fK" % (v / 1_000.0)
@@ -988,6 +1234,10 @@ func _save_game() -> void:
 	d["eco"] = state.eco
 	d["mine_zone"] = mine.to_save_dict()
 	d["last_save_unix"] = Time.get_unix_time_from_system()
+	d["field_ai_unlocked"] = _ai_unlocked
+	d["field_ai_on"] = _ai_on
+	d["field_mgr_unlocked"] = _mgr_unlocked
+	d["field_mgr_on"] = _mgr_on
 	Save.save_raw(d)
 
 func _notification(what: int) -> void:
