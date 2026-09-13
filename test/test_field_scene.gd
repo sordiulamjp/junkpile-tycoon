@@ -193,3 +193,228 @@ func test_layer_platforms_have_static_colliders() -> void:
 		var collider: Node = field.mine._layer_root.get_node_or_null("LayerCollider%d" % idx)
 		assert_not_null(collider, "層 %d 應該有 collider" % idx)
 		assert_true(collider is StaticBody3D)
+
+
+# ══════════════════════ ALTA-241（VR-16）掛機自動化 ══════════════════════
+# 淨係直接 call 私家 handler／tick 方法斷言結果，跟呢個檔案一直以嚟嘅
+# 風格一致（唔靠引擎真正行 physics/tween 一個完整循環）。
+
+# ── 離線結算：接返三段管線嘅速率，唔計 AI 司機／運輸隊嘅收入 ────────
+
+func test_settle_offline_shows_panel_with_pipeline_based_yield() -> void:
+	_load_field()
+	var rate: float = field._pipeline_rate()
+	var now := Time.get_unix_time_from_system()
+
+	field._settle_offline({"last_save_unix": now - 3600.0})
+
+	var expected: float = rate * 3600.0 # 首 2 小時 100%（OfflineSettlement 分段）
+	assert_true(field._offline_panel.visible, "有離線時間就應該彈浣熊經理面板")
+	assert_almost_eq(field._offline_pending, expected, 5.0)
+
+func test_settle_offline_no_panel_without_prior_last_save_unix() -> void:
+	_load_field()
+	field._settle_offline({}) # 冇存檔（第一次開場）唔應該有離線結算
+	assert_false(field._offline_panel.visible)
+	assert_eq(field._offline_pending, 0.0)
+
+func test_offline_claim_button_credits_pending_cash_and_hides_panel() -> void:
+	_load_field()
+	field.state.cash = 100.0
+	field._offline_pending = 500.0
+	field._offline_panel.visible = true
+
+	field._offline_claim_button.pressed.emit()
+
+	assert_almost_eq(field.state.cash, 600.0, EPS)
+	assert_eq(field._offline_pending, 0.0)
+	assert_false(field._offline_panel.visible)
+
+func test_offline_double_button_is_a_disabled_placeholder() -> void:
+	_load_field()
+	assert_true(field._offline_double_button.disabled, "VR-07 未接，×2 睇廣告掣要停用")
+
+
+# ── AI 司機狀態機：揾堆／鏟／賣 ──────────────────────────────
+
+func _fill_bucket(n: int) -> void:
+	for _i in range(n):
+		var body := RigidBody3D.new()
+		body.position = field._car.transform * Vector3(0.0, 0.3, 0.0) # 車前捕獲區入面
+		field._kick_root.add_child(body)
+		field._kicked.append({"slot": {"tier": "silver"}, "node": body, "t": 0.0})
+
+func test_ai_steer_targets_an_ore_pile_while_seeking() -> void:
+	_load_field()
+	field._ai_mode = "heap"
+	field._car.position = Vector3(1000.0, 1000.0, field.CAR_Z) # 遠離礦場，確保未去到目標
+
+	var dir: Vector2 = field._ai_steer(0.1)
+
+	assert_ne(field._ai_target, Vector2.INF, "場上成千粒礦，應該即刻揾到一堆")
+	assert_gt(dir.length(), 0.0, "未去到目標應該有方向輸出")
+
+func test_ai_steer_switches_to_furnace_once_bucket_60_percent_full() -> void:
+	_load_field()
+	field._ai_mode = "heap"
+	var cap: int = field.CARGO_CAP[0] # push_tier 0（開場鏟斗）
+	_fill_bucket(int(float(cap) * 0.6))
+
+	field._ai_steer(0.1)
+
+	assert_eq(field._ai_mode, "furnace", "夠 6 成滿應該轉去揸去爐賣")
+
+func test_ai_steer_stays_in_heap_mode_below_60_percent_full() -> void:
+	_load_field()
+	field._ai_mode = "heap"
+	var cap: int = field.CARGO_CAP[0]
+	_fill_bucket(int(float(cap) * 0.6) - 2) # 差少少先夠 6 成
+
+	field._ai_steer(0.1)
+
+	assert_eq(field._ai_mode, "heap", "未夠 6 成唔應該轉去爐")
+
+func test_ai_steer_returns_to_heap_after_bucket_emptied_near_furnace() -> void:
+	_load_field()
+	field._ai_mode = "furnace"
+	field._ai_target = field.FURNACE_POS + Vector2(-0.3, -0.6)
+	field._car.position = field._site_to_local(field._ai_target, field.CAR_Z)
+	field._kicked.clear() # 賣晒，桶清空
+
+	field._ai_steer(0.1)
+
+	assert_eq(field._ai_mode, "heap", "去到爐、桶清空應該轉返去揾礦堆")
+	assert_ne(field._ai_target, Vector2.INF, "應該即刻揾到下一堆")
+
+func test_ai_activates_after_idle_threshold_and_releases_on_player_input() -> void:
+	_load_field()
+	field._ai_unlocked = true
+	field._ai_on = true
+	field._joy_down = false
+	field._keys_vec = Vector2.ZERO
+
+	for _i in range(5):
+		field._physics_process(1.0)
+	assert_false(field._ai_active, "未夠 6 秒唔應該自動接手")
+
+	field._physics_process(1.5) # 累計 idle 時間跨過 AI_IDLE_SECS
+	assert_true(field._ai_active, "6 秒冇操作應該自動揸")
+
+	field._joy_down = true
+	field._joy_vec = Vector2(1.0, 0.0)
+	field._physics_process(1.0 / 30.0)
+	assert_false(field._ai_active, "玩家一掂搖桿應該即刻接手")
+
+
+# ── AI 司機解鎖：Components 或 Cash（issue：Components 平，優先扣） ──
+
+func test_ai_unlock_prefers_components_when_affordable() -> void:
+	_load_field()
+	field.state.components = 20.0
+	field.state.cash = 0.0
+
+	field._on_ai_pressed()
+
+	assert_true(field._ai_unlocked)
+	assert_almost_eq(field.state.components, 10.0, EPS, "應該扣 10 粒 Components")
+	assert_almost_eq(field.state.cash, 0.0, EPS, "夠 Components 就唔應該掃 Cash")
+
+func test_ai_unlock_falls_back_to_cash_when_no_components() -> void:
+	_load_field()
+	field.state.components = 0.0
+	field.state.cash = 500.0
+
+	field._on_ai_pressed()
+
+	assert_true(field._ai_unlocked)
+	assert_almost_eq(field.state.cash, 0.0, EPS)
+
+func test_ai_unlock_fails_when_neither_currency_is_enough() -> void:
+	_load_field()
+	field.state.components = 5.0
+	field.state.cash = 100.0
+
+	field._on_ai_pressed()
+
+	assert_false(field._ai_unlocked)
+
+func test_ai_button_press_toggles_on_off_once_unlocked() -> void:
+	_load_field()
+	field._ai_unlocked = true
+	field._ai_on = true
+
+	field._on_ai_pressed()
+	assert_false(field._ai_on)
+	field._on_ai_pressed()
+	assert_true(field._ai_on)
+
+
+# ── 經理自動升級：淨升緊瓶頸段，留 20% 現金儲備 ──────────────
+
+func test_manager_tick_upgrades_the_current_bottleneck_stage() -> void:
+	_load_field()
+	field._mgr_unlocked = true
+	field._mgr_on = true
+	field.state.cash = 10000.0
+	assert_eq(field.mine.state.bottleneck_stage(), "layers", "預設層 1 產能最細，應該係瓶頸")
+	var cost: float = field.mine.state.next_layer_speed_cost(0)
+
+	field._manager_tick(5.0)
+
+	assert_eq(field.mine.state.layer_level[0], 1, "經理應該自動幫瓶頸段（層 1）升級")
+	assert_eq(field.mine.state.cart_level, 1, "非瓶頸段唔應該被郁")
+	assert_eq(field.mine.state.warehouse_level, 1, "非瓶頸段唔應該被郁")
+	assert_almost_eq(field.state.cash, 10000.0 - cost, EPS)
+
+func test_manager_tick_waits_for_the_5_second_interval() -> void:
+	_load_field()
+	field._mgr_unlocked = true
+	field._mgr_on = true
+	field.state.cash = 10000.0
+
+	field._manager_tick(2.0)
+
+	assert_eq(field.mine.state.layer_level[0], 0, "未夠 5 秒唔應該升級")
+	assert_almost_eq(field.state.cash, 10000.0, EPS)
+
+func test_manager_tick_keeps_20_percent_cash_reserve() -> void:
+	_load_field()
+	field._mgr_unlocked = true
+	field._mgr_on = true
+	var cost: float = field.mine.state.next_layer_speed_cost(0)
+	field.state.cash = cost * 1.1 # 買咗之後淨返 <20%，唔應該買
+
+	field._manager_tick(5.0)
+
+	assert_eq(field.mine.state.layer_level[0], 0, "會跌穿 20% 現金儲備，唔應該買")
+	assert_almost_eq(field.state.cash, cost * 1.1, EPS)
+
+func test_manager_tick_noop_when_toggle_off() -> void:
+	_load_field()
+	field._mgr_unlocked = true
+	field._mgr_on = false
+	field.state.cash = 10000.0
+
+	field._manager_tick(5.0)
+
+	assert_eq(field.mine.state.layer_level[0], 0)
+	assert_almost_eq(field.state.cash, 10000.0, EPS)
+
+
+# ── 地面運輸隊：每 10 秒派一個機械人（smoke test） ──────────────
+
+func test_surface_team_tick_dispatches_a_bot_after_10_seconds() -> void:
+	_load_field()
+	var before: int = field._site.get_child_count()
+
+	field._surface_team_tick(10.0)
+
+	assert_gt(field._site.get_child_count(), before, "夠 10 秒應該派一個機械人")
+
+func test_surface_team_tick_does_nothing_before_10_seconds() -> void:
+	_load_field()
+	var before: int = field._site.get_child_count()
+
+	field._surface_team_tick(4.0)
+
+	assert_eq(field._site.get_child_count(), before, "未夠 10 秒唔應該派人")

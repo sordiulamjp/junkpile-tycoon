@@ -77,7 +77,12 @@ var _autodrive := false
 var _autodrive_t := 0.0
 
 # ── VR-16 掛機自動化 ──
-const AI_COST := 500.0
+# issue 原文「Components 買（第一次 10 粒，之後遞增）或者 Cash 500 解鎖」——
+# AI 司機係單次永久解鎖（一個 bool），冇「買完一次再買一次」呢件事，所以
+# 「之後遞增」呢句唔適用；實作做「10 Components 或 500 Cash，邊樣夠先扣
+# 邊樣（component 平，優先用）」，兩條路都解鎖同一個永久開關。
+const AI_COST_CASH := 500.0
+const AI_COST_COMPONENTS := 10.0
 const MGR_COST := 2000.0
 const AI_IDLE_SECS := 6.0
 const AI_SPEED_MULT := 0.65
@@ -96,6 +101,8 @@ var _ai_button: Button
 var _mgr_button: Button
 var _offline_panel: PanelContainer
 var _offline_label: Label
+var _offline_claim_button: Button
+var _offline_double_button: Button
 var _offline_pending := 0.0
 
 
@@ -950,9 +957,9 @@ func _refresh_hud() -> void:
 		ic.scale = Vector2.ONE * (1.0 + 0.12 * pulse) if k == stage else Vector2.ONE
 	mine.refresh_afford_state()
 	_update_furnace_arrow()
-	_ai_button.text = ("AI " + ("●" if _ai_on else "○")) if _ai_unlocked else "AI %s" % _fmt(AI_COST)
+	_ai_button.text = ("AI " + ("●" if _ai_on else "○")) if _ai_unlocked else "AI ⚙%s|$%s" % [_fmt(AI_COST_COMPONENTS), _fmt(AI_COST_CASH)]
 	_ai_button.modulate = Color(0.6, 1.0, 0.6) if _ai_active else Color.WHITE
-	_ai_button.disabled = (not _ai_unlocked) and state.cash < AI_COST
+	_ai_button.disabled = (not _ai_unlocked) and state.components < AI_COST_COMPONENTS and state.cash < AI_COST_CASH
 	_mgr_button.text = ("●" if _mgr_on else "○") if _mgr_unlocked else _fmt(MGR_COST)
 	_mgr_button.disabled = (not _mgr_unlocked) and state.cash < MGR_COST
 
@@ -1069,23 +1076,40 @@ func _build_offline_panel() -> void:
 	_offline_label.custom_minimum_size = Vector2(520, 0)
 	_offline_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	v.add_child(_offline_label)
-	var b := Button.new()
-	b.text = "收下"
-	b.custom_minimum_size = Vector2(200, 64)
-	b.add_theme_font_size_override("font_size", 26)
-	b.pressed.connect(func() -> void:
+	var buttons_row := HBoxContainer.new()
+	buttons_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	buttons_row.add_theme_constant_override("separation", 16)
+	v.add_child(buttons_row)
+	# VR-07（留位）：×2 睇廣告——同 main.gd _build_offline_panel() 一樣做法，
+	# 呢度淨係擺位＋停用，接駁廣告係另一張 issue。
+	_offline_double_button = Button.new()
+	_offline_double_button.text = "×2（睇廣告）"
+	_offline_double_button.disabled = true
+	_offline_double_button.tooltip_text = "未接（VR-07）"
+	_offline_double_button.custom_minimum_size = Vector2(180, 64)
+	_offline_double_button.add_theme_font_size_override("font_size", 22)
+	buttons_row.add_child(_offline_double_button)
+	_offline_claim_button = Button.new()
+	_offline_claim_button.text = "收下"
+	_offline_claim_button.custom_minimum_size = Vector2(180, 64)
+	_offline_claim_button.add_theme_font_size_override("font_size", 26)
+	_offline_claim_button.pressed.connect(func() -> void:
 		state.cash += _offline_pending
 		_offline_pending = 0.0
 		_offline_panel.visible = false
 		_save_game())
-	v.add_child(b)
+	buttons_row.add_child(_offline_claim_button)
 	_hud.add_child(_offline_panel)
 
 func _on_ai_pressed() -> void:
 	if not _ai_unlocked:
-		if state.cash < AI_COST:
+		# Components 平過 Cash——夠 Components 就用嗰邊，唔夠先睇 Cash。
+		if state.components >= AI_COST_COMPONENTS:
+			state.components -= AI_COST_COMPONENTS
+		elif state.cash >= AI_COST_CASH:
+			state.cash -= AI_COST_CASH
+		else:
 			return
-		state.cash -= AI_COST
 		_ai_unlocked = true
 		_ai_on = true
 	else:
