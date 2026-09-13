@@ -31,12 +31,18 @@ func test_scene_loads_and_ticks_without_error() -> void:
 	# issue 文案要求完整數字，唔係 _fmt_num() 嘅 K/M 縮寫（Review 意見）。
 	assert_eq(main._lock_label.text, "鎖住 · 2,000,000")
 
+	# ALTA-228：MineZone 層 1 開場已經出緊礦（唔使召喚礦工），5 幀之後
+	# state.cash 應該加埋呢段被動收入——唔再係開場 ALTA-150 嗰個「未召喚
+	# 礦工就企定」嘅前提（嗰個前提淨係適用於山腳嗰條礦工／帶／精煉管
+	# 線，見下面 test_starting_cash_covers_first_miner）。
+	var mine: MineZone = main._mine_zone
+	var blended_ore_value: float = (mine.state.c.ore_value_silver + mine.state.c.ore_value_gold) * 0.5
+	var expected_mine_income: float = mine.state.total_mine_output() * 0.5 * blended_ore_value
+
 	for i in range(5):
 		main._process(0.1)
 
-	# 未召喚礦工，行幾幀都唔應該再郁 Cash（開場 Cash＝starting_cash，
-	# ALTA-150 實機回饋：唔再係 0，見下面 test_starting_cash_covers_first_miner）。
-	assert_almost_eq(main.state.cash, main.c.starting_cash, 0.001)
+	assert_almost_eq(main.state.cash, main.c.starting_cash + expected_mine_income, 0.01)
 
 func test_summon_first_miner_updates_hud_and_pile() -> void:
 	var scene: PackedScene = load("res://main.tscn")

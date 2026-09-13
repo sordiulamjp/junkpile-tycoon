@@ -123,3 +123,20 @@ func test_migration_v1_to_v2_does_not_overwrite_existing_unlocked_regions() -> v
 	var state := {"version": 1, "unlocked_regions": ["region1", "region2"]}
 	var migrated := SaveManager._migrate(state)
 	assert_eq(migrated["unlocked_regions"], ["region1", "region2"])
+
+## ALTA-228（VR-12）：v2 存檔（VR-11 嗰個形狀，冇 mine_zone）陞級到 v3
+## 應該補返預設 mine_zone（層 1 開、層 2／3 鎖、礦車／倉庫 Lv1、推堆墊未買）。
+func test_migration_v2_to_v3_backfills_mine_zone() -> void:
+	var v2_state := {"version": 2, "cash": 500.0, "unlocked_regions": ["region1"]}
+	var migrated := SaveManager._migrate(v2_state)
+	assert_eq(migrated["version"], SaveManager.CURRENT_VERSION)
+	var mine_zone: Dictionary = migrated["mine_zone"]
+	assert_eq(mine_zone["layer_unlocked"], [true, false, false])
+	assert_eq(mine_zone["push_tier"], 0)
+	assert_almost_eq(migrated["cash"], 500.0, EPS, "遷移唔應該影響現有欄位")
+
+func test_migration_v2_to_v3_does_not_overwrite_existing_mine_zone() -> void:
+	var state := {"version": 2, "mine_zone": {"layer_unlocked": [true, true, false], "push_tier": 2}}
+	var migrated := SaveManager._migrate(state)
+	assert_eq(migrated["mine_zone"]["layer_unlocked"], [true, true, false])
+	assert_eq(migrated["mine_zone"]["push_tier"], 2)

@@ -90,6 +90,13 @@ const CAMERA_MAX_PAN := 2.6            # 美術取景常數：最多拖幾遠先
 const REGION2_PANEL_SITE_POS := Vector2(-1.3, 2.6)
 const REGION2_PANEL_HEIGHT := 0.3
 
+## ALTA-228（VR-12）區域 1（開場）場內礦坑——擺喺山腳梯田右手邊、車場
+## 車道（yard_x_range 上限 2.3）之外，深度貼近山腳（唔使好似區域 2 咁
+## 要拖成 2.6 先睇到）。第一版擺位，實機睇落層 2 解鎖板同山頂輪廓喺
+## 透視底下疊埋一齊，留返俾下一輪 review 精調（同 VR-03～06 場地幾輪
+## 先夾啱嘅慣例一致）。
+const MINE_ZONE_SITE_POS := Vector2(2.8, 1.1)
+
 ## 山腳碎料嘅 tap 拾取範圍——刻意獨立於 0.12 嘅視覺盒仔尺寸（ALTA-195，
 ## 實機驗收見 Reviewer 喺 ALTA-150 嘅提醒）。720×960 下依家個相機要一次
 ## 框晒山腳到山頂長到盡（12 層），令 1 世界單位≈107px，跟視覺尺寸嘅
@@ -144,6 +151,10 @@ var _camera_pan: float = 0.0       # 沿住相機 local up 軸嘅偏移量，夾
 # -- VR-11：場地擴張框架 --
 var _unlocked_regions: Array[String] = ["region1"] # 區域 1 恆常已解鎖
 var _region2_panel: UnlockPanel
+
+# -- ALTA-228（VR-12）：區域 1 場內礦坑 --
+var _mine_zone: MineZone
+var _mine_zone_saved_data: Dictionary = {} # 讀檔嗰陣暫存，_build_region_expansion() 起 MineZone 嗰刻先套用
 
 # -- HUD 節點 --
 var _lock_label: Label
@@ -332,6 +343,9 @@ func _apply_loaded_state(loaded: Dictionary) -> void:
 		_unlocked_regions.append(String(region_id))
 	if not "region1" in _unlocked_regions:
 		_unlocked_regions.append("region1")
+	# ALTA-228：MineZone 呢一刻仲未構造（_build_world() 未行過），淨係暫存
+	# 低，等 _build_region_expansion() 起 MineZone 嗰陣先傳落 setup()。
+	_mine_zone_saved_data = loaded.get("mine_zone", {})
 	_lifetime_cash = float(loaded.get("lifetime_cash", 0.0))
 	_prestige_count = int(loaded.get("prestige_count", 0))
 	_last_save_unix = float(loaded.get("last_save_unix", Time.get_unix_time_from_system()))
@@ -354,6 +368,7 @@ func _build_save_state() -> Dictionary:
 		"belt_level": state.belt_level,
 		"refine_level": state.refine_level,
 		"unlocked_regions": _unlocked_regions,
+		"mine_zone": _mine_zone.to_save_dict(),
 	}
 
 ## VR-11：將當刻嘅即時 cash／components／eco 推返落 Wallet（共用錢包
@@ -474,6 +489,8 @@ func _process(delta: float) -> void:
 		_frenzy_view.spawn_gear()
 	if events["ended"]:
 		_on_frenzy_ended()
+
+	_mine_zone.tick(delta) # ALTA-228：三段管線 + 剖面面板刷新，cash_gain 直接加落 state.cash
 
 	_refresh_hud()
 
@@ -859,6 +876,14 @@ func _build_region_expansion() -> void:
 	_region2_panel.setup("region2", c.region2_unlock_price, "區域 2　紫岩礦場", _try_unlock_region)
 	if "region2" in _unlocked_regions:
 		_region2_panel.mark_unlocked()
+
+	# ALTA-228（VR-12）：區域 1（開場）場內礦坑——同一場地擴張，唔係獨立
+	# 場景（見 regions/region1_mine/mine_zone.gd 頂部註解）。
+	_mine_zone = MineZone.new()
+	_mine_zone.name = "MineZone"
+	_mine_zone.position = _site_to_world(MINE_ZONE_SITE_POS)
+	_placement_root.add_child(_mine_zone)
+	_mine_zone.setup(state, frenzy, _mine_zone_saved_data)
 
 ## UnlockPanel 撳落去嘅 callback。夠錢先真正扣 state.cash＋記落
 ## _unlocked_regions＋存檔；唔夠錢就乜都唔做（板自己會靠
@@ -1703,6 +1728,8 @@ func _refresh_hud() -> void:
 
 	if _region2_panel != null:
 		_region2_panel.refresh_afford_state(state.cash) # VR-11：解鎖板「夠唔夠錢」嘅暗／亮色跟返即時 Cash
+	if _mine_zone != null:
+		_mine_zone.refresh_afford_state() # ALTA-228：礦層解鎖板／推堆墊跟返即時 Cash
 
 	_summon_button.text = "召喚礦工 (%d/%d)" % [state.miner_count, c.miner_summon_cap]
 	if state.can_summon_miner():
