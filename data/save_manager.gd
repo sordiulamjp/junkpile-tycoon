@@ -13,9 +13,13 @@ class_name SaveManager
 ## VR-05b（ALTA-216）備註：main.gd 已經接咗呢個流程——_ready() 開機讀
 ## load_state()，升級／召喚／狂熱完場／每 30s／退背景／關閉視窗全部會
 ## save_state()（見 main.gd _save_game() 同埋佢嘅呼叫點）。
+##
+## VR-11（ALTA-227）備註：「同一場地，由下向上擴張」（field-zones-v9.png）
+## ——唔係獨立場景，一個存檔仍然係呢個 flat dict，新增 unlocked_regions
+## 記低已解鎖咗邊幾個區域（見 v1→v2 遷移分支）。
 
 const SAVE_PATH := "user://save-v1.json"
-const CURRENT_VERSION := 1
+const CURRENT_VERSION := 2
 
 ## 全新存檔嘅預設狀態。
 static func default_state() -> Dictionary:
@@ -31,6 +35,7 @@ static func default_state() -> Dictionary:
 		"miner_level": 0,
 		"belt_level": 1,
 		"refine_level": 0,
+		"unlocked_regions": ["region1"],
 	}
 
 ## 存檔：寫入 {SAVE_KEY: state} 做 JSON。失敗（例如冇寫入權限）回傳 FileAccess 錯誤碼。
@@ -76,6 +81,13 @@ static func _migrate(data: Dictionary) -> Dictionary:
 			if not data.has(key):
 				data[key] = defaults[key]
 		version = 1
-	# 未來新版本喺呢度逐級加：if version < 2: ... version = 2
+	if version < 2:
+		# v1 -> v2（VR-11）：加 unlocked_regions。舊存檔本身已經有區域 1
+		# 嘅進度（冧一世都喺度玩緊嗰個場地），所以當佢區域 1 已解鎖，唔使
+		# 由頭嚟過。
+		if not data.has("unlocked_regions"):
+			data["unlocked_regions"] = ["region1"]
+		version = 2
+	# 未來新版本喺呢度逐級加：if version < 3: ... version = 3
 	data["version"] = version
 	return data

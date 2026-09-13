@@ -18,6 +18,7 @@ func test_default_state_has_current_version() -> void:
 	assert_eq(state["version"], SaveManager.CURRENT_VERSION)
 	assert_eq(state["cash"], 0.0)
 	assert_eq(state["prestige_count"], 0)
+	assert_eq(state["unlocked_regions"], ["region1"]) # VR-11：新玩家開場只解鎖咗區域 1
 
 func test_load_without_save_file_returns_default() -> void:
 	var state := SaveManager.load_state()
@@ -36,6 +37,7 @@ func test_save_then_load_round_trip_preserves_resources() -> void:
 	state["miner_level"] = 15
 	state["belt_level"] = 4
 	state["refine_level"] = 2
+	state["unlocked_regions"] = ["region1", "region2"]
 
 	var err := SaveManager.save_state(state)
 	assert_eq(err, OK)
@@ -51,6 +53,7 @@ func test_save_then_load_round_trip_preserves_resources() -> void:
 	assert_eq(int(loaded["miner_level"]), 15)
 	assert_eq(int(loaded["belt_level"]), 4)
 	assert_eq(int(loaded["refine_level"]), 2)
+	assert_eq(loaded["unlocked_regions"], ["region1", "region2"])
 
 func test_load_corrupt_file_falls_back_to_default() -> void:
 	var file := FileAccess.open(SaveManager.SAVE_PATH, FileAccess.WRITE)
@@ -93,3 +96,30 @@ func test_migration_is_idempotent_on_current_version() -> void:
 	var migrated := SaveManager._migrate(state)
 	assert_eq(migrated["version"], SaveManager.CURRENT_VERSION)
 	assert_almost_eq(migrated["cash"], 42.0, EPS)
+
+## VR-11（ALTA-227）：v1 存檔（VR-05 原本嗰個形狀，冇 unlocked_regions）
+## 陞級到 v2 應該補返 unlocked_regions=["region1"]——舊存檔本身已經有
+## 區域 1 嘅進度，唔應該當佢乜都未解鎖。
+func test_migration_v1_to_v2_backfills_unlocked_regions() -> void:
+	var v1_state := {
+		"version": 1,
+		"last_save_unix": Time.get_unix_time_from_system(),
+		"cash": 500.0,
+		"components": 0.0,
+		"eco": 0.0,
+		"lifetime_cash": 500.0,
+		"prestige_count": 0,
+		"miners": 2,
+		"miner_level": 0,
+		"belt_level": 1,
+		"refine_level": 0,
+	}
+	var migrated := SaveManager._migrate(v1_state)
+	assert_eq(migrated["version"], SaveManager.CURRENT_VERSION)
+	assert_eq(migrated["unlocked_regions"], ["region1"])
+	assert_almost_eq(migrated["cash"], 500.0, EPS, "遷移唔應該影響現有欄位")
+
+func test_migration_v1_to_v2_does_not_overwrite_existing_unlocked_regions() -> void:
+	var state := {"version": 1, "unlocked_regions": ["region1", "region2"]}
+	var migrated := SaveManager._migrate(state)
+	assert_eq(migrated["unlocked_regions"], ["region1", "region2"])

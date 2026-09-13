@@ -141,6 +141,13 @@ enum Resource3 { CASH, COMPONENTS, ECO }
 @export var unlock_mid_price: float = 2000000.0    # TUNE
 @export var unlock_upper_price: float = 30000000.0 # TUNE
 
+## -- VR-11 場地擴張框架：區域解鎖板（field-zones-v9.png）--
+## 「同一場地，由下（區域 1）向上擴張」，唔係獨立場景——見
+## systems/unlock_panel.gd／main.gd _build_region_expansion()。區域 2～4
+## 嘅實際內容（VR-13～15）暫時 backlog，呢度淨係框架驗證用嘅第一個解鎖
+## 板價錢（區域 2「紫岩礦場」入口，示意圖標「200」紫色解鎖板）。
+@export var region2_unlock_price: float = 50000.0 # TUNE：區域 2 入口解鎖板
+
 ## -- 威望重置（拆廠搬礦）--
 @export var prestige_base: float = 15000000.0     # TUNE：門檻 = base × growth^n
 @export var prestige_growth: float = 6.0          # TUNE
@@ -294,7 +301,7 @@ const REMOTE_TUNABLE_FIELDS: Array[String] = [
 	"frenzy_fake_physics_min_tier",
 	"ore_pool_total_count", "ore_pool_ball_radius", "ore_pool_gold_scale_mult",
 	"ore_pool_kick_radius", "ore_pool_kick_lifetime_secs", "ore_pool_kick_scan_interval_secs",
-	"ore_pool_kick_impulse",
+	"ore_pool_kick_impulse", "region2_unlock_price",
 ]
 
 
