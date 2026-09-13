@@ -28,7 +28,7 @@ const ORE_RADIUS := 0.04
 const ORE_COUNT := 5600
 const KICK_RADIUS := 1.0   # 車前方呢個半徑內嘅礦轉做真剛體，俾鏟斗物理推
 const KICK_LIFETIME := 1.0
-const KICK_BUDGET := 170
+const KICK_BUDGET := 260
 const RESPAWN_PER_SEC := 6.0
 
 var c: GameConstants
@@ -362,6 +362,22 @@ func _physics_process(delta: float) -> void:
 	# keep on the ground plane
 	_car.position.z = CAR_Z
 	_rigidize_front_tick()
+	# 用戶：推唔郁礦——CharacterBody3D 本身唔會推剛體，要自己傳速度：
+	# 撞到嘅礦沿碰撞法線攞到最少同車一樣嘅速度（似真係俾鏟斗推住走）
+	var vcar: Vector3 = _car.velocity
+	for i in range(_car.get_slide_collision_count()):
+		var kc := _car.get_slide_collision(i)
+		var body := kc.get_collider()
+		if body is RigidBody3D:
+			var push_dir: Vector3 = -kc.get_normal()
+			push_dir.y = 0.0 # 世界 y 係高度，唔向上推
+			if push_dir.length() < 0.01:
+				continue
+			push_dir = push_dir.normalized()
+			var v_need: float = vcar.dot(push_dir) + 0.25
+			var v_has: float = (body as RigidBody3D).linear_velocity.dot(push_dir)
+			if v_need > v_has:
+				(body as RigidBody3D).linear_velocity += push_dir * (v_need - v_has)
 	# face movement direction
 	if _car_vel.length() > 0.05:
 		var ang: float = atan2(_car_vel.y, _car_vel.x) - PI * 0.5
@@ -444,19 +460,24 @@ func _rigidize_front_tick() -> void:
 	if budget <= 0:
 		return
 	var cp: Vector3 = _car.position
-	var r2: float = KICK_RADIUS * KICK_RADIUS
+	var r2: float = (KICK_RADIUS + 0.4) * (KICK_RADIUS + 0.4)
 	var inv: Transform3D = _car.transform.affine_inverse()
+	var cands: Array = []
 	for s: Dictionary in _slots:
-		if budget <= 0:
-			break
 		if s["active"] or s["gone"]:
 			continue
 		var p: Vector3 = s["pos"]
 		if p.distance_squared_to(cp) > r2:
 			continue
-		if (inv * p).y < -0.25:
-			continue # 車尾唔理
-		_activate_slot(s)
+		var lp: Vector3 = inv * p
+		if lp.y < -0.4 or lp.y > 1.2 or absf(lp.x) > 0.75:
+			continue
+		cands.append([lp.y, s])
+	cands.sort_custom(func(a, b): return a[0] < b[0]) # 最貼近車頭嘅先轉（佔用預算最有用）
+	for c_ in cands:
+		if budget <= 0:
+			break
+		_activate_slot(c_[1])
 		budget -= 1
 
 func _pool_tick(delta: float) -> void:
@@ -677,7 +698,7 @@ func _activate_slot(s: Dictionary) -> void:
 	body.linear_damp = 2.5
 	body.angular_damp = 4.0
 	body.continuous_cd = true
-	body.axis_lock_linear_y = false
+	body.can_sleep = false
 	_kick_root.add_child(body)
 	_kicked.append({"slot": s, "node": body, "t": 0.0})
 
