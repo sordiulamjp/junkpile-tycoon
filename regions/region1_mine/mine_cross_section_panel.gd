@@ -49,6 +49,7 @@ func _build_ui() -> void:
 
 	var bg := ColorRect.new()
 	bg.color = Color(0.06, 0.05, 0.08, 0.96) # 半透明深紫黑，貼返 IG 色調氣氛
+	bg.mouse_filter = Control.MOUSE_FILTER_STOP # 擋住背後 3D 世界嘅 tap（同 _build_modal_card() 嘅 scrim 一致）
 	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
 	add_child(bg)
 

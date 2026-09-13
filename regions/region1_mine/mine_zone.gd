@@ -6,13 +6,15 @@ class_name MineZone
 ## 擴張框架下（VR-11／ALTA-227「同一場地，由下向上擴張」，唔係獨立
 ## 場景——Reviewer round 1 修正，取代第一版獨立 Control 場景）。
 ##
-## main.gd 負責：擺位（`.position = _site_to_world(MINE_ZONE_SITE_POS)`）、
-## `add_child(_placement_root)`、每幀 call `tick(delta)`、`_refresh_hud()`
-## 度 call `refresh_afford_state()`、存檔讀寫 call `to_save_dict()` /
-## 讀檔後將 dict 傳落 `setup()` 嘅 `saved` 參數。呢個 class 自己擁有埋
-## Part B（MineCrossSectionPanel，撳「礦道入口」toggle）、地面礦堆生成／
-## tap、3 個推堆墊、2 個礦層解鎖板——全部沿用 systems/unlock_panel.gd
-## （唔重新起一套解鎖板）。
+## main.gd 負責：擺位（`.position = _site_to_world(MINE_ZONE_SITE_POS,
+## MINE_ZONE_ELEVATION)`——Reviewer round 2：山腳 12 層梯田＋峽谷後排石
+## 恆常起足高，礦坑貼地擺喺後面會俾佢哋遮住，故意「浮高咗」一截先企
+## 出嚟，見 main.gd MINE_ZONE_ELEVATION 註解）、`add_child(_placement_root)`、
+## 每幀 call `tick(delta)`、`_refresh_hud()` 度 call `refresh_afford_state()`、
+## 存檔讀寫 call `to_save_dict()` / 讀檔後將 dict 傳落 `setup()` 嘅
+## `saved` 參數。呢個 class 自己擁有埋 Part B（MineCrossSectionPanel，
+## 撳「礦道入口」toggle）、地面礦堆生成／tap、3 個推堆墊、2 個礦層解鎖
+## 板——全部沿用 systems/unlock_panel.gd（唔重新起一套解鎖板）。
 ##
 ## 色調跟 Analyst 16:48「區域 1 規格」：IG 廣告 DdEYh2HMRW1 紫岩色調（見
 ## mine_constants.gd PALETTE）。
@@ -40,6 +42,11 @@ var _pile_spawn_timer: Timer
 
 ## saved：main.gd 讀檔攞到嘅 mine_zone 子 dict（見 data/save_manager.gd
 ## v2→v3 遷移），冇存檔就 {}（MineState 用預設值：層 1 開，層 2／3 鎖）。
+##
+## 淨係起 3D 部分（Part A）——Part B（剖面面板）要掛落 HUD CanvasLayer
+## 先掛得啱 z-order／接得到 tap（Reviewer round 2：面板掛喺呢個 Node3D
+## 底下預設 canvas layer 0，俾 HUD 嘅 CanvasLayer(1) 冚住/擋撳），見
+## `attach_panel()`，main.gd `_build_hud()` 起完 HUD 先 call。
 func setup(p_game_state: GameState, p_frenzy: FrenzyState, saved: Dictionary = {}) -> void:
 	_game_state = p_game_state
 	_frenzy = p_frenzy
@@ -62,17 +69,22 @@ func setup(p_game_state: GameState, p_frenzy: FrenzyState, saved: Dictionary = {
 	_build_push_pads()
 	_build_entrance()
 
-	panel = MineCrossSectionPanel.new()
-	panel.name = "CrossSectionPanel"
-	add_child(panel)
-	panel.setup(state, _game_state)
-	panel.close_requested.connect(panel.close)
-
 	_pile_spawn_timer = Timer.new()
 	_pile_spawn_timer.wait_time = state.c.pile_spawn_interval_secs
 	_pile_spawn_timer.autostart = true
 	_pile_spawn_timer.timeout.connect(_on_pile_spawn_timeout)
 	add_child(_pile_spawn_timer)
+
+## Part B：main.gd `_build_hud()` 起完 HUD（top_bar／bottom_bar／離線／
+## 威望彈窗）之後 call 一次——面板掛落同一個 `hud_layer`，跟
+## `_build_modal_card()` 嗰兩個彈窗同一層、同一種「後加入＝畫喺面」次序，
+## 先保證面板嘅標題／Cash／「關閉」掣冚得過頂／底 HUD bar，撳得到。
+func attach_panel(hud_layer: CanvasLayer) -> void:
+	panel = MineCrossSectionPanel.new()
+	panel.name = "MineCrossSectionPanel"
+	hud_layer.add_child(panel)
+	panel.setup(state, _game_state)
+	panel.close_requested.connect(panel.close)
 
 
 func _load_progress(saved: Dictionary) -> void:
@@ -275,10 +287,12 @@ func _on_entrance_input(
 # ══════════════════════ 3D 視覺：推堆墊（150／500／1000 鏟斗 tier） ══════════════════════
 
 func _build_push_pads() -> void:
+	# Reviewer round 2：Y 方向（深度）排開喺遠鏡頭底下透視壓縮到幾乎疊
+	# 埋一齊（三個牌文字疊晒），改用橫向（X）排開，唔受深度壓縮影響。
 	for i in range(state.c.push_tier_cost.size()):
 		var p := UnlockPanel.new()
 		p.name = "PushPad%d" % i
-		p.position = Vector3(-LAYER_WIDTH * 0.5 - 0.5, 0.15 + float(i) * 0.55, 0.25)
+		p.position = Vector3(-LAYER_WIDTH * 0.5 - 1.3 + float(i) * 1.1, -0.2, 0.25)
 		add_child(p)
 		var region_id := "push%d" % i
 		p.setup(region_id, state.c.push_tier_cost[i], state.c.push_tier_names[i], _on_push_tap)
