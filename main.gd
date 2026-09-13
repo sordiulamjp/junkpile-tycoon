@@ -1060,7 +1060,8 @@ func _place_miner_around_foothill(miner: Node3D, index: int) -> void:
 	miner.position = Vector3(x, y, 0.0)
 	# glTF 模型 +y 向上；場地攤平後「上」係 site +z，所以先轉 90°，再繞 z 轉去面向山（+y）。
 	var miner_scale: Vector3 = miner.scale
-	miner.basis = Basis(Vector3(1, 0, 0), PI * 0.5).scaled(miner_scale)
+	# 實機見到 Rx(90°) 之後礦工「面朝天躺低」→ 呢個 glTF 本身 up 係 +z；淨係繞 z 轉去面向山。
+	miner.basis = Basis.IDENTITY.scaled(miner_scale)
 
 func _animate_mining(node: Node3D) -> void:
 	var base_z := node.position.z

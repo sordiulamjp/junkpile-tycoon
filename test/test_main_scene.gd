@@ -452,7 +452,7 @@ func test_summoned_miners_are_distributed_around_foothill() -> void:
 	# 目標而歪咗成 30 幾度。
 	for miner: Node3D in [m0, m1]:
 		# VR-06b（ALTA-219）：場地攤平做地面，模型 +y 轉去 site +z（企直＝rotation.x 90°）。
-		assert_almost_eq(miner.rotation.x, PI * 0.5, 0.01, "礦工應該企直（模型 +y 對 site +z）")
+		assert_almost_eq(miner.rotation.x, 0.0, 0.01, "礦工應該企直（模型 up 本身係 +z，唔使繞 x 轉）")
 		assert_almost_eq(miner.rotation.z, 0.0, 0.01, "礦工唔應該側身")
 		assert_true(miner.position.y < 0.0, "礦工應該企喺山腳前面（site -y），唔會俾梯田擋住")
 		assert_almost_eq(miner.position.z, 0.0, 0.01, "礦工應該貼地")
