@@ -17,9 +17,13 @@ class_name SaveManager
 ## VR-11（ALTA-227）備註：「同一場地，由下向上擴張」（field-zones-v9.png）
 ## ——唔係獨立場景，一個存檔仍然係呢個 flat dict，新增 unlocked_regions
 ## 記低已解鎖咗邊幾個區域（見 v1→v2 遷移分支）。
+##
+## ALTA-228（VR-12）備註：區域 1（開場）場內礦坑（regions/region1_mine/
+## mine_zone.gd）加咗 "mine_zone" 子 dict（層解鎖／等級、礦車／倉庫
+## 等級、推堆墊 tier，見 v2→v3 遷移分支）。
 
 const SAVE_PATH := "user://save-v1.json"
-const CURRENT_VERSION := 2
+const CURRENT_VERSION := 3
 
 ## 全新存檔嘅預設狀態。
 static func default_state() -> Dictionary:
@@ -36,6 +40,13 @@ static func default_state() -> Dictionary:
 		"belt_level": 1,
 		"refine_level": 0,
 		"unlocked_regions": ["region1"],
+		"mine_zone": {
+			"layer_unlocked": [true, false, false],
+			"layer_level": [0, 0, 0],
+			"cart_level": 1,
+			"warehouse_level": 1,
+			"push_tier": 0,
+		},
 	}
 
 ## 存檔：寫入 {SAVE_KEY: state} 做 JSON。失敗（例如冇寫入權限）回傳 FileAccess 錯誤碼。
@@ -88,6 +99,18 @@ static func _migrate(data: Dictionary) -> Dictionary:
 		if not data.has("unlocked_regions"):
 			data["unlocked_regions"] = ["region1"]
 		version = 2
-	# 未來新版本喺呢度逐級加：if version < 3: ... version = 3
+	if version < 3:
+		# v2 -> v3（ALTA-228）：加 mine_zone（層 1 開場已開，層 2／3 鎖、
+		# 礦車／倉庫 Lv1、推堆墊未買）。
+		if not data.has("mine_zone"):
+			data["mine_zone"] = {
+				"layer_unlocked": [true, false, false],
+				"layer_level": [0, 0, 0],
+				"cart_level": 1,
+				"warehouse_level": 1,
+				"push_tier": 0,
+			}
+		version = 3
+	# 未來新版本喺呢度逐級加：if version < 4: ... version = 4
 	data["version"] = version
 	return data

@@ -15,10 +15,15 @@
   係 debug 畫面（睇／匯出／清除），同 `ads/ad_test.tscn` 一樣冇搶 `run/main_scene`
 - `systems/remote_constants.gd` + `systems/remote_constants_loader.gd`：遠端 constants 覆寫
   （VR-08），Worker 部署見 `worker/README.md`
-- `regions/`：PLAN v2（2026-09-13，父 issue 留言）嘅多區域地圖，每個區域一個獨立 Godot
-  場景，錢包／存檔跨區域共用（VR-11，未接）。`regions/region1_mine/region1_mine.tscn`
-  （VR-12，ALTA-228：礦層 → 升降機 → 倉庫側視放置）跟 `ads/ad_test.tscn` 同一慣例，冇搶
-  `run/main_scene`——想睇/測就用 Godot editor 開呢個 scene 撳 F6，或者出 APK 前臨時將
-  `run/main_scene` 改去佢
+- `autoload/wallet.gd` + `autoload/save.gd`：VR-11（ALTA-227）共用錢包／存檔駁線；
+  `systems/unlock_panel.gd`：reusable 解鎖板元件（撳落去夠錢就扣 GameState.cash＋記存檔）
+- 「同一場地，由下向上擴張」（field-zones-v9.png，VR-11／ALTA-227）——**唔係獨立場景**，
+  全部區域／子系統都掛喺 `main.tscn` 單一 3D 世界下，鏡頭可拖睇到更多。`regions/`
+  淨係擺純數值／UI 邏輯（唔掛 SceneTree，方便 GUT 獨立測試），3D 視覺／輸入一律喺
+  `main.gd` 或者掛落 `_placement_root` 嘅 class（例如 `regions/region1_mine/mine_zone.gd`）
+  起。`regions/region1_mine/`（VR-12，ALTA-228：區域 1 場內礦坑——後壁梯級礦層 →
+  礦車路軌 → 倉庫 + 推堆墊）：`mine_state.gd` 純數值、`mine_zone.gd` 3D 場景（後壁
+  梯級、UnlockPanel 解鎖板、地面礦堆）、`mine_cross_section_panel.gd` 撳「礦道入口」
+  toggle 嘅 2D 剖面面板，三者都由 `main.gd` 構造／驅動，唔係獨立 `.tscn`
 
 設計總帳同 PLAN 見 Multica 父 issue。

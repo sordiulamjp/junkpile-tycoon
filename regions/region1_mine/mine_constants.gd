@@ -1,108 +1,109 @@
 extends Resource
 class_name MineConstants
 
-## ALTA-228（VR-12）區域 1 礦坑數值表。
+## ALTA-228（VR-12）區域 1（開場）場內礦坑數值表。
 ##
-## 抄 GameConstants（data/constants.gd）嘅曲線風格套用落三段：
-##   礦層開採速度 → 抄 miner_level 曲線（無上限，速度乘倍率／級）
-##   升降機運載   → 抄 belt 曲線（capacity，Lv1~cap 封頂）
-##   倉庫收集     → 抄 belt 曲線（capacity，Lv1~cap 封頂）
-## ore_tier_value 跟 GameConstants 同一套數值（docx：石1／煤2／銅4／
-## 金8／鑽18／皇冠40），呢度重覆一份而唔係 import GameConstants，係因為
-## 呢個區域仲未經 VR-11 接落共用 autoload，故意唔拉跨區域依賴（見
-## regions/region1_mine/region1_mine.gd 頂部註解）。
-##
-## 全部 TUNE（呢張 issue 冇 docx 數值可跟，Coder 定嘅預設值，日後可調）。
+## Reviewer round 1 修正（2026-09-14）：跟返 Analyst 16:48「區域 1 規格
+## （用戶決定：A+B；開場 1 層開 2 層鎖；色調跟 IG）」留言，取代第一版
+## （獨立場景、3 層全開、自成一格 cash）嘅舊設計。「同一場地，由下向上
+## 擴張」（VR-11／ALTA-227，唔係獨立場景）——呢個 class 純粹係數值表，
+## 唔擁有 Cash：夠唔夠錢、扣邊個欄位由呼叫方（regions/region1_mine/
+## mine_zone.gd）用 GameState.cash（main.gd 揸嘅共用錢包）決定，跟
+## systems/unlock_panel.gd 同一分工（該檔案頂部註解解釋咗點解要咁分）。
 
-@export var ore_tier_value: Dictionary = {
-	"stone": 1, "coal": 2, "copper": 4, "gold": 8, "diamond": 18, "crown": 40,
+## -- 色調（IG 廣告 DdEYh2HMRW1，用戶 2026-09-14 決定） --
+const PALETTE := {
+	"wall": "#7A4AB0", "wall_light": "#9A62C8", "wall_dark": "#5E3A8C",
+	"ground": "#5C5060",
+	"layer1": "#8C7A6A", "layer2": "#5A4636", "layer3": "#3A2A44",
+	"ore_silver": "#C9CFD6", "ore_gold": "#F2B830",
+	"pad": "#6E3CA0", "shovel_preview": "#B4E1F0",
+	"furnace": "#2E2E33", "furnace_fire": "#FF7A1E",
 }
 
-## 礦層 1–3 各自嘅礦物分佈（issue 明文：層1 石／煤、層2 銅／金、層3 鑽／皇冠）。
-## 索引 0..2 對應礦層 1..3。層 4 未開放採礦，冇分佈。
-@export var layer_ore_distribution: Array[Dictionary] = [
-	{"stone": 0.6, "coal": 0.4},
-	{"copper": 0.6, "gold": 0.4},
-	{"diamond": 0.6, "crown": 0.4},
-]
+const LAYER_COUNT := 3
+## 礦層幾何（issue：層 1 最前最低、高 0.35；層 2／3 各向後退 0.9、各 +0.35 高）。
+const LAYER_HEIGHT_STEP := 0.35
+const LAYER_DEPTH_STEP := 0.9
 
-## 開場已解鎖礦層數——issue 驗收「3 層全開」，層 1–3 由開場已經可採，
-## 淨係層 4 鎖住（見 layer4_unlock_price）。
-const UNLOCKED_LAYER_COUNT := 3
+## -- 層解鎖：層 1 開場已開（cost=0，唔使解鎖），層 2／3 鎖住，撳
+## UnlockPanel 買（一定要順序解鎖，唔可以跳層 2 直接解鎖層 3）。 --
+@export var layer_unlock_cost: Array[float] = [0.0, 250.0, 1200.0] # TUNE
 
-## -- 礦層 4：鎖住顯示解鎖價（呢期唔開放購買，見 region1_mine.gd） --
-@export var layer4_unlock_price: float = 8000000.0
-
-## -- 礦層開採速度（每層獨立等級，無上限，抄 miner_level 曲線） --
+## -- 每層開採速度（每層獨立等級，無上限，抄 miner_level 曲線） --
 @export var layer_base_rate: float = 0.6         # TUNE：Lv0 每層 ore/s
-@export var layer_level_speed_mult: float = 1.08 # TUNE：每級速度倍率
+@export var layer_level_speed_mult: float = 1.08 # TUNE
 @export var layer_level_cost_base: float = 20.0  # TUNE：第 n 級價 = base × mult^n（n 由 0 開始）
 @export var layer_level_cost_mult: float = 1.20  # TUNE
 
-## -- 升降機：運載量／速度（capacity 曲線，抄 belt，Lv1~cap 封頂） --
-@export var elevator_cap_lv1: float = 1.8   # TUNE：Lv1 運載上限（ore/s）
-@export var elevator_step: float = 0.25     # TUNE：每級 +25%
-@export var elevator_level_cap: int = 10    # TUNE：Lv10 封頂
-@export var elevator_cost_base: float = 50.0 # TUNE：第 n 級價 = base × mult^(n-1)
-@export var elevator_cost_mult: float = 1.5  # TUNE
+## -- 礦車路軌運載（issue 標題：「礦車＝升降機」，即原設計嘅運載段，
+## 抄 belt capacity 曲線，Lv1~cap 封頂） --
+@export var cart_cap_lv1: float = 1.8    # TUNE
+@export var cart_step: float = 0.25      # TUNE
+@export var cart_level_cap: int = 10     # TUNE
+@export var cart_cost_base: float = 50.0 # TUNE
+@export var cart_cost_mult: float = 1.5  # TUNE
 
-## -- 倉庫：收集速度（capacity 曲線，抄 belt，Lv1~cap 封頂） --
+## -- 倉庫收集（＝地面收集，抄 belt 曲線） --
 @export var warehouse_cap_lv1: float = 1.5    # TUNE
 @export var warehouse_step: float = 0.22      # TUNE
 @export var warehouse_level_cap: int = 10     # TUNE
 @export var warehouse_cost_base: float = 40.0 # TUNE
 @export var warehouse_cost_mult: float = 1.45 # TUNE
 
-## -- 三段未平衡嘅緩衝上限（issue：「升降機慢→礦塞地底，地面慢→升降機停」）--
-## 地底排隊（已採出但升降機未搬走）爆咗即「塞爆」，超出嘅份量截斷唔採
-## （underground_backlog 夾喺 0~cap，唔會無限疊）。
+## -- 三段未平衡嘅緩衝上限（issue：「升降機慢→礦塞地底，地面慢→升降機停」，
+## 呢版即「礦車慢→礦塞層台，倉庫慢→礦車停」） --
 @export var underground_backlog_cap: float = 40.0
-## 升降機運到地面等緊倉庫收嘅緩衝，爆咗即升降機冇位再落嚟接，等於停運。
 @export var ground_backlog_cap: float = 30.0
 
-## 開場資金＝三段第一級升級入面最平嗰個（呢度即 layer_level_cost_base，
-## 20 < elevator_cost_base 50 < warehouse_cost_base 40）；跟 GameConstants
-## starting_cash 嘅做法（ALTA-150 實機回饋：開場即夠買一個升級，
-## 20 秒內完成首次購買）。
-@export var starting_cash: float = minf(minf(layer_level_cost_base, elevator_cost_base), warehouse_cost_base)
+## -- 地面礦堆（issue：「礦粒瀉落地面成堆（銀多金少）」） --
+@export var ore_value_silver: float = 3.0            # TUNE
+@export var ore_value_gold: float = 9.0              # TUNE
+@export var pile_silver_ratio: float = 0.75          # TUNE：堆入面銀嘅比例，其餘金
+@export var pile_spawn_interval_secs: float = 3.0    # TUNE
+@export var pile_cap: int = 16                        # TUNE：地面堆未撿上限，避免場景無限脹
+
+## -- 推堆墊（issue：150 鏟斗／500 熔爐賣礦／1000 大鏟斗，逐級加 tap
+## 收礦倍率；跟現有 car_upgrade_tiers 風格，但呢度用 Cash 買唔係免費
+## 駛過） --
+@export var push_tier_cost: Array[float] = [150.0, 500.0, 1000.0]     # TUNE
+@export var push_tier_scoop_mult: Array[float] = [1.0, 1.8, 3.0]      # TUNE
+@export var push_tier_names: Array[String] = ["鏟斗", "熔爐賣礦", "大鏟斗"]
+
+## -- 狂熱（issue：「沿用 FrenzyState」——唔開獨立計時器，直接讀 main.gd
+## 現有嘅 frenzy.active，狂熱期間撳礦堆值 ×frenzy_income_mult，跟現有
+## GameConstants.frenzy_mult 同一數量級） --
+@export var frenzy_income_mult: float = 5.0 # TUNE
 
 
 # ══════════════════════════ 計算方法 ══════════════════════════
 
-## 礦層 n（第 n 級，由 0 開始）出礦速度（ore/s）。
 func layer_rate_at_level(level: int) -> float:
 	return layer_base_rate * pow(layer_level_speed_mult, level)
 
-## 礦層升到 level+1 嘅價錢（level 係升級前嘅現有等級）。
 func layer_level_cost(level: int) -> float:
 	return layer_level_cost_base * pow(layer_level_cost_mult, level)
 
-## 升降機 Lv n（夾喺 1~elevator_level_cap）嘅運載上限（ore/s）。
-func elevator_capacity_at_level(n: int) -> float:
-	var lvl: int = clampi(n, 1, elevator_level_cap)
-	return elevator_cap_lv1 * pow(1.0 + elevator_step, lvl - 1)
+func cart_capacity_at_level(n: int) -> float:
+	var lvl: int = clampi(n, 1, cart_level_cap)
+	return cart_cap_lv1 * pow(1.0 + cart_step, lvl - 1)
 
-## 升降機由 Lv n 升到 n+1 嘅價錢。
-func elevator_upgrade_cost(n: int) -> float:
-	return elevator_cost_base * pow(elevator_cost_mult, n - 1)
+func cart_upgrade_cost(n: int) -> float:
+	return cart_cost_base * pow(cart_cost_mult, n - 1)
 
-## 倉庫 Lv n（夾喺 1~warehouse_level_cap）嘅收集上限（ore/s）。
 func warehouse_capacity_at_level(n: int) -> float:
 	var lvl: int = clampi(n, 1, warehouse_level_cap)
 	return warehouse_cap_lv1 * pow(1.0 + warehouse_step, lvl - 1)
 
-## 倉庫由 Lv n 升到 n+1 嘅價錢。
 func warehouse_upgrade_cost(n: int) -> float:
 	return warehouse_cost_base * pow(warehouse_cost_mult, n - 1)
 
-## 礦層 idx（0..2）嘅平均礦值（未經任何倍率），揾唔到就 0。
-func layer_average_ore_value(idx: int) -> float:
-	if idx < 0 or idx >= layer_ore_distribution.size():
-		return 0.0
-	var dist: Dictionary = layer_ore_distribution[idx]
-	var total := 0.0
-	for ore_key: String in dist:
-		var weight: float = dist[ore_key]
-		var value: float = ore_tier_value.get(ore_key, 0)
-		total += weight * value
-	return total
+## ore_key："silver" 或 "gold"，其餘回傳 0。
+func ore_value(ore_key: String) -> float:
+	match ore_key:
+		"silver":
+			return ore_value_silver
+		"gold":
+			return ore_value_gold
+		_:
+			return 0.0
