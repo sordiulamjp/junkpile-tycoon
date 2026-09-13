@@ -129,6 +129,23 @@ func test_drag_up_clamps_at_max_pan() -> void:
 	main._apply_camera_drag(-100000.0) # 誇張大力向上拖
 	assert_eq(main._camera_pan, main.CAMERA_MAX_PAN)
 
+## Review 修正（round 2）：玩家拖咗上去睇緊區域 2 解鎖板（_camera_pan > 0，
+## 車場已經跌出畫面）先撳狂熱掣——round 1 個 gate 令狂熱期間拖唔返落嚟，
+## 所以狂熱一開場一定要自己將 _camera_pan 歸零，唔靠玩家手動拖。
+func test_try_start_frenzy_resets_camera_pan() -> void:
+	var scene: PackedScene = load("res://main.tscn")
+	main = scene.instantiate()
+	add_child_autofree(main)
+
+	main._apply_camera_drag(-100000.0) # 誇張大力拖上去，夾喺 CAMERA_MAX_PAN
+	assert_gt(main._camera_pan, 0.0, "測試前提：鏡頭應該已經拖咗上去")
+
+	main.frenzy.cooldown_remaining = 0.0
+	main._try_start_frenzy()
+
+	assert_eq(main._camera_pan, 0.0, "狂熱開場應該自動將鏡頭歸零，唔會車場跌出畫面")
+	assert_eq(main._camera.position, main._camera_base_position)
+
 ## Review 修正（round 1）：狂熱入面跟指郁車嘅拖曳唔可以連鏡頭都拖埋
 ## （frenzy_yard_view.gd 自己嗰個 _unhandled_input() 冇 set_input_as_handled()）。
 func test_unhandled_input_drag_is_ignored_during_frenzy() -> void:

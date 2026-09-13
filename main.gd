@@ -487,6 +487,12 @@ func _try_start_frenzy() -> void:
 	# 淨係令車場「活起來」（車郁得、生碎料、_process() 開始行），山腳
 	# 嘅碎料 tap 全程都揀得到，唔使再開關 physics_object_picking。
 	_frenzy_view.start()
+	# Review 修正（ALTA-227 round 2）：狂熱期間 _unhandled_input() 已經
+	# gate 咗拖曳（唔會連鏡頭一齊郁），但如果玩家啱啱拖咗去睇緊區域 2
+	# 解鎖板（_camera_pan > 0）先撳狂熱掣，車場已經跌出畫面之餘、成 120
+	# 秒都冇得手動拖返落嚟——狂熱開場一定要將鏡頭重置返預設取景。
+	_camera_pan = 0.0
+	_update_camera_position()
 
 func _on_frenzy_ended() -> void:
 	EventLog.log_event("frenzy_end", {"eco_bonus": frenzy.eco_bonus_earned})
