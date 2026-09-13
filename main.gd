@@ -122,6 +122,7 @@ var _components_label: Label
 var _eco_label: Label
 var _miner_count_label: Label # VR-06b：頂列「礦工 n/12」pill，純顯示，唔可以撳（撳嘅掣仍然係底部 _summon_button）
 var _summon_button: Button
+var _back_to_map_button: Button # VR-11：底部 HUD「返回地圖」，存檔＋同步 Wallet 之後換去 scenes/zone_map.tscn
 var _belt_upgrade_button: Button
 var _miner_upgrade_button: Button
 var _refine_upgrade_button: Button
@@ -169,7 +170,11 @@ func _ready() -> void:
 	var loaded_state: Dictionary = {}
 	var offline_raw_rate := 0.0
 	if save_exists:
-		loaded_state = SaveManager.load_state()
+		# VR-11：經 Save autoload 讀（唔再直接叫 SaveManager.load_state()）
+		# ——Save.load_and_apply_wallet() 讀完同一份 flat dict 之餘，順手
+		# 將 cash／components／eco 套落 Wallet（共用錢包 autoload），等
+		# _apply_loaded_state() 下面可以直接由 Wallet 攞返呢三個欄位。
+		loaded_state = Save.load_and_apply_wallet()
 		_apply_loaded_state(loaded_state)
 		# VR-05b review fix：呢一刻 state.income_multiplier 仲係預設 1.0
 		# （下一行先 set），current_income_rate() 攞到嘅係未計威望嘅 raw
@@ -179,6 +184,10 @@ func _ready() -> void:
 		# （見 _run_offline_settlement()）。
 		offline_raw_rate = state.current_income_rate()
 		state.income_multiplier = Prestige.income_multiplier(c, _prestige_count)
+	# VR-11：冇存檔（新玩家）嗰陣 state.cash 係 GameState._init() 剛設低
+	# 嘅 c.starting_cash，唔係 0——Wallet 都要跟住同步，唔可以留喺預設 0，
+	# 唔係啱啱由呢個區域「返地圖」嗰陣，地圖畫面會顯示錯咗嘅 Cash。
+	_sync_wallet_from_state()
 
 	_build_world()
 	_spawn_loaded_miners() # VR-05b review fix：讀檔補返已召喚礦工嘅 node（新玩家 miner_count=0，冧一世都唔會行）
@@ -272,9 +281,13 @@ func _apply_overrides(overrides: Dictionary) -> void:
 ## 見 data/prestige.gd／data/save_manager.gd 嘅欄位定義）。用 get() 夾
 ## 埋預設值，就算存檔缺咗某個欄位都唔會拋錯。
 func _apply_loaded_state(loaded: Dictionary) -> void:
-	state.cash = float(loaded.get("cash", 0.0))
-	state.components = float(loaded.get("components", 0.0))
-	state.eco = float(loaded.get("eco", 0.0))
+	# VR-11：cash／components／eco 而家由 Wallet（共用錢包 autoload）攞——
+	# 呼叫方（_ready()）已經喺呢個之前 call 咗 Save.load_and_apply_wallet()，
+	# 呢一刻 Wallet 已經套用咗同一份 `loaded` 入面嘅呢三個欄位，數值一定
+	# 一致，唔會走漏 loaded.get() 缺欄位嗰種舊寫法嘅邊界情況。
+	state.cash = Wallet.cash
+	state.components = Wallet.components
+	state.eco = Wallet.eco
 	state.miner_count = int(loaded.get("miners", 0))
 	state.miner_level = int(loaded.get("miner_level", 0))
 	state.belt_level = int(loaded.get("belt_level", 1))
@@ -302,8 +315,26 @@ func _build_save_state() -> Dictionary:
 		"refine_level": state.refine_level,
 	}
 
+## VR-11：將呢個場景（區域 4）當刻嘅即時 cash／components／eco 推返落
+## Wallet（共用錢包 autoload）——存檔（_save_game()）、返地圖（
+## _on_back_to_map_pressed()）之前都要 call 一次，保證 Wallet 記憶體嗰份
+## 同即將存落 disk 嗰份一致，地圖畫面顯示嘅 Cash 先唔會同呢個區域自己
+## 睇到嘅唔同步。
+func _sync_wallet_from_state() -> void:
+	Wallet.cash = state.cash
+	Wallet.components = state.components
+	Wallet.eco = state.eco
+
 func _save_game() -> void:
-	SaveManager.save_state(_build_save_state())
+	_sync_wallet_from_state()
+	Save.save_raw(_build_save_state())
+
+## VR-11：底部 HUD「返回地圖」——存檔＋同步 Wallet 之後換去區域地圖。
+## 現時得返區域 4（呢個場景）有實際玩法，其他三張卡顯示「開發中」、撳
+## 唔到（見 scenes/zone_map.gd）。
+func _on_back_to_map_pressed() -> void:
+	_save_game()
+	get_tree().change_scene_to_file("res://scenes/zone_map.tscn")
 
 ## 開機讀到存檔（`loaded` 係讀檔嗰刻、套用之前嘅原始 dict，帶住上次嘅
 ## last_save_unix）就行 OfflineSettlement.settle()：用復原返嗰刻嘅礦工／
@@ -1305,6 +1336,13 @@ func _build_hud() -> void:
 	var bottom_vbox := VBoxContainer.new()
 	bottom_vbox.set_anchors_preset(Control.PRESET_FULL_RECT)
 	bottom_bar.add_child(bottom_vbox)
+
+	# VR-11：底部 HUD「返回地圖」——擺最頭，返去 scenes/zone_map.tscn
+	# 揀第啲區域（現時得返呢個區域有得玩，其他張卡顯示「開發中」）。
+	_back_to_map_button = Button.new()
+	_back_to_map_button.text = "← 返回地圖"
+	_back_to_map_button.pressed.connect(_on_back_to_map_pressed)
+	bottom_vbox.add_child(_back_to_map_button)
 
 	# VR-06b：三資源搬咗上頂 HUD（issue 視覺參考排法），底部淨低升級
 	# 掣同「地上大字＋價錢」呢類升級／觸發按鈕，唔再重複顯示資源數字。
