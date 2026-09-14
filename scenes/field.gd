@@ -8,7 +8,7 @@ extends Node3D
 const SITE_BASIS := Basis(Vector3(1, 0, 0), Vector3(0, 0, -1), Vector3(0, 1, 0))
 const CAM_PITCH_DEG := -60.0
 const CAM_FOV := 40.0
-const CAM_DIST := 10.5
+const CAM_DIST := 9.0
 const CAM_DIST_MIN := 6.5
 const CAM_DIST_MAX := 18.0
 var _cam_dist := CAM_DIST
@@ -28,8 +28,8 @@ const CAR_TURN_LERP := 10.0
 const CARGO_CAP := [30, 60, 100] # 鏟斗 tier 0/1/2 可以載幾多粒
 const CAPTURE_R := 0.9
 const PUSH_IMPULSE := 0.35
-const ORE_RADIUS := 0.04
-const ORE_COUNT := 5600
+const ORE_RADIUS := 0.035
+const ORE_COUNT := 7000
 const KICK_RADIUS := 1.0   # 車前方呢個半徑內嘅礦轉做真剛體，俾鏟斗物理推
 const KICK_LIFETIME := 1.0
 const KICK_BUDGET := 260
@@ -67,6 +67,19 @@ var _cargo: Array = []            # {tier, node}
 var _cargo_root: Node3D
 var _furnace_node: Node3D
 var _furnace_arrow: Control
+# ── 倍數門 / 鐳射門 / 賣礦口累計 / 財富架（Idle Mafia 參考，用戶 2026-09-14）──
+const GATES := [ # [site pos, yaw, mult, laser]
+	[Vector2(-2.6, -1.4), 0.0, 2.0, false],
+	[Vector2(-2.6, 0.6), 0.0, 3.0, false],
+	[Vector2(-1.2, 2.2), 0.0, 4.0, false],
+	[Vector2(2.6, -1.4), 0.0, 5.0, true],
+]
+var _furnace_total := 0.0
+var _furnace_total_shown := 0.0
+var _furnace_counter: Label3D
+var _ingots: Array = []
+var _ingot_root: Node3D
+var _stun_t := 0.0
 var _spill_accum := 0.0
 var _bottleneck_icons: Dictionary = {}
 
@@ -149,6 +162,8 @@ func _ready() -> void:
 	_build_car()
 	_build_ore_pool()
 	_clear_ore_around(Vector2(_car.position.x, _car.position.y), 1.0)
+	_build_gates()
+	_build_ingot_rack()
 	_build_hud()
 	mine.attach_panel(_hud)
 	get_viewport().physics_object_picking = true
@@ -332,6 +347,18 @@ func _build_zone1(saved: Dictionary) -> void:
 	head.rotation_degrees = Vector3(90.0, 0.0, -90.0)
 	head.position = Vector3(0.34, -0.5, 0.03)
 	furnace.add_child(head)
+	var board := VisualFactory.make_metal_box(Vector3(0.9, 0.12, 0.34), Color("#15151A"))
+	board.position = Vector3(0.0, 0.45, 0.78)
+	board.rotation.x = -0.35
+	furnace.add_child(board)
+	_furnace_counter = Label3D.new()
+	_furnace_counter.text = "0"
+	_furnace_counter.font_size = 110
+	_furnace_counter.pixel_size = 0.0028
+	_furnace_counter.outline_size = 10
+	_furnace_counter.position = Vector3(0.0, 0.36, 0.86)
+	_furnace_counter.rotation.x = deg_to_rad(70.0)
+	furnace.add_child(_furnace_counter)
 	var area := Area3D.new()
 	area.name = "SellArea"
 	var col := CollisionShape3D.new()
@@ -366,6 +393,7 @@ func _build_car() -> void:
 	_cargo_root = Node3D.new()
 	_cargo_root.name = "Cargo"
 	_car.add_child(_cargo_root)
+	_car_body.scale = Vector3.ONE * 0.88
 	var body := VisualFactory.make_metal_box(Vector3(0.3, 0.32, 0.16), Color("#F2C230"))
 	_car_body.add_child(body)
 	var cab := VisualFactory.make_metal_box(Vector3(0.18, 0.16, 0.12), Color("#F7D35A"))
@@ -428,6 +456,9 @@ func _physics_process(delta: float) -> void:
 		var to: Vector2 = wp - Vector2(_car.position.x, _car.position.y)
 		input_vec = to.normalized() if to.length() > 0.15 else Vector2.ZERO
 	var speed_mult: float = (1.5 if frenzy.active else 1.0) * (AI_SPEED_MULT if _ai_active else 1.0)
+	if _stun_t > 0.0:
+		_stun_t -= delta
+		speed_mult *= 0.15
 	var target: Vector2 = input_vec.limit_length(1.0) * CAR_SPEED * speed_mult
 	_car_vel = _car_vel.move_toward(target, CAR_ACCEL * delta)
 	_car.velocity = SITE_BASIS * Vector3(_car_vel.x, _car_vel.y, 0.0)
@@ -524,7 +555,7 @@ func _build_ore_pool() -> void:
 		for i in range(count):
 			var ctr: Vector2 = blobs[rng.randi_range(0, blobs.size() - 1)]
 			var a := rng.randf_range(0.0, TAU)
-			var r := sqrt(rng.randf()) * 0.8
+			var r := sqrt(rng.randf()) * 0.7
 			var pos := Vector3(ctr.x + cos(a) * r * 1.2, ctr.y + sin(a) * r, ORE_RADIUS * float(tiers[tier][2]))
 			mmi.multimesh.set_instance_transform(i, Transform3D(Basis.IDENTITY.scaled(Vector3.ONE * float(tiers[tier][2])), pos))
 			_slots.append({"tier": tier, "idx": i, "pos": pos, "scale": float(tiers[tier][2]), "active": false, "gone": false})
@@ -604,6 +635,12 @@ func _pool_tick(delta: float) -> void:
 	if _furnace_flash > 0.0:
 		_furnace_flash -= delta
 		_furnace_glow.emission_energy_multiplier = 1.8 + 2.5 * clampf(_furnace_flash, 0.0, 1.0)
+	if _furnace_counter != null and _furnace_total_shown != _furnace_total:
+		_furnace_total_shown = lerpf(_furnace_total_shown, _furnace_total, 1.0 - exp(-8.0 * delta))
+		if absf(_furnace_total - _furnace_total_shown) < 1.0:
+			_furnace_total_shown = _furnace_total
+		_furnace_counter.text = _fmt(_furnace_total_shown)
+		_furnace_counter.scale = Vector3.ONE * (1.0 + 0.25 * clampf(_furnace_flash, 0.0, 1.0))
 
 func _spawn_spill_nugget() -> void:
 	var gold: bool = rng.randf() < 0.15
@@ -718,7 +755,7 @@ func _sell_bucket_ore() -> void:
 		if lp.y < -0.1 or lp.y > 0.9 * _blade_w() or absf(lp.x) > 0.6 * _blade_w():
 			continue
 		var s: Dictionary = k["slot"]
-		var value: float = mine.state.c.ore_value(s["tier"]) * mult * fmult
+		var value: float = mine.state.c.ore_value(s["tier"]) * mult * fmult * float(node.get_meta("mult", 1.0))
 		total += value
 		s["gone"] = true
 		s["active"] = false
@@ -741,8 +778,140 @@ func _sell_bucket_ore() -> void:
 			node.queue_free())
 		i += 1
 	if total > 0.0:
-		_spawn_cash_popup(mouth_local, total)
+		_furnace_total += total
+		_add_ingots(total)
 		SfxPlayer.play("pile_mine")
+
+# ══════════════════════ 倍數門（幼白柱 + 粉紅橫帶）／鐳射門 ══════════════════════
+
+func _build_gates() -> void:
+	for g in GATES:
+		var pos: Vector2 = g[0]
+		var mult: float = g[2]
+		var laser: bool = g[3]
+		var root := Node3D.new()
+		root.name = "Gate_x%d" % int(mult)
+		root.position = Vector3(pos.x, pos.y, 0.0)
+		root.rotation.z = float(g[1])
+		_site.add_child(root)
+		var half_w := 0.6
+		for px in [-half_w, half_w]:
+			var post := VisualFactory.make_low_poly_cylinder(0.035, 0.55, Color("#8A8A94") if laser else Color("#F4F4F8"), 8, 0.2)
+			post.rotation_degrees.x = 90.0
+			post.position = Vector3(px, 0.0, 0.275)
+			root.add_child(post)
+			var cap := VisualFactory.make_low_poly_cylinder(0.05, 0.05, Color("#FF3B3B") if laser else Color("#FF5FA8"), 8, 0.3)
+			cap.rotation_degrees.x = 90.0
+			cap.position = Vector3(px, 0.0, 0.57)
+			root.add_child(cap)
+			if laser:
+				var pa := Area3D.new()
+				var pc := CollisionShape3D.new()
+				var ps := BoxShape3D.new()
+				ps.size = Vector3(0.16, 0.16, 0.6)
+				pc.shape = ps
+				pa.add_child(pc)
+				pa.position = Vector3(px, 0.0, 0.3)
+				pa.body_entered.connect(_on_laser_post_hit)
+				root.add_child(pa)
+		if laser:
+			for zi in range(3):
+				var beam := VisualFactory.make_metal_box(Vector3(half_w * 2.0, 0.02, 0.02), Color("#FF2A2A"), Color("#FF2A2A"), 3.0)
+				beam.position = Vector3(0.0, 0.0, 0.12 + float(zi) * 0.16)
+				root.add_child(beam)
+		else:
+			var band := MeshInstance3D.new()
+			var bm := BoxMesh.new()
+			bm.size = Vector3(half_w * 2.0, 0.03, 0.22)
+			band.mesh = bm
+			band.material_override = UnlockPanel.ghost_material(Color("#FF5FA8"), 0.75)
+			band.position = Vector3(0.0, 0.0, 0.33)
+			root.add_child(band)
+		var lbl := Label3D.new()
+		lbl.text = "×%d" % int(mult)
+		lbl.font_size = 96
+		lbl.pixel_size = 0.0032
+		lbl.outline_size = 12
+		lbl.position = Vector3(0.0, -0.02, 0.5)
+		lbl.rotation.x = deg_to_rad(70.0)
+		root.add_child(lbl)
+		var area := Area3D.new()
+		var col := CollisionShape3D.new()
+		var shape := BoxShape3D.new()
+		shape.size = Vector3(half_w * 2.0, 0.12, 0.5)
+		col.shape = shape
+		area.add_child(col)
+		area.position = Vector3(0.0, 0.0, 0.2)
+		area.body_entered.connect(_on_gate_entered.bind(root.name, mult))
+		root.add_child(area)
+		var arrow := VisualFactory.make_flat_box(Vector3(0.14, 0.5, 0.01), Color(1, 1, 1, 0.6))
+		arrow.position = Vector3(0.0, -0.55, 0.005)
+		root.add_child(arrow)
+
+func _on_gate_entered(body: Node3D, gate_name: String, mult: float) -> void:
+	if not (body is RigidBody3D) or not body.has_meta("slot"):
+		return
+	var passed: Array = body.get_meta("gates", [])
+	if gate_name in passed:
+		return
+	passed.append(gate_name)
+	body.set_meta("gates", passed)
+	body.set_meta("mult", float(body.get_meta("mult", 1.0)) * mult)
+	var mesh := body.get_child(0) as MeshInstance3D
+	if mesh != null and mesh.material_override is StandardMaterial3D:
+		var m: StandardMaterial3D = mesh.material_override.duplicate()
+		m.emission_enabled = true
+		m.emission = Color("#FF5FA8")
+		m.emission_energy_multiplier = 0.6
+		mesh.material_override = m
+
+func _on_laser_post_hit(body: Node3D) -> void:
+	if body != _car or _stun_t > 0.0:
+		return
+	_stun_t = 1.0
+	_popup_at(Vector3(_car.position.x, _car.position.y, 0.5), "撞柱！散礦", Color(1.0, 0.35, 0.35))
+	var inv: Transform3D = _car.transform.affine_inverse()
+	for k: Dictionary in _kicked:
+		var node: RigidBody3D = k["node"]
+		if not is_instance_valid(node):
+			continue
+		var lp: Vector3 = inv * node.position
+		if lp.y > -0.1 and lp.y < 0.9 and absf(lp.x) < 0.7:
+			node.set_meta("mult", 1.0)
+			node.set_meta("gates", [])
+			node.apply_central_impulse(Vector3(rng.randf_range(-0.25, 0.25), rng.randf_range(0.1, 0.35), 0.1))
+	SfxPlayer.play("lava_fall")
+
+# ══════════════════════ 財富架：賣得越多，金磚疊得越高 ══════════════════════
+
+func _build_ingot_rack() -> void:
+	_ingot_root = Node3D.new()
+	_ingot_root.name = "IngotRack"
+	_ingot_root.position = Vector3(FURNACE_POS.x - 1.6, FURNACE_POS.y + 0.1, 0.0)
+	_site.add_child(_ingot_root)
+	var base := VisualFactory.make_flat_box(Vector3(1.0, 0.7, 0.06), Color("#3A3140"))
+	base.position = Vector3(0.0, 0.0, 0.03)
+	_ingot_root.add_child(base)
+
+func _add_ingots(value: float) -> void:
+	var n: int = clampi(int(value / 150.0), 1, 6)
+	for _i in range(n):
+		if _ingots.size() >= 48:
+			for it in _ingots:
+				if is_instance_valid(it):
+					it.queue_free()
+			_ingots.clear()
+			_popup_at(_ingot_root.position + Vector3(0.0, 0.0, 0.8), "出貨！", Color(1.0, 0.85, 0.3))
+		var i: int = _ingots.size()
+		var layer: int = i / 12
+		var idx: int = i % 12
+		var ingot := VisualFactory.make_metal_box(Vector3(0.2, 0.12, 0.08), Color("#F2B830"), Color("#F2B830"), 0.25)
+		var target := Vector3(-0.4 + float(idx % 4) * 0.26, -0.24 + float(idx / 4) * 0.24, 0.1 + float(layer) * 0.085)
+		ingot.position = target + Vector3(0.0, 0.0, 0.6)
+		_ingot_root.add_child(ingot)
+		_ingots.append(ingot)
+		var tw := create_tween()
+		tw.tween_property(ingot, "position", target, 0.25).set_trans(Tween.TRANS_BOUNCE).set_ease(Tween.EASE_OUT)
 
 func _spawn_spark(at: Vector3) -> void:
 	for _i in range(2):
@@ -789,6 +958,8 @@ func _activate_slot(s: Dictionary) -> void:
 	mat.friction = 0.7
 	mat.bounce = 0.05
 	body.physics_material_override = mat
+	body.set_meta("mult", 1.0)
+	body.set_meta("gates", [])
 	body.mass = 0.05
 	body.linear_damp = 2.5
 	body.angular_damp = 4.0
@@ -823,7 +994,9 @@ func _on_sell_area_entered(body: Node3D) -> void:
 	# MineState 自己嗰個方法（同礦堆 tap 收礦、mine_zone.gd
 	# `_on_pile_tap()` 同一條公式），唔再喺呢度重複一份索引邏輯。
 	var mult: float = mine.state.scoop_value_mult()
-	var value: float = mine.state.c.ore_value(s["tier"]) * mult * (mine.state.c.frenzy_income_mult if frenzy.active else 1.0)
+	var value: float = mine.state.c.ore_value(s["tier"]) * mult * (mine.state.c.frenzy_income_mult if frenzy.active else 1.0) * float(body.get_meta("mult", 1.0))
+	_furnace_total += value
+	_add_ingots(value)
 	state.cash += value
 	s["active"] = false
 	s["gone"] = true
@@ -1151,7 +1324,7 @@ func _pipeline_rate() -> float:
 	return flow * (ms.c.ore_value_silver + ms.c.ore_value_gold) * 0.5
 
 func _settle_offline(saved: Dictionary) -> void:
-	if not saved.has("last_save_unix"):
+	if not saved.has("last_save_unix") or "--nooffline" in OS.get_cmdline_user_args():
 		return
 	var now := Time.get_unix_time_from_system()
 	var result := OfflineSettlement.settle(c, {"cash": state.cash, "last_save_unix": float(saved["last_save_unix"]), "prestige_count": 0}, now, _pipeline_rate())
