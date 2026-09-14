@@ -80,6 +80,10 @@ var _furnace_counter: Label3D
 var _ingots: Array = []
 var _ingot_root: Node3D
 var _stun_t := 0.0
+var _car_in_sell := false
+var _sell_poll_t := 0.0
+var _ai_stuck_t := 0.0
+var _ai_last_pos := Vector2.INF
 var _spill_accum := 0.0
 var _bottleneck_icons: Dictionary = {}
 
@@ -368,6 +372,7 @@ func _build_zone1(saved: Dictionary) -> void:
 	area.add_child(col)
 	area.position = Vector3(0.0, 0.2, 0.3)
 	area.body_entered.connect(_on_sell_area_entered)
+	area.body_exited.connect(func(b: Node3D) -> void: if b == _car: _car_in_sell = false)
 	furnace.add_child(area)
 
 
@@ -984,6 +989,7 @@ func _settle_kick(k: Dictionary) -> void:
 
 func _on_sell_area_entered(body: Node3D) -> void:
 	if body == _car:
+		_car_in_sell = true
 		_sell_bucket_ore()
 		return
 	if not (body is RigidBody3D) or not body.has_meta("slot"):
@@ -1018,6 +1024,12 @@ func _process(delta: float) -> void:
 	if ev.get("ended", false):
 		SfxPlayer.play("frenzy_start")
 	_follow_camera(delta)
+	# 留喺爐區入面照樣賣（唔使出返去再入）
+	_sell_poll_t += delta
+	if _car_in_sell and _sell_poll_t >= 0.6:
+		_sell_poll_t = 0.0
+		if _bucket_count() > 0:
+			_sell_bucket_ore()
 	_watch_upgrades()
 	_manager_tick(delta)
 	_surface_team_tick(delta)
@@ -1423,7 +1435,7 @@ func _ai_steer(delta: float) -> Vector2:
 	if _ai_mode == "heap":
 		if carrying >= int(float(cap) * 0.6):
 			_ai_mode = "furnace"
-			_ai_target = FURNACE_POS + Vector2(-0.3, -0.6)
+			_ai_target = FURNACE_POS + Vector2(-0.1, -1.0)
 		elif _ai_target == Vector2.INF or _ai_retarget_t <= 0.0 or pos.distance_to(_ai_target) < 0.35:
 			_ai_target = _nearest_ore_pos(pos)
 			_ai_retarget_t = 2.5
@@ -1434,6 +1446,17 @@ func _ai_steer(delta: float) -> Vector2:
 			_ai_retarget_t = 2.5
 		elif pos.distance_to(_ai_target) < 0.3:
 			_ai_target = FURNACE_POS + Vector2(-1.6, -0.6) # 已喺爐區未賣就行出去再入
+	# 卡住偵測：2 秒冇郁就換目標
+	if _ai_last_pos != Vector2.INF and pos.distance_to(_ai_last_pos) < 0.03:
+		_ai_stuck_t += delta
+		if _ai_stuck_t > 2.0:
+			_ai_stuck_t = 0.0
+			_ai_target = pos + Vector2(rng.randf_range(-1.5, 1.5), rng.randf_range(-1.5, 1.5))
+			_ai_target.x = clampf(_ai_target.x, FIELD_MIN.x + 0.5, FIELD_MAX.x - 0.5)
+			_ai_target.y = clampf(_ai_target.y, FIELD_MIN.y + 0.5, MINE_POS.y - 0.6)
+	else:
+		_ai_stuck_t = 0.0
+	_ai_last_pos = pos
 	if _ai_target == Vector2.INF:
 		return Vector2.ZERO
 	var to: Vector2 = _ai_target - pos
