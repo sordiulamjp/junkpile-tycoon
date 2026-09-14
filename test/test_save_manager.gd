@@ -140,3 +140,17 @@ func test_migration_v2_to_v3_does_not_overwrite_existing_mine_zone() -> void:
 	var migrated := SaveManager._migrate(state)
 	assert_eq(migrated["mine_zone"]["layer_unlocked"], [true, true, false])
 	assert_eq(migrated["mine_zone"]["push_tier"], 2)
+
+## ALTA-229（VR-13）：v3 存檔（VR-12 嗰個形狀，冇 region2_zone）陞級到
+## v4 應該補返預設 region2_zone（UPGRADE 小屋未買）。
+func test_migration_v3_to_v4_backfills_region2_zone() -> void:
+	var v3_state := {"version": 3, "cash": 500.0, "unlocked_regions": ["region1", "region2"]}
+	var migrated := SaveManager._migrate(v3_state)
+	assert_eq(migrated["version"], SaveManager.CURRENT_VERSION)
+	assert_eq(migrated["region2_zone"]["shack_tier"], 0)
+	assert_almost_eq(migrated["cash"], 500.0, EPS, "遷移唔應該影響現有欄位")
+
+func test_migration_v3_to_v4_does_not_overwrite_existing_region2_zone() -> void:
+	var state := {"version": 3, "region2_zone": {"shack_tier": 2}}
+	var migrated := SaveManager._migrate(state)
+	assert_eq(migrated["region2_zone"]["shack_tier"], 2)
