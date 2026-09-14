@@ -80,7 +80,13 @@ const CAMERA_HORIZONTAL_MARGIN_WORLD := 0.2
 ## 完全唔變——_camera_pan 預設 0，唔拖就同之前一模一樣，唔會累到現有
 ## 相機取景回歸測試（test_main_scene.gd 嗰批 _in_camera_mid_band()）。
 const CAMERA_DRAG_SENSITIVITY := 0.005 # 美術取景常數（唔係遊戲數值）：每螢幕像素拖動對應幾多世界單位
-const CAMERA_MAX_PAN := 2.6            # 美術取景常數：最多拖幾遠先見到區域 2 解鎖板
+## ALTA-229（VR-13）：區域 2 由「示範解鎖板」變返真正嘅外圍險路（左車道
+## →轉右金河木橋→路尾礦站，見 regions/region2_outer_path/region2_zone.gd），
+## 拖到底要睇到成條路，唔再淨係解鎖板本身——由 2.6（舊：剛好見到板）
+## 加到蓋晒 REGION2_ZONE_SITE_POS.y + Region2Zone.TURN_LOCAL_Y（路最深
+## 一段，礦站企嗰度）。首版估算，實機（issue 驗收 S8+ 截圖）之後可能要
+## 再調（跟 MINE_ZONE_ELEVATION 一樣嘅「首版擺位，睇實機先精調」做法）。
+const CAMERA_MAX_PAN := 6.5            # 美術取景常數：最多拖幾遠先見到成條區域 2 外圍險路
 
 ## VR-11：區域 2 入口解鎖板擺位——喺現有峽谷入面、後壁附近、山腳左方
 ## （跟 field-zones-v9.png「左上」示意），冇改任何區域 1 既有幾何／
@@ -89,6 +95,13 @@ const CAMERA_MAX_PAN := 2.6            # 美術取景常數：最多拖幾遠先
 ## 嘅位置，唔再掛喺區域 1 場地度。
 const REGION2_PANEL_SITE_POS := Vector2(-1.3, 2.6)
 const REGION2_PANEL_HEIGHT := 0.3
+
+## ALTA-229（VR-13）：區域 2 實際場地（外圍險路）擺位——同一 x（跟解鎖
+## 板同一條車道），y 喺解鎖板後面少少（板係路口，路本身喺板後面），
+## 唔使好似 MineZone 咁「浮高咗」：呢個深度已經喺 `_build_canyon_walls()`
+## 後排石範圍之外（見 mine_zone.gd MINE_ZONE_ELEVATION 註解嗰個 back_y
+## jitter 上限），冇嘢會遮住。
+const REGION2_ZONE_SITE_POS := Vector2(-1.3, 3.0)
 
 ## ALTA-228（VR-12，Reviewer round 2 修正）：區域 1 場內礦坑擺位。
 ## 第一版（2.8, 1.1）撞正 `_build_canyon_walls()` 右側石柱（x≈2.45~4.25，
@@ -165,6 +178,10 @@ var _region2_panel: UnlockPanel
 # -- ALTA-228（VR-12）：區域 1 場內礦坑 --
 var _mine_zone: MineZone
 var _mine_zone_saved_data: Dictionary = {} # 讀檔嗰陣暫存，_build_region_expansion() 起 MineZone 嗰刻先套用
+
+# -- ALTA-229（VR-13）：區域 2 外圍險路 --
+var _region2_zone: Region2Zone
+var _region2_zone_saved_data: Dictionary = {} # 讀檔嗰陣暫存，_build_region_expansion() 起 Region2Zone 嗰刻先套用
 
 # -- HUD 節點 --
 var _lock_label: Label
@@ -356,6 +373,8 @@ func _apply_loaded_state(loaded: Dictionary) -> void:
 	# ALTA-228：MineZone 呢一刻仲未構造（_build_world() 未行過），淨係暫存
 	# 低，等 _build_region_expansion() 起 MineZone 嗰陣先傳落 setup()。
 	_mine_zone_saved_data = loaded.get("mine_zone", {})
+	# ALTA-229：Region2Zone 同上，暫存低等 _build_region_expansion() 先傳落 setup()。
+	_region2_zone_saved_data = loaded.get("region2_zone", {})
 	_lifetime_cash = float(loaded.get("lifetime_cash", 0.0))
 	_prestige_count = int(loaded.get("prestige_count", 0))
 	_last_save_unix = float(loaded.get("last_save_unix", Time.get_unix_time_from_system()))
@@ -379,6 +398,7 @@ func _build_save_state() -> Dictionary:
 		"refine_level": state.refine_level,
 		"unlocked_regions": _unlocked_regions,
 		"mine_zone": _mine_zone.to_save_dict(),
+		"region2_zone": _region2_zone.to_save_dict(),
 	}
 
 ## VR-11：將當刻嘅即時 cash／components／eco 推返落 Wallet（共用錢包
@@ -501,6 +521,7 @@ func _process(delta: float) -> void:
 		_on_frenzy_ended()
 
 	_mine_zone.tick(delta) # ALTA-228：三段管線 + 剖面面板刷新，cash_gain 直接加落 state.cash
+	_region2_zone.tick(delta) # ALTA-229：自動出貨車循環，鎖住嗰陣 no-op（見 Region2Zone.tick()）
 
 	_refresh_hud()
 
@@ -904,6 +925,15 @@ func _build_region_expansion() -> void:
 	_placement_root.add_child(_mine_zone)
 	_mine_zone.setup(state, frenzy, _mine_zone_saved_data)
 
+	# ALTA-229（VR-13）：區域 2 外圍險路——同一場地擴張，掛喺 `_region2_panel`
+	# 「200」解鎖板後面（見 regions/region2_outer_path/region2_zone.gd 頂部
+	# 註解），鎖住就隱形／唔 tick（`setup()` 嘅 `unlocked` 參數）。
+	_region2_zone = Region2Zone.new()
+	_region2_zone.name = "Region2Zone"
+	_region2_zone.position = _site_to_world(REGION2_ZONE_SITE_POS)
+	_placement_root.add_child(_region2_zone)
+	_region2_zone.setup(state, _region2_zone_saved_data, "region2" in _unlocked_regions)
+
 ## UnlockPanel 撳落去嘅 callback。夠錢先真正扣 state.cash＋記落
 ## _unlocked_regions＋存檔；唔夠錢就乜都唔做（板自己會靠
 ## refresh_afford_state() 顯示緊「未夠錢」嘅暗色，唔使呢度另外彈提示）。
@@ -920,6 +950,8 @@ func _try_unlock_region(region_id: String, cost: float) -> void:
 	SfxPlayer.play("upgrade")
 	if _region2_panel != null and _region2_panel.region_id == region_id:
 		_region2_panel.mark_unlocked()
+	if region_id == "region2" and _region2_zone != null:
+		_region2_zone.set_unlocked(true)
 	_save_game()
 	_refresh_hud()
 
@@ -933,10 +965,10 @@ func _try_unlock_region(region_id: String, cost: float) -> void:
 ## Review 修正（ALTA-227 round 1）：
 ## 1. 狂熱期間唔拖鏡頭——frenzy_yard_view.gd 自己嗰個 _unhandled_input()
 ##    負責跟指郁車，兩個 _unhandled_input() 冇互相 set_input_as_handled()，
-##    狂熱中拖一下會連鏡頭都跟住郁，CAMERA_MAX_PAN（2.6）接近成個車場
-##    取景高度，拖幾下車場／帶／爐就跌出畫面，而且淨往上夾令 120 秒
-##    嘅垂直抖動單向累積。「鏡頭跟車」留返畀區域 2～4（VR-13～15）有
-##    真正新地形要睇嗰陣先做，呢度暫時淨係唔好撞衫（見完成留言）。
+##    狂熱中拖一下會連鏡頭都跟住郁，CAMERA_MAX_PAN（見 const 註解，
+##    ALTA-229 已加大到蓋晒區域 2 外圍險路）接近成個車場取景高度，拖幾
+##    下車場／帶／爐就跌出畫面，而且淨往上夾令 120 秒嘅垂直抖動單向
+##    累積。「鏡頭跟車」呢度暫時淨係唔好撞衫（見完成留言）。
 ## 2. Godot 預設 emulate_mouse_from_touch=true，手機一下拖曳會同時派
 ##    一個真 InputEventScreenDrag 同一個模擬嘅 InputEventMouseMotion
 ##    （device=DEVICE_ID_EMULATION，button_mask 有 LEFT）——冇呢個
@@ -1754,6 +1786,8 @@ func _refresh_hud() -> void:
 		_region2_panel.refresh_afford_state(state.cash) # VR-11：解鎖板「夠唔夠錢」嘅暗／亮色跟返即時 Cash
 	if _mine_zone != null:
 		_mine_zone.refresh_afford_state() # ALTA-228：礦層解鎖板／推堆墊跟返即時 Cash
+	if _region2_zone != null:
+		_region2_zone.refresh_afford_state() # ALTA-229：UPGRADE 小屋跟返即時 Cash
 
 	_summon_button.text = "召喚礦工 (%d/%d)" % [state.miner_count, c.miner_summon_cap]
 	if state.can_summon_miner():

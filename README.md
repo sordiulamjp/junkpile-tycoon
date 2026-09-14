@@ -25,5 +25,11 @@
   礦車路軌 → 倉庫 + 推堆墊）：`mine_state.gd` 純數值、`mine_zone.gd` 3D 場景（後壁
   梯級、UnlockPanel 解鎖板、地面礦堆）、`mine_cross_section_panel.gd` 撳「礦道入口」
   toggle 嘅 2D 剖面面板，三者都由 `main.gd` 構造／驅動，唔係獨立 `.tscn`
+- `regions/region2_outer_path/`（VR-13，ALTA-229，PLAN v3 合併原區域 2／3／4：外圍
+  險路——左車道 ×2→×3→×4 發光倍數板 + 刺滾筒 + 磚牆 → 頂部轉右金河 + 岩浆 + 100 lb
+  木橋限重 → ×5 板 → 礦站，沿路 UPGRADE 小屋 200／500）：`region2_state.gd` 純數值
+  （倍數相乘／磚牆撞爛判斷／木橋限重／礦站賣價，自動出貨車 `tick()` 循環），
+  `region2_zone.gd` 3D 場景，由 `main.gd`（`_region2_panel` 解鎖之後）構造／驅動，
+  同樣唔係獨立 `.tscn`
 
 設計總帳同 PLAN 見 Multica 父 issue。

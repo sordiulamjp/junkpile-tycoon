@@ -21,9 +21,13 @@ class_name SaveManager
 ## ALTA-228（VR-12）備註：區域 1（開場）場內礦坑（regions/region1_mine/
 ## mine_zone.gd）加咗 "mine_zone" 子 dict（層解鎖／等級、礦車／倉庫
 ## 等級、推堆墊 tier，見 v2→v3 遷移分支）。
+##
+## ALTA-229（VR-13）備註：區域 2 外圍險路（regions/region2_outer_path/
+## region2_zone.gd）加咗 "region2_zone" 子 dict（UPGRADE 小屋 tier，見
+## v3→v4 遷移分支）。
 
 const SAVE_PATH := "user://save-v1.json"
-const CURRENT_VERSION := 3
+const CURRENT_VERSION := 4
 
 ## 全新存檔嘅預設狀態。
 static func default_state() -> Dictionary:
@@ -46,6 +50,9 @@ static func default_state() -> Dictionary:
 			"cart_level": 1,
 			"warehouse_level": 1,
 			"push_tier": 0,
+		},
+		"region2_zone": {
+			"shack_tier": 0,
 		},
 	}
 
@@ -111,6 +118,11 @@ static func _migrate(data: Dictionary) -> Dictionary:
 				"push_tier": 0,
 			}
 		version = 3
-	# 未來新版本喺呢度逐級加：if version < 4: ... version = 4
+	if version < 4:
+		# v3 -> v4（ALTA-229）：加 region2_zone（UPGRADE 小屋未買）。
+		if not data.has("region2_zone"):
+			data["region2_zone"] = {"shack_tier": 0}
+		version = 4
+	# 未來新版本喺呢度逐級加：if version < 5: ... version = 5
 	data["version"] = version
 	return data
