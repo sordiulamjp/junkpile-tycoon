@@ -111,6 +111,7 @@ var _frenzy_button: Button
 var _save_accum := 0.0
 var _autodrive := false
 var _autodrive_t := 0.0
+var _dbg_t := 0.0
 
 # ── VR-16 掛機自動化 ──
 # issue 原文「Components 買（第一次 10 粒，之後遞增）或者 Cash 500 解鎖」——
@@ -185,6 +186,7 @@ func _ready() -> void:
 	_clear_ore_around(Vector2(_car.position.x, _car.position.y), 1.0)
 	_build_gates()
 	_build_ingot_rack()
+	UnlockPanel.bucket_dump = Callable(self, "_dump_bucket_into_pad")
 	_build_hud()
 	mine.attach_panel(_hud)
 	get_viewport().physics_object_picking = true
@@ -467,6 +469,19 @@ func _rebuild_blade() -> void:
 		bc.rotation.z = -a
 		_car.add_child(bc)
 		_blade_nodes.append(bc)
+	# 側翼：鏟斗兩端向後延伸嘅矮牆，礦唔會由兩側瀉走（視覺 + 碰撞）
+	for sx in [-1.0, 1.0]:
+		var wing := VisualFactory.make_metal_box(Vector3(0.04, 0.26, 0.14), Color("#F2C230").darkened(0.2))
+		wing.position = Vector3(sx * 0.38 * w, 0.14, 0.0)
+		_car_body.add_child(wing)
+		_blade_nodes.append(wing)
+		var wc := CollisionShape3D.new()
+		var ws := BoxShape3D.new()
+		ws.size = Vector3(0.05, 0.28, 0.22)
+		wc.shape = ws
+		wc.position = Vector3(sx * 0.38 * w, 0.12, -0.03)
+		_car.add_child(wc)
+		_blade_nodes.append(wc)
 
 func _physics_process(delta: float) -> void:
 	var input_vec: Vector2 = _joy_vec if _joy_down else _keys_vec
@@ -482,8 +497,8 @@ func _physics_process(delta: float) -> void:
 	if _autodrive:
 		# demo/debug: drive heap -> furnace -> heap ... (waypoints in site coords)
 		_autodrive_t += delta
-		var wps := [Vector2(0.0, 2.5), Vector2(-1.2, 2.2), Vector2(-4.8, 0.6), Vector2(-4.8, -0.35), Vector2(-3.0, 1.5)] # demo：主堆 → 礦脈墊（推礦入格）
-		var wp: Vector2 = wps[int(_autodrive_t / 3.2) % wps.size()]
+		var wps := [Vector2(0.0, 2.2), Vector2(0.0, 3.8), Vector2(-2.2, 3.6), Vector2(-3.55, 1.8), Vector2(-3.55, 0.0), Vector2(-3.55, -1.6)] # demo：由下穿過主堆 → 弧線去礦脈墊（唔倒車，礦留喺鏟內）
+		var wp: Vector2 = wps[mini(int(_autodrive_t / 2.6), wps.size() - 1)]
 		var to: Vector2 = wp - Vector2(_car.position.x, _car.position.y)
 		input_vec = to.normalized() if to.length() > 0.15 else Vector2.ZERO
 	var speed_mult: float = (1.5 if frenzy.active else 1.0) * (AI_SPEED_MULT if _ai_active else 1.0)
@@ -497,6 +512,33 @@ func _physics_process(delta: float) -> void:
 	# keep on the ground plane
 	_car.position.z = CAR_Z
 	_rigidize_front_tick()
+	# 鏟斗「載住」：入咗鏟斗弧內嘅礦即刻鎖喺鏟斗上（跟車郁，轉彎唔瀉，IG 式帶住走），
+	# 上限 = 鏟斗 tier 載量；超出嘅照物理推。賣礦／推入格／撞柱先會離開鏟斗。
+	var cap_carry: int = CARGO_CAP[clampi(mine.state.push_tier, 0, 2)]
+	var inv_c: Transform3D = _car.transform.affine_inverse()
+	var carried := 0
+	for k: Dictionary in _kicked:
+		if k.get("carried", false):
+			carried += 1
+	for k: Dictionary in _kicked:
+		var nb: RigidBody3D = k["node"]
+		if not is_instance_valid(nb):
+			continue
+		if k.get("carried", false):
+			nb.global_position = _car.to_global(k["local"])
+			continue
+		if nb.freeze or carried >= cap_carry:
+			continue
+		var lp: Vector3 = inv_c * nb.position
+		if lp.y > 0.0 and lp.y < 0.85 * _blade_w() and absf(lp.x) < 0.55 * _blade_w():
+			var w: float = _blade_w()
+			var local := Vector3(clampf(lp.x, -0.38 * w, 0.38 * w), clampf(lp.y, 0.08, 0.5 * w), 0.0)
+			local.z = ORE_RADIUS + float(carried / 14) * 0.065 - CAR_Z
+			nb.freeze_mode = RigidBody3D.FREEZE_MODE_KINEMATIC
+			nb.freeze = true
+			k["carried"] = true
+			k["local"] = local
+			carried += 1
 	# 用戶：推唔郁礦——CharacterBody3D 本身唔會推剛體，要自己傳速度：
 	# 撞到嘅礦沿碰撞法線攞到最少同車一樣嘅速度（似真係俾鏟斗推住走）
 	var vcar: Vector3 = _car.velocity
@@ -671,6 +713,8 @@ func _pool_tick(delta: float) -> void:
 		if not is_instance_valid(node):
 			_kicked.erase(k)
 			continue
+		if k.get("carried", false):
+			continue
 		k["t"] += delta
 		var far: bool = node.position.distance_to(_car.position) > KICK_RADIUS * 1.5
 		var still: bool = node.linear_velocity.length() < 0.05
@@ -747,12 +791,12 @@ func _build_deposit_pads() -> void:
 		rub.name = "VeinRubble%d" % di
 		rub.position = Vector3((dep[0] as Vector2).x, (dep[0] as Vector2).y, 0.0)
 		_site.add_child(rub)
-		var bed := VisualFactory.make_flat_box(Vector3(2.2, 1.7, 0.02), Color("#3E3446"))
+		var bed := VisualFactory.make_flat_box(Vector3(1.8, 1.3, 0.02), Color("#3E3446"))
 		bed.position = Vector3(0.0, 0.0, 0.005)
 		rub.add_child(bed)
 		for _r in range(4):
 			var rk := _rock(Vector3(rng.randf_range(0.25, 0.45), rng.randf_range(0.2, 0.35), rng.randf_range(0.2, 0.4)), Color(MineConstants.PALETTE["wall_dark"]))
-			rk.position = Vector3(rng.randf_range(-0.9, 0.9), rng.randf_range(-0.6, 0.6), 0.0)
+			rk.position = Vector3(rng.randf_range(-0.7, 0.7), rng.randf_range(-0.4, 0.5), 0.0)
 			rk.rotation.z = rng.randf_range(0.0, TAU)
 			rub.add_child(rk)
 		for _o in range(10):
@@ -763,7 +807,9 @@ func _build_deposit_pads() -> void:
 		_vein_rubble.append(rub)
 		var p := UnlockPanel.new()
 		p.name = "DepositPad%d" % di
-		p.position = Vector3((dep[0] as Vector2).x, (dep[0] as Vector2).y - 1.05, 0.12)
+		# 墊擺喺礦床斜前方（靠場地中央嗰邊），唔壓住門道同礦床
+		var side: float = 1.0 if (dep[0] as Vector2).x < 0.0 else -1.0
+		p.position = Vector3((dep[0] as Vector2).x + side * 1.25, (dep[0] as Vector2).y - 0.9, 0.12)
 		_site.add_child(p)
 		p.setup("deposit%d" % di, float(dep[3]), "礦脈", _on_deposit_tap, "pickaxe", float(dep[5]))
 		_dep_panels.append(p)
@@ -1024,6 +1070,9 @@ func _on_laser_post_hit(body: Node3D) -> void:
 		if lp.y > -0.1 and lp.y < 0.9 and absf(lp.x) < 0.7:
 			node.set_meta("mult", 1.0)
 			node.set_meta("gates", [])
+			if k.get("carried", false):
+				k["carried"] = false
+				node.freeze = false
 			node.apply_central_impulse(Vector3(rng.randf_range(-0.25, 0.25), rng.randf_range(0.1, 0.35), 0.1))
 	SfxPlayer.play("lava_fall")
 
@@ -1115,6 +1164,19 @@ func _activate_slot(s: Dictionary) -> void:
 	_kicked.append({"slot": s, "node": body, "t": 0.0})
 
 ## 升級格吸收一粒礦：由剛體清單移除、槽位標記為用咗
+## 車駛入要礦嘅升級格：鏟斗入面嘅礦整斗倒入（逐粒飛入，直到夠數）
+func _dump_bucket_into_pad(panel: UnlockPanel) -> void:
+	var inv: Transform3D = _car.transform.affine_inverse()
+	for k: Dictionary in _kicked.duplicate():
+		if panel.ore_ready():
+			break
+		var node: RigidBody3D = k["node"]
+		if not is_instance_valid(node):
+			continue
+		var lp: Vector3 = inv * node.position
+		if lp.y > -0.1 and lp.y < 0.9 * _blade_w() and absf(lp.x) < 0.6 * _blade_w():
+			panel._on_feed_body(node)
+
 func _consume_ore_body(body: RigidBody3D, free_node: bool = true) -> void:
 	for k: Dictionary in _kicked:
 		if k["node"] == body:
@@ -1176,6 +1238,11 @@ func _process(delta: float) -> void:
 	var ev: Dictionary = frenzy.tick(delta)
 	if ev.get("ended", false):
 		SfxPlayer.play("frenzy_start")
+	if _autodrive and OS.is_debug_build():
+		_dbg_t += delta
+		if _dbg_t >= 1.0:
+			_dbg_t = 0.0
+			print("AUTODRIVE t=%.0f car=(%.2f,%.2f) bucket=%d kicked=%d" % [_autodrive_t, _car.position.x, _car.position.y, _bucket_count(), _kicked.size()])
 	_follow_camera(delta)
 	# 留喺爐區入面照樣賣（唔使出返去再入）
 	_sell_poll_t += delta
@@ -1421,6 +1488,9 @@ func _bucket_count() -> int:
 	for k: Dictionary in _kicked:
 		var node: Node3D = k["node"]
 		if not is_instance_valid(node):
+			continue
+		if k.get("carried", false):
+			n += 1
 			continue
 		var lp: Vector3 = inv * node.position
 		if lp.y > 0.0 and lp.y < 0.7 * _blade_w() and absf(lp.x) < 0.5 * _blade_w():

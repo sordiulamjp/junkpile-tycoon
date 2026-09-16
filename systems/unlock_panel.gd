@@ -27,6 +27,7 @@ var _area: Area3D
 var ore_cost: float = 0.0 # 要推幾多粒礦入嚟（0 = 唔使）
 var ore_fed: float = 0.0  # 已推入幾多粒（用戶 2026-09-17：唔入庫存，直接推現貨入升級格）
 var _feed_area: Area3D
+static var bucket_dump: Callable # field 設定：車入格時將鏟斗入面嘅礦整斗倒入
 var icon_kind: String = "" # "blade" | "blade_big" | "furnace" | "pickaxe" | "" — 用戶 2026-09-14：墊上用圖示，唔用文字
 var _icon: Node3D
 
@@ -214,7 +215,16 @@ func _build_feed_area() -> void:
 func _on_feed_body(body: Node3D) -> void:
 	if _unlocked or ore_fed >= ore_cost:
 		return
+	if body is CharacterBody3D:
+		if bucket_dump.is_valid():
+			bucket_dump.call_deferred(self) # 物理回呼入面唔可以改場景樹，延後一幀
+		return
 	if not (body is RigidBody3D) or not body.has_meta("slot"):
+		return
+	_feed_ore.call_deferred(body)
+
+func _feed_ore(body: Node3D) -> void:
+	if _unlocked or ore_fed >= ore_cost or not is_instance_valid(body) or body.get_parent() == self:
 		return
 	# 用戶 2026-09-17：要有動畫——礦粒由物理世界抽出，弧線飛入墊中心縮細消失，墊閃一閃、字彈一彈
 	if body.has_meta("consume"):
