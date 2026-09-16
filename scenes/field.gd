@@ -84,6 +84,7 @@ var _car_in_sell := false
 var _sell_poll_t := 0.0
 var _ai_stuck_t := 0.0
 var _ai_last_pos := Vector2.INF
+var _ai_route: Array = [] # AI 去爐嘅路線：先對準鐳射門中心再穿過，唔會撞柱
 var _spill_accum := 0.0
 var _bottleneck_icons: Dictionary = {}
 
@@ -799,7 +800,7 @@ func _build_gates() -> void:
 		root.position = Vector3(pos.x, pos.y, 0.0)
 		root.rotation.z = float(g[1])
 		_site.add_child(root)
-		var half_w := 0.6
+		var half_w := 0.75 if laser else 0.6
 		for px in [-half_w, half_w]:
 			var post := VisualFactory.make_low_poly_cylinder(0.035, 0.55, Color("#8A8A94") if laser else Color("#F4F4F8"), 8, 0.2)
 			post.rotation_degrees.x = 90.0
@@ -1435,17 +1436,22 @@ func _ai_steer(delta: float) -> Vector2:
 	if _ai_mode == "heap":
 		if carrying >= int(float(cap) * 0.6):
 			_ai_mode = "furnace"
-			_ai_target = FURNACE_POS + Vector2(-0.1, -1.0)
+			var laser: Vector2 = GATES[3][0]
+			_ai_route = [laser + Vector2(0.0, 1.1), laser + Vector2(0.0, -0.7), FURNACE_POS + Vector2(-0.1, -1.0)]
+			_ai_target = _ai_route.pop_front()
 		elif _ai_target == Vector2.INF or _ai_retarget_t <= 0.0 or pos.distance_to(_ai_target) < 0.35:
 			_ai_target = _nearest_ore_pos(pos)
 			_ai_retarget_t = 2.5
 	else:
-		if carrying == 0 and pos.distance_to(_ai_target) < 1.2:
+		if carrying == 0 and _ai_route.is_empty() and pos.distance_to(_ai_target) < 1.2:
 			_ai_mode = "heap"
 			_ai_target = _nearest_ore_pos(pos)
 			_ai_retarget_t = 2.5
-		elif pos.distance_to(_ai_target) < 0.3:
-			_ai_target = FURNACE_POS + Vector2(-1.6, -0.6) # 已喺爐區未賣就行出去再入
+		elif pos.distance_to(_ai_target) < 0.25:
+			if not _ai_route.is_empty():
+				_ai_target = _ai_route.pop_front()
+			else:
+				_ai_target = FURNACE_POS + Vector2(-1.6, -0.6) # 已喺爐區未賣就行出去再入
 	# 卡住偵測：2 秒冇郁就換目標
 	if _ai_last_pos != Vector2.INF and pos.distance_to(_ai_last_pos) < 0.03:
 		_ai_stuck_t += delta
