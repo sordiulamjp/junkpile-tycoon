@@ -73,7 +73,7 @@ func test_unlock_layer_two_deducts_shared_game_state_cash() -> void:
 	var mine: MineZone = main._mine_zone
 	var cost := mine.state.layer_unlock_cost(1)
 	main.state.cash = cost
-	main.state.components = 1000000.0 # 2026-09-17：部分升級要礦料
+	for _p in main._mine_zone._layer_unlock_panels + main._mine_zone._push_panels: _p.ore_fed = _p.ore_cost # 2026-09-17：礦直接推入升級格，呢度當已推夠
 
 	mine._on_layer_unlock_tap("layer1", cost)
 
@@ -85,7 +85,7 @@ func test_unlock_layer_two_fails_when_not_affordable() -> void:
 	var mine: MineZone = main._mine_zone
 	var cost := mine.state.layer_unlock_cost(1)
 	main.state.cash = cost - 1.0
-	main.state.components = 1000000.0 # 2026-09-17：部分升級要礦料
+	for _p in main._mine_zone._layer_unlock_panels + main._mine_zone._push_panels: _p.ore_fed = _p.ore_cost # 2026-09-17：礦直接推入升級格，呢度當已推夠
 
 	mine._on_layer_unlock_tap("layer1", cost)
 
@@ -96,7 +96,7 @@ func test_cannot_unlock_layer_three_before_layer_two_via_tap() -> void:
 	_load_main()
 	var mine: MineZone = main._mine_zone
 	main.state.cash = 1000000.0
-	main.state.components = 1000000.0 # 2026-09-17：部分升級要礦料
+	for _p in main._mine_zone._layer_unlock_panels + main._mine_zone._push_panels: _p.ore_fed = _p.ore_cost # 2026-09-17：礦直接推入升級格，呢度當已推夠
 	mine._on_layer_unlock_tap("layer2", mine.state.layer_unlock_cost(2))
 	assert_false(mine.state.layer_unlocked[2], "層 2 未解鎖，撳層 3 塊板都唔應該通過")
 
@@ -134,7 +134,7 @@ func test_push_tier_upgrade_deducts_shared_cash_and_raises_scoop_mult() -> void:
 	var mine: MineZone = main._mine_zone
 	var cost := mine.state.c.push_tier_cost[0]
 	main.state.cash = cost
-	main.state.components = 1000000.0 # 2026-09-17：部分升級要礦料
+	for _p in main._mine_zone._layer_unlock_panels + main._mine_zone._push_panels: _p.ore_fed = _p.ore_cost # 2026-09-17：礦直接推入升級格，呢度當已推夠
 
 	mine._on_push_tap("push0", cost)
 
@@ -146,7 +146,7 @@ func test_push_tier_cannot_skip_ahead() -> void:
 	_load_main()
 	var mine: MineZone = main._mine_zone
 	main.state.cash = 1000000.0
-	main.state.components = 1000000.0 # 2026-09-17：部分升級要礦料
+	for _p in main._mine_zone._layer_unlock_panels + main._mine_zone._push_panels: _p.ore_fed = _p.ore_cost # 2026-09-17：礦直接推入升級格，呢度當已推夠
 	mine._on_push_tap("push1", mine.state.c.push_tier_cost[1]) # 未買 tier0，唔可以直接買 tier1
 	assert_eq(mine.state.push_tier, 0)
 
@@ -188,7 +188,7 @@ func test_mine_zone_progress_round_trips_through_save_and_reload() -> void:
 	_load_main()
 	var mine: MineZone = main._mine_zone
 	main.state.cash = 1000000.0
-	main.state.components = 1000000.0 # 2026-09-17：部分升級要礦料
+	for _p in main._mine_zone._layer_unlock_panels + main._mine_zone._push_panels: _p.ore_fed = _p.ore_cost # 2026-09-17：礦直接推入升級格，呢度當已推夠
 	mine._on_layer_unlock_tap("layer1", mine.state.layer_unlock_cost(1))
 	mine._on_push_tap("push0", mine.state.c.push_tier_cost[0])
 	mine.state.apply_cart_upgrade()

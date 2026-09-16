@@ -124,7 +124,6 @@ func to_save_dict() -> Dictionary:
 func tick(delta: float) -> void:
 	var result := state.tick(delta)
 	_game_state.cash += float(result["cash_gain"])
-	_game_state.components += float(result.get("ore_gain", 0.0)) # 礦料庫存
 	_animate_cart(delta)
 	panel.refresh() # 面板自己 visible=false 就即刻 return，收埋嗰陣冇額外成本
 
@@ -149,11 +148,20 @@ func _animate_cart(delta: float) -> void:
 
 ## main.gd `_refresh_hud()` 每幀 call（同 `_region2_panel.refresh_afford_state()`
 ## 一致做法）——解鎖板／推堆墊嘅「夠唔夠錢」暗／亮色跟返即時 Cash。
+func _find_panel(region_id: String) -> UnlockPanel:
+	for p in _layer_unlock_panels:
+		if p.region_id == region_id:
+			return p
+	for p in _push_panels:
+		if p.region_id == region_id:
+			return p
+	return null
+
 func refresh_afford_state() -> void:
 	for p in _layer_unlock_panels:
-		p.refresh_afford_state(_game_state.cash, _game_state.components)
+		p.refresh_afford_state(_game_state.cash)
 	for p in _push_panels:
-		p.refresh_afford_state(_game_state.cash, _game_state.components)
+		p.refresh_afford_state(_game_state.cash)
 
 
 # ══════════════════════ 3D 視覺：後壁梯級礦層 ══════════════════════
@@ -242,11 +250,10 @@ func _on_layer_unlock_tap(region_id: String, cost: float) -> void:
 	var idx := int(region_id.trim_prefix("layer"))
 	if not state.can_unlock_layer(idx):
 		return
-	var ore: float = state.layer_unlock_ore(idx)
-	if _game_state.cash < cost or _game_state.components < ore:
+	var panel: UnlockPanel = _find_panel(region_id)
+	if _game_state.cash < cost or (panel != null and not panel.ore_ready()):
 		return
 	_game_state.cash -= cost
-	_game_state.components -= ore
 	state.apply_layer_unlock(idx)
 	SfxPlayer.play("upgrade")
 	EventLog.log_event("mine_layer_unlock", {"layer": idx, "cost": cost})
@@ -370,11 +377,10 @@ func _on_push_tap(region_id: String, cost: float) -> void:
 	var idx := int(region_id.trim_prefix("push"))
 	if idx != state.push_tier: # 一定要順序買，唔可以跳級
 		return
-	var ore: float = state.next_push_tier_ore()
-	if _game_state.cash < cost or _game_state.components < ore:
+	var panel: UnlockPanel = _find_panel(region_id)
+	if _game_state.cash < cost or (panel != null and not panel.ore_ready()):
 		return
 	_game_state.cash -= cost
-	_game_state.components -= ore
 	state.apply_push_tier_upgrade()
 	SfxPlayer.play("upgrade")
 	EventLog.log_event("mine_push_tier_upgrade", {"tier": state.push_tier, "cost": cost})
