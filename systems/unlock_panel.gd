@@ -216,15 +216,49 @@ func _on_feed_body(body: Node3D) -> void:
 		return
 	if not (body is RigidBody3D) or not body.has_meta("slot"):
 		return
+	# 用戶 2026-09-17：要有動畫——礦粒由物理世界抽出，弧線飛入墊中心縮細消失，墊閃一閃、字彈一彈
 	if body.has_meta("consume"):
-		(body.get_meta("consume") as Callable).call(body)
-	else:
-		body.queue_free()
+		(body.get_meta("consume") as Callable).call(body, false)
+	var rb := body as RigidBody3D
+	rb.freeze = true
+	rb.collision_layer = 0
+	rb.collision_mask = 0
+	var gp: Vector3 = rb.global_position
+	var parent := rb.get_parent()
+	if parent != null:
+		parent.remove_child(rb)
+	add_child(rb)
+	rb.global_position = gp
 	ore_fed += 1.0
 	_refresh()
+	var tw := create_tween()
+	tw.set_parallel(true)
+	tw.tween_property(rb, "position:x", 0.0, 0.28).set_trans(Tween.TRANS_SINE)
+	tw.tween_property(rb, "position:y", 0.0, 0.28).set_trans(Tween.TRANS_SINE)
+	tw.tween_property(rb, "position:z", 0.45, 0.14).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+	tw.chain().tween_property(rb, "position:z", 0.05, 0.14).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
+	tw.parallel().tween_property(rb, "scale", Vector3.ONE * 0.2, 0.14)
+	tw.chain().tween_callback(rb.queue_free)
+	_flash_pad(false)
 	# 礦夠喇：即刻試買（現金唔夠就等，礦數保留）
 	if ore_fed >= ore_cost and _on_tap.is_valid():
 		_on_tap.call(region_id, cost)
+		if _unlocked:
+			_flash_pad(true)
+
+func _flash_pad(big: bool) -> void:
+	var mat: StandardMaterial3D = _pad.material_override
+	var base: Color = mat.albedo_color
+	var tw := create_tween()
+	tw.tween_property(mat, "albedo_color", base.lightened(0.6 if big else 0.35), 0.06)
+	tw.tween_property(mat, "albedo_color", base, 0.25 if not big else 0.6)
+	var lt := create_tween()
+	lt.tween_property(_label, "scale", Vector3.ONE * (1.6 if big else 1.25), 0.08).set_trans(Tween.TRANS_BACK)
+	lt.tween_property(_label, "scale", Vector3.ONE, 0.16)
+	if _icon != null:
+		var it := create_tween()
+		it.tween_property(_icon, "scale", Vector3.ONE * (1.4 if big else 1.15), 0.08).set_trans(Tween.TRANS_BACK)
+		it.tween_property(_icon, "scale", Vector3.ONE, 0.16)
 
 func ore_ready() -> bool:
 	return ore_fed >= ore_cost
