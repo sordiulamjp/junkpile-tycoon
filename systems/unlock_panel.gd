@@ -24,6 +24,7 @@ var _affordable: bool = false
 var _label: Label3D
 var _pad: MeshInstance3D
 var _area: Area3D
+var ore_cost: float = 0.0 # 礦料成本（0 = 唔使）
 var icon_kind: String = "" # "blade" | "blade_big" | "furnace" | "pickaxe" | "" — 用戶 2026-09-14：墊上用圖示，唔用文字
 var _icon: Node3D
 
@@ -33,9 +34,10 @@ var _icon: Node3D
 ## Callable(region_id: String, cost: float)，由呼叫方決定通唔通過（夠唔
 ## 夠錢）、扣邊個欄位、記唔記存檔；成功之後呼叫方要自己 call 返
 ## mark_unlocked()——呢個元件自己唔扣錢、唔存檔、唔自動判定「已解鎖」。
-func setup(p_region_id: String, p_cost: float, p_display_name: String, on_tap: Callable, p_icon_kind: String = "") -> void:
+func setup(p_region_id: String, p_cost: float, p_display_name: String, on_tap: Callable, p_icon_kind: String = "", p_ore_cost: float = 0.0) -> void:
 	region_id = p_region_id
 	cost = p_cost
+	ore_cost = p_ore_cost
 	display_name = p_display_name
 	_on_tap = on_tap
 	icon_kind = p_icon_kind
@@ -100,10 +102,10 @@ func mark_unlocked() -> void:
 ## 呼叫方每次有最新嘅「而家有幾多錢」（例如 main.gd _refresh_hud() 每幀
 ## 傳 state.cash）就 call 呢個，更新「夠唔夠錢」嘅顯示，唔使玩家撳落去
 ## 先知道買唔買得起。已解鎖就乜都唔使做。
-func refresh_afford_state(available_cash: float) -> void:
+func refresh_afford_state(available_cash: float, available_ore: float = INF) -> void:
 	if _unlocked:
 		return
-	var affordable := available_cash >= cost
+	var affordable := available_cash >= cost and available_ore >= ore_cost
 	if affordable == _affordable:
 		return # 冇轉變就唔使重寫 Label3D／material，慳返啲嘢（同帶升級掣個做法一致）
 	_affordable = affordable
@@ -115,7 +117,7 @@ func _refresh() -> void:
 		_label.text = "✓"
 		mat.albedo_color = (VisualFactory.PALETTE["pad_purple"] as Color).lightened(0.25)
 		return
-	_label.text = _fmt_cost(cost)
+	_label.text = _fmt_cost(cost) if ore_cost <= 0.0 else "%s\n礦 %s" % [_fmt_cost(cost), _fmt_cost(ore_cost)]
 	var base_color: Color = VisualFactory.PALETTE["pad_purple"]
 	mat.albedo_color = base_color if _affordable else base_color.darkened(0.45)
 

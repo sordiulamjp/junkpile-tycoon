@@ -62,13 +62,13 @@ var _kick_root: Node3D
 var _scan_accum := 0.0
 var _respawn_accum := 0.0
 # ── 有限資源（用戶 2026-09-17）：礦集中喺「礦脈」，靠升級逐步開啟 ──
-const DEPOSITS := [ # [pos, capacity, start_revealed, unlock_cost, regen_secs]
-	[Vector2(0.0, 3.2), 1400, 700, 0.0, 0.0],      # 中央主堆：由礦坑輸出補充
-	[Vector2(-4.8, 0.9), 1200, 0, 400.0, 12.0],    # 左門道中段
-	[Vector2(4.4, 1.6), 1200, 0, 1500.0, 12.0],    # 右側
-	[Vector2(-4.8, -5.3), 1200, 0, 5000.0, 10.0],  # 左門道起點
-	[Vector2(1.6, -5.4), 1200, 0, 15000.0, 8.0],   # 下方
-	[Vector2(3.2, -0.6), 1200, 0, 40000.0, 6.0],   # 爐前
+const DEPOSITS := [ # [pos, capacity, start_revealed, unlock_cost, regen_secs, ore_cost]
+	[Vector2(0.0, 3.2), 1400, 700, 0.0, 0.0, 0.0],        # 中央主堆：由礦坑輸出補充
+	[Vector2(-4.8, 0.9), 1200, 0, 400.0, 12.0, 30.0],     # 左門道中段
+	[Vector2(4.4, 1.6), 1200, 0, 1500.0, 12.0, 120.0],    # 右側
+	[Vector2(-4.8, -5.3), 1200, 0, 5000.0, 10.0, 400.0],  # 左門道起點
+	[Vector2(1.6, -5.4), 1200, 0, 15000.0, 8.0, 1000.0],  # 下方
+	[Vector2(3.2, -0.6), 1200, 0, 40000.0, 6.0, 2500.0],  # 爐前
 ]
 var _dep_slots: Array = []        # per deposit: Array of slot dicts
 var _dep_unlocked: Array = []     # per deposit: bool
@@ -120,6 +120,7 @@ var _autodrive_t := 0.0
 const AI_COST_CASH := 500.0
 const AI_COST_COMPONENTS := 10.0
 const MGR_COST := 2000.0
+const MGR_ORE := 100.0 # 經理要礦料（用戶 2026-09-17：部分升級要礦料）
 ## Review（ALTA-241）：0249160 改咗做 3.0，注明「用戶 2026-09-14」——查過
 ## issue 本身同父 issue（ALTA-227/228 PLAN）成串留言都搵唔到呢句出處，
 ## 改返 issue 原文明寫嘅 6 秒；玩家一掂搖桿／joystick 已經即刻接手
@@ -764,7 +765,7 @@ func _build_deposit_pads() -> void:
 		p.name = "DepositPad%d" % di
 		p.position = Vector3((dep[0] as Vector2).x, (dep[0] as Vector2).y - 1.05, 0.12)
 		_site.add_child(p)
-		p.setup("deposit%d" % di, float(dep[3]), "礦脈", _on_deposit_tap, "pickaxe")
+		p.setup("deposit%d" % di, float(dep[3]), "礦脈", _on_deposit_tap, "pickaxe", float(dep[5]))
 		_dep_panels.append(p)
 		# 車駛入都可以買
 		var area := Area3D.new()
@@ -781,9 +782,11 @@ func _build_deposit_pads() -> void:
 
 func _on_deposit_tap(region_id: String, cost: float) -> void:
 	var di: int = int(region_id.trim_prefix("deposit"))
-	if _dep_unlocked[di] or state.cash < cost:
+	var ore: float = float(DEPOSITS[di][5])
+	if _dep_unlocked[di] or state.cash < cost or state.components < ore:
 		return
 	state.cash -= cost
+	state.components -= ore
 	_dep_unlocked[di] = true
 	(_dep_panels[di - 1] as UnlockPanel).mark_unlocked()
 	if di - 1 < _vein_rubble.size():
@@ -1201,7 +1204,7 @@ func _build_hud() -> void:
 	row.add_theme_constant_override("separation", 40)
 	top.add_child(row)
 	_cash_label = _hud_label(row, "● 0")
-	_comp_label = _hud_label(row, "⚙ 0")
+	_comp_label = _hud_label(row, "礦料 0")
 	_eco_label = _hud_label(row, "♻ 0")
 	# bottleneck as icons: 礦層 ▶ 礦車 ▶ 倉庫 (the slow stage pulses red)
 	var brow_top := HBoxContainer.new()
@@ -1317,7 +1320,7 @@ func _hud_label(parent: Control, text: String) -> Label:
 
 func _refresh_hud() -> void:
 	_cash_label.text = "● %s" % _fmt(state.cash)
-	_comp_label.text = "⚙ %s" % _fmt(state.components)
+	_comp_label.text = "礦料 %s" % _fmt(state.components)
 	_eco_label.text = "♻ %s" % _fmt(state.eco)
 	if frenzy.active:
 		_frenzy_button.text = " %ds" % int(ceil(frenzy.time_remaining))
@@ -1334,12 +1337,14 @@ func _refresh_hud() -> void:
 		ic.modulate = Color(1.0, 0.35, 0.3, 1.0) if k == stage else Color(1, 1, 1, 0.85)
 		ic.scale = Vector2.ONE * (1.0 + 0.12 * pulse) if k == stage else Vector2.ONE
 	mine.refresh_afford_state()
+	for dp in _dep_panels:
+		(dp as UnlockPanel).refresh_afford_state(state.cash, state.components)
 	_update_furnace_arrow()
 	_ai_button.text = ("AI " + ("●" if _ai_on else "○")) if _ai_unlocked else "AI ⚙%s|$%s" % [_fmt(AI_COST_COMPONENTS), _fmt(AI_COST_CASH)]
 	_ai_button.modulate = Color(0.6, 1.0, 0.6) if _ai_active else Color.WHITE
 	_ai_button.disabled = (not _ai_unlocked) and state.components < AI_COST_COMPONENTS and state.cash < AI_COST_CASH
-	_mgr_button.text = ("●" if _mgr_on else "○") if _mgr_unlocked else _fmt(MGR_COST)
-	_mgr_button.disabled = (not _mgr_unlocked) and state.cash < MGR_COST
+	_mgr_button.text = ("●" if _mgr_on else "○") if _mgr_unlocked else "%s+礦%d" % [_fmt(MGR_COST), int(MGR_ORE)]
+	_mgr_button.disabled = (not _mgr_unlocked) and (state.cash < MGR_COST or state.components < MGR_ORE)
 
 func _update_furnace_arrow() -> void:
 	if _bucket_count() == 0 or _furnace_node == null:
@@ -1555,9 +1560,10 @@ func _on_ai_pressed() -> void:
 
 func _on_mgr_pressed() -> void:
 	if not _mgr_unlocked:
-		if state.cash < MGR_COST:
+		if state.cash < MGR_COST or state.components < MGR_ORE:
 			return
 		state.cash -= MGR_COST
+		state.components -= MGR_ORE
 		_mgr_unlocked = true
 		_mgr_on = true
 	else:
@@ -1644,8 +1650,10 @@ func _manager_tick(delta: float) -> void:
 	for idx in range(ms.layer_unlocked.size()):
 		if ms.layer_unlocked[idx] and (stage == "layers" or stage == "balanced"):
 			options.append([ms.next_layer_speed_cost(idx), func() -> void: ms.apply_layer_speed_upgrade(idx)])
-	if (stage == "cart" or stage == "balanced") and ms.can_upgrade_cart():
-		options.append([ms.next_cart_cost(), func() -> void: ms.apply_cart_upgrade()])
+	if (stage == "cart" or stage == "balanced") and ms.can_upgrade_cart() and state.components >= ms.next_cart_ore_cost():
+		options.append([ms.next_cart_cost(), func() -> void:
+			state.components -= ms.next_cart_ore_cost()
+			ms.apply_cart_upgrade()])
 	if (stage == "warehouse" or stage == "balanced") and ms.can_upgrade_warehouse():
 		options.append([ms.next_warehouse_cost(), func() -> void: ms.apply_warehouse_upgrade()])
 	if options.is_empty():

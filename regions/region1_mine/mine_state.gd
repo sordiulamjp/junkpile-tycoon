@@ -52,6 +52,17 @@ func total_mine_output() -> float:
 func layer_unlock_cost(idx: int) -> float:
 	return c.layer_unlock_cost[idx]
 
+func layer_unlock_ore(idx: int) -> float:
+	return c.layer_unlock_ore[idx] if idx < c.layer_unlock_ore.size() else 0.0
+
+func next_cart_ore_cost() -> float:
+	return c.cart_ore_per_level * float(cart_level)
+
+func next_push_tier_ore() -> float:
+	if not can_upgrade_push_tier():
+		return INF
+	return c.push_tier_ore[push_tier] if push_tier < c.push_tier_ore.size() else 0.0
+
 ## 一定要順序解鎖——層 idx 要解鎖，前一層（idx-1）一定要已經解鎖咗。
 func can_unlock_layer(idx: int) -> bool:
 	if idx <= 0 or idx >= layer_unlocked.size():
@@ -197,10 +208,12 @@ func tick(delta: float) -> Dictionary:
 	# pile_silver_ratio（嗰個係「地面堆」專屬，呢度係「過咗倉庫」專屬，
 	# 故意分開，日後可以各自調）。
 	var blended_value: float = (c.ore_value_silver + c.ore_value_gold) * 0.5
+	# 用戶 2026-09-17：倉庫收集嘅礦照變現金，同時計入「礦料」庫存（部分升級要礦料）
 	var cash_gain := collected * blended_value
+	var ore_gain := collected
 
 	return {
 		"mined": mined, "jammed": jammed, "lifted": lifted, "collected": collected,
-		"cash_gain": cash_gain, "cart_idle": cart_idle,
+		"cash_gain": cash_gain, "ore_gain": ore_gain, "cart_idle": cart_idle,
 		"underground_backlog": underground_backlog, "ground_backlog": ground_backlog,
 	}

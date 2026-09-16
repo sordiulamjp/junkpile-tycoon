@@ -271,8 +271,8 @@ func refresh() -> void:
 
 	_cart_rate_label.text = "運載上限 %.2f/s" % mine.cart_capacity()
 	if mine.can_upgrade_cart():
-		_cart_upgrade_button.text = "升級 ($%s)" % _format_number(mine.next_cart_cost())
-		_cart_upgrade_button.disabled = state.cash < mine.next_cart_cost()
+		_cart_upgrade_button.text = "升級 ($%s + 礦 %s)" % [_format_number(mine.next_cart_cost()), _format_number(mine.next_cart_ore_cost())]
+		_cart_upgrade_button.disabled = state.cash < mine.next_cart_cost() or state.components < mine.next_cart_ore_cost()
 	else:
 		_cart_upgrade_button.text = "已封頂 Lv%d" % mine.cart_level
 		_cart_upgrade_button.disabled = true
@@ -331,9 +331,11 @@ func _on_upgrade_warehouse_pressed() -> void:
 
 func _on_upgrade_cart_pressed() -> void:
 	var cost := mine.next_cart_cost()
-	if not mine.can_upgrade_cart() or state.cash < cost:
+	var ore := mine.next_cart_ore_cost()
+	if not mine.can_upgrade_cart() or state.cash < cost or state.components < ore:
 		return
 	state.cash -= cost
+	state.components -= ore
 	mine.apply_cart_upgrade()
 	SfxPlayer.play("upgrade")
 	refresh()
