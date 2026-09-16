@@ -29,6 +29,7 @@ const LAYER_DEPTH_STEP := 0.9
 ## -- 層解鎖：層 1 開場已開（cost=0，唔使解鎖），層 2／3 鎖住，撳
 ## UnlockPanel 買（一定要順序解鎖，唔可以跳層 2 直接解鎖層 3）。 --
 @export var layer_unlock_cost: Array[float] = [0.0, 250.0, 1200.0] # TUNE
+@export var layer_unlock_ore: Array[float] = [0.0, 80.0, 300.0]     # TUNE：礦料成本（用戶 2026-09-17：部分升級要礦料）
 
 ## -- 每層開採速度（每層獨立等級，無上限，抄 miner_level 曲線） --
 @export var layer_base_rate: float = 0.6         # TUNE：Lv0 每層 ore/s
@@ -43,6 +44,7 @@ const LAYER_DEPTH_STEP := 0.9
 @export var cart_level_cap: int = 10     # TUNE
 @export var cart_cost_base: float = 50.0 # TUNE
 @export var cart_cost_mult: float = 1.5  # TUNE
+@export var cart_ore_per_level: float = 12.0 # TUNE：礦車每級礦料成本 = 12 × 目標等級
 
 ## -- 倉庫收集（＝地面收集，抄 belt 曲線） --
 @export var warehouse_cap_lv1: float = 1.5    # TUNE
@@ -67,6 +69,7 @@ const LAYER_DEPTH_STEP := 0.9
 ## 收礦倍率；跟現有 car_upgrade_tiers 風格，但呢度用 Cash 買唔係免費
 ## 駛過） --
 @export var push_tier_cost: Array[float] = [150.0, 500.0, 1000.0]     # TUNE
+@export var push_tier_ore: Array[float] = [0.0, 60.0, 150.0]          # TUNE：鏟斗 tier 礦料成本
 @export var push_tier_scoop_mult: Array[float] = [1.0, 1.8, 3.0]      # TUNE
 @export var push_tier_names: Array[String] = ["鏟斗", "熔爐賣礦", "大鏟斗"]
 

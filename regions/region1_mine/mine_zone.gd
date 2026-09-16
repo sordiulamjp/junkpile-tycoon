@@ -124,6 +124,7 @@ func to_save_dict() -> Dictionary:
 func tick(delta: float) -> void:
 	var result := state.tick(delta)
 	_game_state.cash += float(result["cash_gain"])
+	_game_state.components += float(result.get("ore_gain", 0.0)) # 礦料庫存
 	_animate_cart(delta)
 	panel.refresh() # 面板自己 visible=false 就即刻 return，收埋嗰陣冇額外成本
 
@@ -150,9 +151,9 @@ func _animate_cart(delta: float) -> void:
 ## 一致做法）——解鎖板／推堆墊嘅「夠唔夠錢」暗／亮色跟返即時 Cash。
 func refresh_afford_state() -> void:
 	for p in _layer_unlock_panels:
-		p.refresh_afford_state(_game_state.cash)
+		p.refresh_afford_state(_game_state.cash, _game_state.components)
 	for p in _push_panels:
-		p.refresh_afford_state(_game_state.cash)
+		p.refresh_afford_state(_game_state.cash, _game_state.components)
 
 
 # ══════════════════════ 3D 視覺：後壁梯級礦層 ══════════════════════
@@ -234,16 +235,18 @@ func _build_layer_terrace(idx: int) -> void:
 	unlock_panel.name = "LayerUnlockPanel%d" % idx
 	unlock_panel.position = LAYER_UNLOCK_PAD_POS
 	_layer_root.add_child(unlock_panel)
-	unlock_panel.setup("layer%d" % idx, state.layer_unlock_cost(idx), "礦層 %d" % (idx + 1), _on_layer_unlock_tap, "pickaxe")
+	unlock_panel.setup("layer%d" % idx, state.layer_unlock_cost(idx), "礦層 %d" % (idx + 1), _on_layer_unlock_tap, "pickaxe", state.layer_unlock_ore(idx))
 	_layer_unlock_panels.append(unlock_panel)
 
 func _on_layer_unlock_tap(region_id: String, cost: float) -> void:
 	var idx := int(region_id.trim_prefix("layer"))
 	if not state.can_unlock_layer(idx):
 		return
-	if _game_state.cash < cost:
+	var ore: float = state.layer_unlock_ore(idx)
+	if _game_state.cash < cost or _game_state.components < ore:
 		return
 	_game_state.cash -= cost
+	_game_state.components -= ore
 	state.apply_layer_unlock(idx)
 	SfxPlayer.play("upgrade")
 	EventLog.log_event("mine_layer_unlock", {"layer": idx, "cost": cost})
@@ -355,7 +358,7 @@ func _build_push_pads() -> void:
 		p.position = Vector3(-LAYER_WIDTH * 0.5 - 0.55 + float(i) * 1.05, -0.2, 0.12)
 		add_child(p)
 		var region_id := "push%d" % i
-		p.setup(region_id, state.c.push_tier_cost[i], state.c.push_tier_names[i], _on_push_tap, ["blade", "furnace", "blade_big"][i])
+		p.setup(region_id, state.c.push_tier_cost[i], state.c.push_tier_names[i], _on_push_tap, ["blade", "furnace", "blade_big"][i], state.c.push_tier_ore[i] if i < state.c.push_tier_ore.size() else 0.0)
 		if i < state.push_tier:
 			p.mark_unlocked()
 		_push_panels.append(p)
@@ -367,9 +370,11 @@ func _on_push_tap(region_id: String, cost: float) -> void:
 	var idx := int(region_id.trim_prefix("push"))
 	if idx != state.push_tier: # 一定要順序買，唔可以跳級
 		return
-	if _game_state.cash < cost:
+	var ore: float = state.next_push_tier_ore()
+	if _game_state.cash < cost or _game_state.components < ore:
 		return
 	_game_state.cash -= cost
+	_game_state.components -= ore
 	state.apply_push_tier_upgrade()
 	SfxPlayer.play("upgrade")
 	EventLog.log_event("mine_push_tier_upgrade", {"tier": state.push_tier, "cost": cost})
