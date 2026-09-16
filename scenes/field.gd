@@ -482,7 +482,7 @@ func _physics_process(delta: float) -> void:
 	if _autodrive:
 		# demo/debug: drive heap -> furnace -> heap ... (waypoints in site coords)
 		_autodrive_t += delta
-		var wps := [Vector2(-2.2, 0.4), Vector2(1.4, 0.2), FURNACE_POS + Vector2(-0.2, -0.9), Vector2(-0.6, -1.6), FURNACE_POS + Vector2(-0.9, 0.2)]
+		var wps := [Vector2(0.0, 2.5), Vector2(-1.2, 2.2), Vector2(-4.8, 0.6), Vector2(-4.8, -0.35), Vector2(-3.0, 1.5)] # demo：主堆 → 礦脈墊（推礦入格）
 		var wp: Vector2 = wps[int(_autodrive_t / 3.2) % wps.size()]
 		var to: Vector2 = wp - Vector2(_car.position.x, _car.position.y)
 		input_vec = to.normalized() if to.length() > 0.15 else Vector2.ZERO
