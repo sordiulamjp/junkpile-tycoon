@@ -13,10 +13,10 @@ const CAM_DIST_MIN := 6.5
 const CAM_DIST_MAX := 18.0
 var _cam_dist := CAM_DIST
 var _pinch_last := -1.0
-const FIELD_MIN := Vector2(-5.2, -5.4)   # site bounds (x, y) — 用戶：再放大
-const FIELD_MAX := Vector2(5.2, 5.6)
-const MINE_POS := Vector2(0.0, 3.3)      # MineZone origin (its terraces extend +y)
-const FURNACE_POS := Vector2(3.4, -3.2)
+const FIELD_MIN := Vector2(-7.0, -7.0)   # site bounds (x, y) — 用戶 2026-09-16：地圖再加大 + 分區
+const FIELD_MAX := Vector2(7.0, 7.6)
+const MINE_POS := Vector2(0.0, 5.2)      # 後方：礦坑核心
+const FURNACE_POS := Vector2(4.8, -4.6)  # 右下：熔爐（鐳射門喺北面入口）
 const CAR_START := Vector2(0.0, -0.4)
 const CAR_Z := 0.14
 const JOY_RADIUS_PX := 110.0
@@ -29,7 +29,7 @@ const CARGO_CAP := [30, 60, 100] # 鏟斗 tier 0/1/2 可以載幾多粒
 const CAPTURE_R := 0.9
 const PUSH_IMPULSE := 0.35
 const ORE_RADIUS := 0.035
-const ORE_COUNT := 7000
+const ORE_COUNT := 9000
 const KICK_RADIUS := 1.0   # 車前方呢個半徑內嘅礦轉做真剛體，俾鏟斗物理推
 const KICK_LIFETIME := 1.0
 const KICK_BUDGET := 260
@@ -68,11 +68,11 @@ var _cargo_root: Node3D
 var _furnace_node: Node3D
 var _furnace_arrow: Control
 # ── 倍數門 / 鐳射門 / 賣礦口累計 / 財富架（Idle Mafia 參考，用戶 2026-09-14）──
-const GATES := [ # [site pos, yaw, mult, laser]
-	[Vector2(-2.6, -1.4), 0.0, 2.0, false],
-	[Vector2(-2.6, 0.6), 0.0, 3.0, false],
-	[Vector2(-1.2, 2.2), 0.0, 4.0, false],
-	[Vector2(2.6, -1.4), 0.0, 5.0, true],
+const GATES := [ # [site pos, yaw, mult, laser] — 左邊倍數門道由下向上 ×2→×3→×4；右下鐳射 ×5 守住熔爐北口
+	[Vector2(-4.8, -3.6), 0.0, 2.0, false],
+	[Vector2(-4.8, -0.6), 0.0, 3.0, false],
+	[Vector2(-4.8, 2.4), 0.0, 4.0, false],
+	[Vector2(4.8, -2.6), 0.0, 5.0, true],
 ]
 var _furnace_total := 0.0
 var _furnace_total_shown := 0.0
@@ -231,6 +231,15 @@ func _build_ground() -> void:
 		t.position = Vector3(rng.randf_range(FIELD_MIN.x, FIELD_MAX.x), rng.randf_range(FIELD_MIN.y, FIELD_MAX.y * 0.4), 0.003)
 		t.rotation.z = rng.randf_range(-0.6, 0.6)
 		_site.add_child(t)
+	# 分區地面：左邊門道同熔爐北面入口鋪深色車道 + 黃虛線，一眼知路線
+	for spec in [[Vector2(-4.8, -0.6), Vector2(1.6, 11.0)], [Vector2(4.8, -3.2), Vector2(1.9, 3.6)]]:
+		var lane := VisualFactory.make_flat_box(Vector3(spec[1].x, spec[1].y, 0.008), Color("#4A4050"))
+		lane.position = Vector3(spec[0].x, spec[0].y, 0.004)
+		_site.add_child(lane)
+		for i in range(int(spec[1].y / 0.6)):
+			var dash := VisualFactory.make_flat_box(Vector3(0.08, 0.3, 0.004), Color("#E8D86A"))
+			dash.position = Vector3(spec[0].x, spec[0].y - spec[1].y * 0.5 + 0.3 + float(i) * 0.6, 0.009)
+			_site.add_child(dash)
 	var floor_body := StaticBody3D.new()
 	var col := CollisionShape3D.new()
 	var shape := BoxShape3D.new()
@@ -551,7 +560,10 @@ func _build_ore_pool() -> void:
 	_kick_root.name = "KickedOre"
 	_site.add_child(_kick_root)
 	var tiers := {"silver": [0.85, Color(MineConstants.PALETTE["ore_silver"]), 1.0], "gold": [0.15, Color(MineConstants.PALETTE["ore_gold"]), 1.3]}
-	var blobs := [Vector2(-2.6, 0.6), Vector2(1.8, 0.4), Vector2(-0.8, -1.9), Vector2(1.1, 1.8), Vector2(-3.2, -3.0), Vector2(3.0, -0.8), Vector2(-0.2, 0.2)]
+	# 分區：礦坑前（中上）×2、中央 ×2、左門道兩門之間 ×2、右側 ×2、下方 ×2
+	var blobs := [Vector2(-1.6, 3.2), Vector2(1.8, 3.0), Vector2(-1.4, 0.2), Vector2(1.6, -1.2),
+		Vector2(-4.8, -5.3), Vector2(-4.8, 0.9), Vector2(4.4, 1.6), Vector2(3.2, -0.6),
+		Vector2(-1.6, -4.6), Vector2(1.6, -5.4)]
 	for tier: String in tiers.keys():
 		var count: int = int(ORE_COUNT * float(tiers[tier][0]))
 		var mmi := VisualFactory.make_ore_pool_multimesh(ORE_RADIUS, tiers[tier][1], 0.35 if tier == "gold" else 0.0, count)
@@ -893,7 +905,7 @@ func _on_laser_post_hit(body: Node3D) -> void:
 func _build_ingot_rack() -> void:
 	_ingot_root = Node3D.new()
 	_ingot_root.name = "IngotRack"
-	_ingot_root.position = Vector3(FURNACE_POS.x - 1.6, FURNACE_POS.y + 0.1, 0.0)
+	_ingot_root.position = Vector3(FURNACE_POS.x - 1.9, FURNACE_POS.y + 0.2, 0.0)
 	_site.add_child(_ingot_root)
 	var base := VisualFactory.make_flat_box(Vector3(1.0, 0.7, 0.06), Color("#3A3140"))
 	base.position = Vector3(0.0, 0.0, 0.03)
@@ -1437,7 +1449,17 @@ func _ai_steer(delta: float) -> Vector2:
 		if carrying >= int(float(cap) * 0.6):
 			_ai_mode = "furnace"
 			var laser: Vector2 = GATES[3][0]
-			_ai_route = [laser + Vector2(0.0, 1.1), laser + Vector2(0.0, -0.7), FURNACE_POS + Vector2(-0.1, -1.0)]
+			_ai_route = []
+			if pos.x < -2.0: # 已經喺左邊門道：由下向上穿 ×2→×3→×4 先再去爐
+				for gi in range(3):
+					var gp: Vector2 = GATES[gi][0]
+					if gp.y > pos.y - 0.5:
+						_ai_route.append(gp + Vector2(0.0, -0.8))
+						_ai_route.append(gp + Vector2(0.0, 0.8))
+			_ai_route.append(Vector2(2.0, 0.6))
+			_ai_route.append(laser + Vector2(0.0, 1.1))
+			_ai_route.append(laser + Vector2(0.0, -0.7))
+			_ai_route.append(FURNACE_POS + Vector2(-0.1, -1.0))
 			_ai_target = _ai_route.pop_front()
 		elif _ai_target == Vector2.INF or _ai_retarget_t <= 0.0 or pos.distance_to(_ai_target) < 0.35:
 			_ai_target = _nearest_ore_pos(pos)
