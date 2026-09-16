@@ -126,7 +126,7 @@ func _fmt_cost(n: float) -> String:
 		return "%d" % int(round(n))
 	var v := n / 1000.0
 	if v < 1000.0:
-		return "%.0fK" % v
+		return ("%.1fK" % v) if (v < 10.0 and absf(v - round(v)) > 0.05) else ("%.0fK" % v)
 	return "%.1fM" % (v / 1000.0)
 
 

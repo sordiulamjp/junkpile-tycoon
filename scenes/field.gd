@@ -737,9 +737,29 @@ func _reveal_one(di: int) -> void:
 
 # ══════════════════════ 礦脈開啟墊 ══════════════════════
 
+var _vein_rubble: Array = []
 func _build_deposit_pads() -> void:
 	for di in range(1, DEPOSITS.size()):
 		var dep = DEPOSITS[di]
+		# 未開礦脈：地上一片深色礦床 + 幾嚿岩石 + 幾粒露出嘅礦，令人知道呢度有嘢
+		var rub := Node3D.new()
+		rub.name = "VeinRubble%d" % di
+		rub.position = Vector3((dep[0] as Vector2).x, (dep[0] as Vector2).y, 0.0)
+		_site.add_child(rub)
+		var bed := VisualFactory.make_flat_box(Vector3(2.2, 1.7, 0.02), Color("#3E3446"))
+		bed.position = Vector3(0.0, 0.0, 0.005)
+		rub.add_child(bed)
+		for _r in range(4):
+			var rk := _rock(Vector3(rng.randf_range(0.25, 0.45), rng.randf_range(0.2, 0.35), rng.randf_range(0.2, 0.4)), Color(MineConstants.PALETTE["wall_dark"]))
+			rk.position = Vector3(rng.randf_range(-0.9, 0.9), rng.randf_range(-0.6, 0.6), 0.0)
+			rk.rotation.z = rng.randf_range(0.0, TAU)
+			rub.add_child(rk)
+		for _o in range(10):
+			var ob := VisualFactory.make_ore_ball(ORE_RADIUS * 1.2, Color(MineConstants.PALETTE["ore_gold"]), 0.3)
+			ob.position = Vector3(rng.randf_range(-0.8, 0.8), rng.randf_range(-0.5, 0.5), ORE_RADIUS)
+			rub.add_child(ob)
+		rub.visible = not _dep_unlocked[di]
+		_vein_rubble.append(rub)
 		var p := UnlockPanel.new()
 		p.name = "DepositPad%d" % di
 		p.position = Vector3((dep[0] as Vector2).x, (dep[0] as Vector2).y - 1.05, 0.12)
@@ -766,6 +786,8 @@ func _on_deposit_tap(region_id: String, cost: float) -> void:
 	state.cash -= cost
 	_dep_unlocked[di] = true
 	(_dep_panels[di - 1] as UnlockPanel).mark_unlocked()
+	if di - 1 < _vein_rubble.size():
+		(_vein_rubble[di - 1] as Node3D).visible = false
 	_popup_at(Vector3((DEPOSITS[di][0] as Vector2).x, (DEPOSITS[di][0] as Vector2).y, 0.5), "礦脈開啟！", Color(1.0, 0.85, 0.3))
 	# 逐粒湧出（3 秒內鋪滿）
 	var arr: Array = _dep_slots[di]
