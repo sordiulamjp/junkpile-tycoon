@@ -782,11 +782,10 @@ func _build_deposit_pads() -> void:
 
 func _on_deposit_tap(region_id: String, cost: float) -> void:
 	var di: int = int(region_id.trim_prefix("deposit"))
-	var ore: float = float(DEPOSITS[di][5])
-	if _dep_unlocked[di] or state.cash < cost or state.components < ore:
+	var pad: UnlockPanel = _dep_panels[di - 1]
+	if _dep_unlocked[di] or state.cash < cost or not pad.ore_ready():
 		return
 	state.cash -= cost
-	state.components -= ore
 	_dep_unlocked[di] = true
 	(_dep_panels[di - 1] as UnlockPanel).mark_unlocked()
 	if di - 1 < _vein_rubble.size():
@@ -1106,6 +1105,7 @@ func _activate_slot(s: Dictionary) -> void:
 	body.physics_material_override = mat
 	body.set_meta("mult", 1.0)
 	body.set_meta("gates", [])
+	body.set_meta("consume", Callable(self, "_consume_ore_body"))
 	body.mass = 0.05
 	body.linear_damp = 2.5
 	body.angular_damp = 4.0
@@ -1113,6 +1113,17 @@ func _activate_slot(s: Dictionary) -> void:
 	body.can_sleep = false
 	_kick_root.add_child(body)
 	_kicked.append({"slot": s, "node": body, "t": 0.0})
+
+## 升級格吸收一粒礦：由剛體清單移除、槽位標記為用咗
+func _consume_ore_body(body: RigidBody3D) -> void:
+	for k: Dictionary in _kicked:
+		if k["node"] == body:
+			_kicked.erase(k)
+			var s: Dictionary = k["slot"]
+			s["active"] = false
+			s["gone"] = true
+			break
+	body.queue_free()
 
 func _settle_kick(k: Dictionary) -> void:
 	_kicked.erase(k)
@@ -1204,7 +1215,8 @@ func _build_hud() -> void:
 	row.add_theme_constant_override("separation", 40)
 	top.add_child(row)
 	_cash_label = _hud_label(row, "● 0")
-	_comp_label = _hud_label(row, "礦料 0")
+	_comp_label = _hud_label(row, "")
+	_comp_label.visible = false # 用戶 2026-09-17：唔用礦料庫存，礦直接推入升級格
 	_eco_label = _hud_label(row, "♻ 0")
 	# bottleneck as icons: 礦層 ▶ 礦車 ▶ 倉庫 (the slow stage pulses red)
 	var brow_top := HBoxContainer.new()
@@ -1320,7 +1332,7 @@ func _hud_label(parent: Control, text: String) -> Label:
 
 func _refresh_hud() -> void:
 	_cash_label.text = "● %s" % _fmt(state.cash)
-	_comp_label.text = "礦料 %s" % _fmt(state.components)
+	_comp_label.text = ""
 	_eco_label.text = "♻ %s" % _fmt(state.eco)
 	if frenzy.active:
 		_frenzy_button.text = " %ds" % int(ceil(frenzy.time_remaining))
@@ -1338,13 +1350,13 @@ func _refresh_hud() -> void:
 		ic.scale = Vector2.ONE * (1.0 + 0.12 * pulse) if k == stage else Vector2.ONE
 	mine.refresh_afford_state()
 	for dp in _dep_panels:
-		(dp as UnlockPanel).refresh_afford_state(state.cash, state.components)
+		(dp as UnlockPanel).refresh_afford_state(state.cash)
 	_update_furnace_arrow()
 	_ai_button.text = ("AI " + ("●" if _ai_on else "○")) if _ai_unlocked else "AI ⚙%s|$%s" % [_fmt(AI_COST_COMPONENTS), _fmt(AI_COST_CASH)]
 	_ai_button.modulate = Color(0.6, 1.0, 0.6) if _ai_active else Color.WHITE
 	_ai_button.disabled = (not _ai_unlocked) and state.components < AI_COST_COMPONENTS and state.cash < AI_COST_CASH
-	_mgr_button.text = ("●" if _mgr_on else "○") if _mgr_unlocked else "%s+礦%d" % [_fmt(MGR_COST), int(MGR_ORE)]
-	_mgr_button.disabled = (not _mgr_unlocked) and (state.cash < MGR_COST or state.components < MGR_ORE)
+	_mgr_button.text = ("●" if _mgr_on else "○") if _mgr_unlocked else _fmt(MGR_COST)
+	_mgr_button.disabled = (not _mgr_unlocked) and state.cash < MGR_COST
 
 func _update_furnace_arrow() -> void:
 	if _bucket_count() == 0 or _furnace_node == null:
@@ -1560,10 +1572,9 @@ func _on_ai_pressed() -> void:
 
 func _on_mgr_pressed() -> void:
 	if not _mgr_unlocked:
-		if state.cash < MGR_COST or state.components < MGR_ORE:
+		if state.cash < MGR_COST:
 			return
 		state.cash -= MGR_COST
-		state.components -= MGR_ORE
 		_mgr_unlocked = true
 		_mgr_on = true
 	else:
@@ -1650,10 +1661,8 @@ func _manager_tick(delta: float) -> void:
 	for idx in range(ms.layer_unlocked.size()):
 		if ms.layer_unlocked[idx] and (stage == "layers" or stage == "balanced"):
 			options.append([ms.next_layer_speed_cost(idx), func() -> void: ms.apply_layer_speed_upgrade(idx)])
-	if (stage == "cart" or stage == "balanced") and ms.can_upgrade_cart() and state.components >= ms.next_cart_ore_cost():
-		options.append([ms.next_cart_cost(), func() -> void:
-			state.components -= ms.next_cart_ore_cost()
-			ms.apply_cart_upgrade()])
+	if (stage == "cart" or stage == "balanced") and ms.can_upgrade_cart():
+		options.append([ms.next_cart_cost(), func() -> void: ms.apply_cart_upgrade()])
 	if (stage == "warehouse" or stage == "balanced") and ms.can_upgrade_warehouse():
 		options.append([ms.next_warehouse_cost(), func() -> void: ms.apply_warehouse_upgrade()])
 	if options.is_empty():

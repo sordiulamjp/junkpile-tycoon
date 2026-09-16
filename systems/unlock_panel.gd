@@ -24,7 +24,9 @@ var _affordable: bool = false
 var _label: Label3D
 var _pad: MeshInstance3D
 var _area: Area3D
-var ore_cost: float = 0.0 # 礦料成本（0 = 唔使）
+var ore_cost: float = 0.0 # 要推幾多粒礦入嚟（0 = 唔使）
+var ore_fed: float = 0.0  # 已推入幾多粒（用戶 2026-09-17：唔入庫存，直接推現貨入升級格）
+var _feed_area: Area3D
 var icon_kind: String = "" # "blade" | "blade_big" | "furnace" | "pickaxe" | "" — 用戶 2026-09-14：墊上用圖示，唔用文字
 var _icon: Node3D
 
@@ -43,6 +45,8 @@ func setup(p_region_id: String, p_cost: float, p_display_name: String, on_tap: C
 	icon_kind = p_icon_kind
 	_build_visual()
 	_build_icon()
+	if ore_cost > 0.0:
+		_build_feed_area()
 	_refresh()
 
 func _build_visual() -> void:
@@ -105,7 +109,7 @@ func mark_unlocked() -> void:
 func refresh_afford_state(available_cash: float, available_ore: float = INF) -> void:
 	if _unlocked:
 		return
-	var affordable := available_cash >= cost and available_ore >= ore_cost
+	var affordable := available_cash >= cost and ore_fed >= ore_cost
 	if affordable == _affordable:
 		return # 冇轉變就唔使重寫 Label3D／material，慳返啲嘢（同帶升級掣個做法一致）
 	_affordable = affordable
@@ -117,7 +121,7 @@ func _refresh() -> void:
 		_label.text = "✓"
 		mat.albedo_color = (VisualFactory.PALETTE["pad_purple"] as Color).lightened(0.25)
 		return
-	_label.text = _fmt_cost(cost) if ore_cost <= 0.0 else "%s\n礦 %s" % [_fmt_cost(cost), _fmt_cost(ore_cost)]
+	_label.text = _fmt_cost(cost) if ore_cost <= 0.0 else "%s\n礦 %d/%d" % [_fmt_cost(cost), int(ore_fed), int(ore_cost)]
 	var base_color: Color = VisualFactory.PALETTE["pad_purple"]
 	mat.albedo_color = base_color if _affordable else base_color.darkened(0.45)
 
@@ -191,3 +195,36 @@ func _build_icon() -> void:
 			_icon.add_child(head)
 		_:
 			pass
+
+
+# ══════════════════════ 推現貨入格：礦粒駛入墊即被吸收計數 ══════════════════════
+
+func _build_feed_area() -> void:
+	_feed_area = Area3D.new()
+	_feed_area.name = "FeedArea"
+	var col := CollisionShape3D.new()
+	var shape := BoxShape3D.new()
+	shape.size = Vector3(0.95, 0.55, 0.5)
+	col.shape = shape
+	_feed_area.add_child(col)
+	_feed_area.position = Vector3(0.0, 0.0, 0.2)
+	_feed_area.body_entered.connect(_on_feed_body)
+	add_child(_feed_area)
+
+func _on_feed_body(body: Node3D) -> void:
+	if _unlocked or ore_fed >= ore_cost:
+		return
+	if not (body is RigidBody3D) or not body.has_meta("slot"):
+		return
+	if body.has_meta("consume"):
+		(body.get_meta("consume") as Callable).call(body)
+	else:
+		body.queue_free()
+	ore_fed += 1.0
+	_refresh()
+	# 礦夠喇：即刻試買（現金唔夠就等，礦數保留）
+	if ore_fed >= ore_cost and _on_tap.is_valid():
+		_on_tap.call(region_id, cost)
+
+func ore_ready() -> bool:
+	return ore_fed >= ore_cost

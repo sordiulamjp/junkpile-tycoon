@@ -88,7 +88,7 @@ func test_ore_entering_sell_area_credits_cash_at_base_tier() -> void:
 func test_ore_sell_value_uses_current_push_tier_not_next_one() -> void:
 	_load_field()
 	field.state.cash = 1000000.0
-	field.state.components = 1000000.0 # 2026-09-17：部分升級要礦料
+	for _p in field.mine._layer_unlock_panels + field.mine._push_panels + field._dep_panels: _p.ore_fed = _p.ore_cost # 2026-09-17：礦直接推入升級格，呢度當已推夠
 	field.mine._on_push_tap("push0", field.mine.state.c.push_tier_cost[0]) # push_tier -> 1
 	field.state.cash = 0.0
 
@@ -113,7 +113,7 @@ func test_push_pad_triggers_on_character_body_entry_not_just_tap() -> void:
 func test_layer_unlock_panel_triggers_on_character_body_entry() -> void:
 	_load_field()
 	field.state.cash = field.mine.state.layer_unlock_cost(1)
-	field.state.components = 1000000.0 # 2026-09-17：部分升級要礦料
+	for _p in field.mine._layer_unlock_panels + field.mine._push_panels + field._dep_panels: _p.ore_fed = _p.ore_cost # 2026-09-17：礦直接推入升級格，呢度當已推夠
 	var panel: UnlockPanel = field.mine._layer_unlock_panels[0] # 對應層 2（idx1）
 
 	panel._on_body_entered(autofree(CharacterBody3D.new()))
@@ -385,7 +385,7 @@ func test_manager_tick_keeps_20_percent_cash_reserve() -> void:
 	field._mgr_on = true
 	var cost: float = field.mine.state.next_layer_speed_cost(0)
 	field.state.cash = cost * 1.1 # 買咗之後淨返 <20%，唔應該買
-	field.state.components = 1000000.0 # 2026-09-17：部分升級要礦料
+	for _p in field.mine._layer_unlock_panels + field.mine._push_panels + field._dep_panels: _p.ore_fed = _p.ore_cost # 2026-09-17：礦直接推入升級格，呢度當已推夠
 
 	field._manager_tick(5.0)
 
