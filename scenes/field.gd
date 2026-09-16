@@ -1115,7 +1115,7 @@ func _activate_slot(s: Dictionary) -> void:
 	_kicked.append({"slot": s, "node": body, "t": 0.0})
 
 ## 升級格吸收一粒礦：由剛體清單移除、槽位標記為用咗
-func _consume_ore_body(body: RigidBody3D) -> void:
+func _consume_ore_body(body: RigidBody3D, free_node: bool = true) -> void:
 	for k: Dictionary in _kicked:
 		if k["node"] == body:
 			_kicked.erase(k)
@@ -1123,7 +1123,8 @@ func _consume_ore_body(body: RigidBody3D) -> void:
 			s["active"] = false
 			s["gone"] = true
 			break
-	body.queue_free()
+	if free_node:
+		body.queue_free()
 
 func _settle_kick(k: Dictionary) -> void:
 	_kicked.erase(k)
