@@ -405,6 +405,7 @@ func test_manager_tick_noop_when_toggle_off() -> void:
 
 func test_surface_team_tick_dispatches_a_bot_after_10_seconds() -> void:
 	_load_field()
+	field.mine.state.warehouse_level = 2 # 2026-09-17：運輸隊要倉庫 Lv2 先開
 	var before: int = field._site.get_child_count()
 
 	field._surface_team_tick(10.0)

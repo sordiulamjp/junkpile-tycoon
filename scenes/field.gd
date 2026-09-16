@@ -61,6 +61,20 @@ var _kicked: Array = []            # {slot, node, t}
 var _kick_root: Node3D
 var _scan_accum := 0.0
 var _respawn_accum := 0.0
+# ── 有限資源（用戶 2026-09-17）：礦集中喺「礦脈」，靠升級逐步開啟 ──
+const DEPOSITS := [ # [pos, capacity, start_revealed, unlock_cost, regen_secs]
+	[Vector2(0.0, 3.2), 1400, 700, 0.0, 0.0],      # 中央主堆：由礦坑輸出補充
+	[Vector2(-4.8, 0.9), 1200, 0, 400.0, 12.0],    # 左門道中段
+	[Vector2(4.4, 1.6), 1200, 0, 1500.0, 12.0],    # 右側
+	[Vector2(-4.8, -5.3), 1200, 0, 5000.0, 10.0],  # 左門道起點
+	[Vector2(1.6, -5.4), 1200, 0, 15000.0, 8.0],   # 下方
+	[Vector2(3.2, -0.6), 1200, 0, 40000.0, 6.0],   # 爐前
+]
+var _dep_slots: Array = []        # per deposit: Array of slot dicts
+var _dep_unlocked: Array = []     # per deposit: bool
+var _dep_regen_t: Array = []
+var _dep_panels: Array = []
+var _dep_unlocked_saved: Array = []
 var _furnace_glow: StandardMaterial3D
 var _furnace_flash := 0.0
 var _cargo: Array = []            # {tier, node}
@@ -165,6 +179,7 @@ func _ready() -> void:
 	_build_world()
 	_build_zone1(saved.get("mine_zone", {}))
 	_build_car()
+	_dep_unlocked_saved = saved.get("field_deposits", [])
 	_build_ore_pool()
 	_clear_ore_around(Vector2(_car.position.x, _car.position.y), 1.0)
 	_build_gates()
@@ -560,23 +575,48 @@ func _build_ore_pool() -> void:
 	_kick_root.name = "KickedOre"
 	_site.add_child(_kick_root)
 	var tiers := {"silver": [0.85, Color(MineConstants.PALETTE["ore_silver"]), 1.0], "gold": [0.15, Color(MineConstants.PALETTE["ore_gold"]), 1.3]}
-	# 分區：礦坑前（中上）×2、中央 ×2、左門道兩門之間 ×2、右側 ×2、下方 ×2
-	var blobs := [Vector2(-1.6, 3.2), Vector2(1.8, 3.0), Vector2(-1.4, 0.2), Vector2(1.6, -1.2),
-		Vector2(-4.8, -5.3), Vector2(-4.8, 0.9), Vector2(4.4, 1.6), Vector2(3.2, -0.6),
-		Vector2(-1.6, -4.6), Vector2(1.6, -5.4)]
+	# 礦集中喺幾個「礦脈」；每脈固定容量，開場只有中央主堆有礦，其餘要用錢開啟
+	var total := 0
+	for dep in DEPOSITS:
+		total += int(dep[1])
+	var next_idx := {"silver": 0, "gold": 0}
 	for tier: String in tiers.keys():
-		var count: int = int(ORE_COUNT * float(tiers[tier][0]))
+		var count: int = int(ceil(float(total) * float(tiers[tier][0]))) + 8
 		var mmi := VisualFactory.make_ore_pool_multimesh(ORE_RADIUS, tiers[tier][1], 0.35 if tier == "gold" else 0.0, count)
 		mmi.name = "Pool_%s" % tier
 		_site.add_child(mmi)
 		_pool_mmi[tier] = mmi
 		for i in range(count):
-			var ctr: Vector2 = blobs[rng.randi_range(0, blobs.size() - 1)]
+			mmi.multimesh.set_instance_transform(i, Transform3D(Basis.IDENTITY.scaled(Vector3.ZERO), Vector3.ZERO))
+	for di in range(DEPOSITS.size()):
+		var dep = DEPOSITS[di]
+		var ctr: Vector2 = dep[0]
+		var cap: int = int(dep[1])
+		var revealed: int = int(dep[2])
+		var arr: Array = []
+		for i in range(cap):
+			var tier: String = "gold" if rng.randf() < 0.15 else "silver"
+			var sc: float = float(tiers[tier][2])
 			var a := rng.randf_range(0.0, TAU)
-			var r := sqrt(rng.randf()) * 0.7
-			var pos := Vector3(ctr.x + cos(a) * r * 1.2, ctr.y + sin(a) * r, ORE_RADIUS * float(tiers[tier][2]))
-			mmi.multimesh.set_instance_transform(i, Transform3D(Basis.IDENTITY.scaled(Vector3.ONE * float(tiers[tier][2])), pos))
-			_slots.append({"tier": tier, "idx": i, "pos": pos, "scale": float(tiers[tier][2]), "active": false, "gone": false})
+			var r := sqrt(rng.randf()) * 0.85
+			var pos := Vector3(ctr.x + cos(a) * r * 1.2, ctr.y + sin(a) * r, ORE_RADIUS * sc)
+			var idx: int = next_idx[tier]
+			next_idx[tier] = idx + 1
+			var slot := {"tier": tier, "idx": idx, "pos": pos, "scale": sc, "active": false, "gone": i >= revealed, "dep": di}
+			if not slot["gone"]:
+				_show_slot(slot)
+			_slots.append(slot)
+			arr.append(slot)
+		_dep_slots.append(arr)
+		var was_unlocked: bool = di == 0 or (di < _dep_unlocked_saved.size() and bool(_dep_unlocked_saved[di]))
+		_dep_unlocked.append(was_unlocked)
+		_dep_regen_t.append(0.0)
+		if was_unlocked and di > 0:
+			for s2 in arr:
+				s2["gone"] = rng.randf() < 0.5 # 讀檔返嚟：已開嘅礦脈當半滿
+				if not s2["gone"]:
+					_show_slot(s2)
+	_build_deposit_pads()
 
 func _clear_ore_around(center: Vector2, radius: float) -> void:
 	var r2 := radius * radius
@@ -635,18 +675,16 @@ func _pool_tick(delta: float) -> void:
 		var still: bool = node.linear_velocity.length() < 0.05
 		if k["t"] >= KICK_LIFETIME and far and still:
 			_settle_kick(k)
-	# respawn: ore flows out of the mine over time
-	_respawn_accum += delta * RESPAWN_PER_SEC
-	while _respawn_accum >= 1.0:
-		_respawn_accum -= 1.0
-		for _try in range(6):
-			var s: Dictionary = _slots[rng.randi_range(0, _slots.size() - 1)]
-			if s["gone"] and not s["active"]:
-				s["gone"] = false
-				_show_slot(s)
-				break
-	# ore spill: nuggets tumble out of the mine entrance into the heap (visual only)
-	_spill_accum += delta * 3.0
+	# 礦脈慢慢回填（只限已開啟嘅礦脈）
+	for di in range(DEPOSITS.size()):
+		if di == 0 or not _dep_unlocked[di]:
+			continue
+		_dep_regen_t[di] += delta
+		if _dep_regen_t[di] >= float(DEPOSITS[di][4]):
+			_dep_regen_t[di] = 0.0
+			_reveal_one(di)
+	# 礦坑輸出 → 中央主堆（真係補礦，唔係純視覺）：速率跟礦層產量
+	_spill_accum += delta * maxf(0.5, mine.state.total_mine_output() * 2.0)
 	while _spill_accum >= 1.0:
 		_spill_accum -= 1.0
 		_spawn_spill_nugget()
@@ -661,18 +699,83 @@ func _pool_tick(delta: float) -> void:
 		_furnace_counter.scale = Vector3.ONE * (1.0 + 0.25 * clampf(_furnace_flash, 0.0, 1.0))
 
 func _spawn_spill_nugget() -> void:
-	var gold: bool = rng.randf() < 0.15
-	var n := VisualFactory.make_ore_ball(ORE_RADIUS * (1.3 if gold else 1.0), Color(MineConstants.PALETTE["ore_gold"] if gold else MineConstants.PALETTE["ore_silver"]), 0.3 if gold else 0.0)
+	var slot: Dictionary = _pick_hidden_slot(0)
+	if slot.is_empty():
+		return # 主堆已滿：礦坑輸出全部走管線變現金
+	var gold: bool = slot["tier"] == "gold"
+	var n := VisualFactory.make_ore_ball(ORE_RADIUS * float(slot["scale"]), Color(MineConstants.PALETTE["ore_gold"] if gold else MineConstants.PALETTE["ore_silver"]), 0.3 if gold else 0.0)
 	var start := Vector3(MINE_POS.x + rng.randf_range(-0.25, 0.25), MINE_POS.y + 0.1, 0.45)
-	var target := Vector3(MINE_POS.x + rng.randf_range(-0.8, 0.8), MINE_POS.y - rng.randf_range(0.7, 1.4), ORE_RADIUS)
+	var target: Vector3 = slot["pos"]
 	n.position = start
 	_site.add_child(n)
+	slot["active"] = true # 飛緊嗰陣鎖住個位
 	var tw := create_tween()
 	tw.set_parallel(true)
 	tw.tween_property(n, "position:x", target.x, 0.7)
 	tw.tween_property(n, "position:y", target.y, 0.7)
 	tw.tween_property(n, "position:z", target.z, 0.7).set_trans(Tween.TRANS_BOUNCE).set_ease(Tween.EASE_OUT)
-	tw.chain().tween_callback(n.queue_free).set_delay(0.6)
+	tw.chain().tween_callback(func() -> void:
+		n.queue_free()
+		slot["active"] = false
+		slot["gone"] = false
+		_show_slot(slot))
+
+func _pick_hidden_slot(di: int) -> Dictionary:
+	var arr: Array = _dep_slots[di]
+	for _i in range(40):
+		var s: Dictionary = arr[rng.randi_range(0, arr.size() - 1)]
+		if s["gone"] and not s["active"]:
+			return s
+	return {}
+
+func _reveal_one(di: int) -> void:
+	var s: Dictionary = _pick_hidden_slot(di)
+	if s.is_empty():
+		return
+	s["gone"] = false
+	_show_slot(s)
+
+# ══════════════════════ 礦脈開啟墊 ══════════════════════
+
+func _build_deposit_pads() -> void:
+	for di in range(1, DEPOSITS.size()):
+		var dep = DEPOSITS[di]
+		var p := UnlockPanel.new()
+		p.name = "DepositPad%d" % di
+		p.position = Vector3((dep[0] as Vector2).x, (dep[0] as Vector2).y - 1.05, 0.12)
+		_site.add_child(p)
+		p.setup("deposit%d" % di, float(dep[3]), "礦脈", _on_deposit_tap, "pickaxe")
+		_dep_panels.append(p)
+		# 車駛入都可以買
+		var area := Area3D.new()
+		var col := CollisionShape3D.new()
+		var shape := BoxShape3D.new()
+		shape.size = Vector3(0.9, 0.5, 0.6)
+		col.shape = shape
+		area.add_child(col)
+		area.position = Vector3(0.0, 0.0, 0.2)
+		area.body_entered.connect(func(b: Node3D) -> void: if b == _car: _on_deposit_tap("deposit%d" % di, float(dep[3])))
+		p.add_child(area)
+		if _dep_unlocked[di]:
+			p.mark_unlocked()
+
+func _on_deposit_tap(region_id: String, cost: float) -> void:
+	var di: int = int(region_id.trim_prefix("deposit"))
+	if _dep_unlocked[di] or state.cash < cost:
+		return
+	state.cash -= cost
+	_dep_unlocked[di] = true
+	(_dep_panels[di - 1] as UnlockPanel).mark_unlocked()
+	_popup_at(Vector3((DEPOSITS[di][0] as Vector2).x, (DEPOSITS[di][0] as Vector2).y, 0.5), "礦脈開啟！", Color(1.0, 0.85, 0.3))
+	# 逐粒湧出（3 秒內鋪滿）
+	var arr: Array = _dep_slots[di]
+	var tw := create_tween()
+	for i in range(arr.size()):
+		var s: Dictionary = arr[i]
+		tw.tween_callback(func() -> void:
+			s["gone"] = false
+			_show_slot(s)).set_delay(0.0 if i == 0 else 0.0025)
+	_save_game()
 
 ## 鏟斗前方捕獲：礦粒入到鏟斗前嘅捕獲區就上車（IG 式：車前堆住一堆礦帶走），滿咗就唔再收
 func _capture_tick() -> void:
@@ -1533,6 +1636,8 @@ func _manager_tick(delta: float) -> void:
 
 ## 地面運輸隊：每 10 秒一個小機械人由倉庫去最近礦堆撿 3 粒返倉（礦值 5 折）
 func _surface_team_tick(delta: float) -> void:
+	if mine.state.warehouse_level < 2:
+		return # 自動化流程要靠升級開啟：倉庫 Lv2 先有地面運輸隊
 	_team_accum += delta
 	if _team_accum < 10.0:
 		return
@@ -1598,6 +1703,7 @@ func _save_game() -> void:
 	d["field_ai_on"] = _ai_on
 	d["field_mgr_unlocked"] = _mgr_unlocked
 	d["field_mgr_on"] = _mgr_on
+	d["field_deposits"] = _dep_unlocked
 	Save.save_raw(d)
 
 func _notification(what: int) -> void:
