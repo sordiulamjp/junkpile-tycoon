@@ -1166,6 +1166,8 @@ func _activate_slot(s: Dictionary) -> void:
 ## 升級格吸收一粒礦：由剛體清單移除、槽位標記為用咗
 ## 車駛入要礦嘅升級格：鏟斗入面嘅礦整斗倒入（逐粒飛入，直到夠數）
 func _dump_bucket_into_pad(panel: UnlockPanel) -> void:
+	if _ai_active:
+		return # AI 司機路過升級格唔會倒礦（渲染見到佢將礦餵咗入 40K 格）；由玩家自己決定
 	var inv: Transform3D = _car.transform.affine_inverse()
 	for k: Dictionary in _kicked.duplicate():
 		if panel.ore_ready():
