@@ -110,6 +110,7 @@ var _status_label: Label
 var _frenzy_button: Button
 var _save_accum := 0.0
 var _autodrive := false
+var _overview := false # debug：--overview 全地圖俯視一格
 var _autodrive_t := 0.0
 var _dbg_t := 0.0
 
@@ -155,6 +156,7 @@ func _ready() -> void:
 	state = GameState.new(c)
 	frenzy = FrenzyState.new(c)
 	_autodrive = "--autodrive" in OS.get_cmdline_user_args()
+	_overview = "--overview" in OS.get_cmdline_user_args()
 	var _demo_ai: bool = "--ai" in OS.get_cmdline_user_args() # debug：即刻解鎖 AI 司機 + 經理（渲染示範用）
 	# Reviewer round 3：舊碼用私家 field_cash／field_components／field_eco
 	# 三個欄位讀寫存檔，繞過 VR-11 嘅 Wallet／Save autoload 同共用嘅
@@ -1343,6 +1345,11 @@ func _process(delta: float) -> void:
 		_save_game()
 
 func _follow_camera(delta: float) -> void:
+	if _overview:
+		_cam.rotation_degrees = Vector3(-78.0, 0.0, 0.0)
+		var centre: Vector3 = _site.to_global(Vector3((FIELD_MIN.x + FIELD_MAX.x) * 0.5, (FIELD_MIN.y + FIELD_MAX.y) * 0.5 + 0.6, 0.0))
+		_cam.global_position = centre + _cam.global_transform.basis.z * 26.0
+		return
 	var target_site := Vector2(_car.position.x, _car.position.y)
 	target_site.x = clampf(target_site.x, FIELD_MIN.x + 1.4, FIELD_MAX.x - 1.4)
 	target_site.y = clampf(target_site.y + 0.6, FIELD_MIN.y + 1.6, FIELD_MAX.y + 0.2)
