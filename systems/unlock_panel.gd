@@ -30,8 +30,21 @@ var _feed_area: Area3D
 static var bucket_dump: Callable # field 設定：車喺格內停定 1 秒後將鏟斗入面嘅礦整斗倒入
 var car_over: bool = false # 車而家喺格上（field 每幀睇住，停 1 秒先倒）
 var dwell: float = 0.0
-var icon_kind: String = "" # "blade" | "blade_big" | "furnace" | "pickaxe" | "" — 用戶 2026-09-14：墊上用圖示，唔用文字
+var icon_kind: String = "" # "blade" | "blade_big" | "furnace" | "pickaxe" | "truck" | "drill" | "belt" | "" — 用戶 2026-09-14：墊上用圖示，唔用文字
 var _icon: Node3D
+var title: String = "" # 價錢上面多一行細字（例如「Lv2」）；空字串 = 淨係價錢
+var drive_in: bool = true # 車駛入就買；rearm 之後（升級）淨係撳先買，免得路過連升幾級
+
+
+## 可重複購買嘅墊（拖車仔升級）：解鎖後再開返，換新價錢＋標題，再等下一次購買。
+func rearm(new_cost: float, new_title: String) -> void:
+	_unlocked = false
+	drive_in = false
+	cost = new_cost
+	title = new_title
+	ore_fed = 0.0
+	_affordable = false
+	_refresh()
 
 
 ## region_id／cost／display_name：呢個解鎖板代表邊個區域、幾錢、卡面
@@ -96,7 +109,7 @@ func _on_input_event(
 func _on_body_entered(body: Node3D) -> void:
 	if _unlocked:
 		return
-	if not (body is CharacterBody3D):
+	if not (body is CharacterBody3D) or not drive_in:
 		return
 	if _on_tap.is_valid():
 		_on_tap.call(region_id, cost)
@@ -125,6 +138,8 @@ func _refresh() -> void:
 		mat.albedo_color = (VisualFactory.PALETTE["pad_purple"] as Color).lightened(0.25)
 		return
 	_label.text = _fmt_cost(cost) if ore_cost <= 0.0 else "%s\n礦 %d/%d" % [_fmt_cost(cost), int(ore_fed), int(ore_cost)]
+	if title != "":
+		_label.text = title + "\n" + _label.text
 	var base_color: Color = VisualFactory.PALETTE["pad_purple"]
 	mat.albedo_color = base_color if _affordable else base_color.darkened(0.45)
 
@@ -187,6 +202,45 @@ func _build_icon() -> void:
 			var ch := VisualFactory.make_metal_box(Vector3(0.08, 0.08, 0.14), Color("#3A3A40"))
 			ch.position = Vector3(0.1, 0.06, 0.3)
 			_icon.add_child(ch)
+		"truck": # 拖車仔：細車身 + 四粒輪（ghost 藍）
+			var tg := ghost_material(Color("#B4E1F0"))
+			var tb := MeshInstance3D.new()
+			var tbm := BoxMesh.new()
+			tbm.size = Vector3(0.24, 0.32, 0.12)
+			tb.mesh = tbm
+			tb.material_override = tg
+			tb.position = Vector3(0.0, 0.0, 0.1)
+			_icon.add_child(tb)
+			var tc := MeshInstance3D.new()
+			var tcm := BoxMesh.new()
+			tcm.size = Vector3(0.18, 0.12, 0.1)
+			tc.mesh = tcm
+			tc.material_override = tg
+			tc.position = Vector3(0.0, -0.12, 0.2)
+			_icon.add_child(tc)
+			for wx in [-0.14, 0.14]:
+				for wy in [-0.1, 0.1]:
+					var wh := VisualFactory.make_low_poly_cylinder(0.05, 0.04, Color("#1E1E22"), 8, 0.1)
+					wh.rotation_degrees.y = 90.0
+					wh.position = Vector3(wx, wy, 0.05)
+					_icon.add_child(wh)
+		"drill": # 鑽機：塔身 + 鑽頭
+			var tower := VisualFactory.make_metal_box(Vector3(0.16, 0.16, 0.34), Color("#5A5560"))
+			tower.position = Vector3(0.0, 0.0, 0.17)
+			_icon.add_child(tower)
+			var bit := VisualFactory.make_low_poly_cylinder(0.05, 0.2, Color("#C9CFD6"), 6, 0.4)
+			bit.rotation_degrees.x = 90.0
+			bit.position = Vector3(0.18, 0.0, 0.1)
+			_icon.add_child(bit)
+		"belt": # 走道：一條深灰帶 + 三條黃斜紋
+			var strip := VisualFactory.make_flat_box(Vector3(0.5, 0.18, 0.04), Color("#2A2A30"))
+			strip.position = Vector3(0.0, 0.0, 0.02)
+			_icon.add_child(strip)
+			for i in range(3):
+				var chev := VisualFactory.make_flat_box(Vector3(0.04, 0.14, 0.01), Color("#F2C230"))
+				chev.position = Vector3(-0.14 + float(i) * 0.14, 0.0, 0.045)
+				chev.rotation.z = 0.5
+				_icon.add_child(chev)
 		"pickaxe":
 			var handle := VisualFactory.make_flat_box(Vector3(0.05, 0.05, 0.4), Color("#8B5A2B"))
 			handle.position = Vector3(0.0, 0.0, 0.2)

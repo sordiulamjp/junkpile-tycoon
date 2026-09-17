@@ -75,6 +75,38 @@ var _dep_unlocked: Array = []     # per deposit: bool
 var _dep_regen_t: Array = []
 var _dep_panels: Array = []
 var _dep_unlocked_saved: Array = []
+# ── 用戶 2026-09-18：參考其他 arcade idle（Bulldozer Master／Farm Land）嘅擺位同自動化階梯 ──
+# 拖車仔路線（site 座標）：[0] = 礦脈中心 … 最後 = 熔爐停車位（全部避開門柱、走道、車房）
+const HAUL_ROUTES := {
+	1: [Vector2(-4.8, 0.9), Vector2(-3.4, -2.2), Vector2(-0.6, -6.2), Vector2(2.9, -6.4), Vector2(3.95, -5.1)],
+	2: [Vector2(4.4, 1.6), Vector2(5.85, 0.2), Vector2(5.85, -3.4), Vector2(5.5, -4.4)],
+	3: [Vector2(-4.8, -5.3), Vector2(-2.6, -6.3), Vector2(2.9, -6.4), Vector2(3.95, -5.1)],
+	4: [Vector2(1.6, -5.4), Vector2(3.95, -5.0)],
+	5: [Vector2(3.2, -0.6), Vector2(2.7, -3.2), Vector2(3.95, -4.4)],
+}
+const HAULER_COST_MULT := 0.6   # 請拖車仔 = 礦脈開價 × 0.6，每級 ×1.6
+const HAULER_LEVEL_GROWTH := 1.6
+const HAULER_SELL_MULT := 0.7   # 拖車仔賣礦冇倍數門，再打 7 折
+const DRILL_COST_MULT := 2.0    # 鑽機 = 礦脈開價 × 2 + 一半礦料
+const DRILL_REGEN_MULT := 3.0
+const WALKWAY_PATH := [Vector2(1.9, 3.2), Vector2(6.4, 3.2), Vector2(6.4, -4.4), Vector2(5.7, -4.4)] # 主堆東側入口 → 沿東牆 → 爐
+const WALKWAY_COST := 8000.0
+const WALKWAY_ORE := 400.0
+const GARAGE_POS := Vector2(-1.6, -3.0)  # 車房：出生點左下，三軸升級亭
+var _hauler_lvl: Array = []       # per deposit：0 = 未請
+var _haulers: Array = []          # per deposit：Hauler 或 null
+var _hire_pads: Array = []        # per deposit（index 0 留空）
+var _drill_pads: Array = []
+var _drills: Array = []           # per deposit：bool
+var _drill_nodes: Array = []
+var _walkway: Walkway
+var _walkway_unlocked := false
+var _walk_pad: UnlockPanel
+var _walk_hopper: Area3D
+var _garage: Dictionary = {"speed": 0, "cargo": 0, "price": 0}
+var _garage_panel: GaragePanel
+var _garage_root: Node3D
+var _garage_hint: Label3D
 var _furnace_glow: StandardMaterial3D
 var _furnace_flash := 0.0
 var _cargo: Array = []            # {tier, node}
@@ -184,11 +216,38 @@ func _ready() -> void:
 	_build_zone1(saved.get("mine_zone", {}))
 	_build_car()
 	_dep_unlocked_saved = saved.get("field_deposits", [])
+	_hauler_lvl = []
+	_drills = []
+	var hl: Array = saved.get("field_haulers", [])
+	var dl: Array = saved.get("field_drills", [])
+	for di in range(DEPOSITS.size()):
+		_hauler_lvl.append(int(hl[di]) if di < hl.size() else 0)
+		_drills.append(bool(dl[di]) if di < dl.size() else false)
+		_haulers.append(null)
+		_drill_nodes.append(null)
+	_walkway_unlocked = bool(saved.get("field_walkway", false))
+	var gs: Dictionary = saved.get("field_garage", {})
+	for axis in GaragePanel.AXES:
+		_garage[axis] = int(gs.get(axis, 0))
+	if _demo_ai: # 渲染示範：走道、車房、頭三條礦脈 + 拖車仔 + 兩部鑽機全部開晒
+		_walkway_unlocked = true
+		_garage = {"speed": 3, "cargo": 3, "price": 2}
+		_dep_unlocked_saved = [true, true, true, true, false, false]
+		_hauler_lvl = [0, 3, 1, 2, 0, 0]
+		_drills = [false, true, false, true, false, false]
 	_build_ore_pool()
 	_clear_ore_around(Vector2(_car.position.x, _car.position.y), 1.0)
 	_build_gates()
 	_build_ingot_rack()
 	_build_props()
+	_build_garage()
+	_build_walkway_pad()
+	for di in range(1, DEPOSITS.size()):
+		if _hauler_lvl[di] > 0:
+			_spawn_hauler(di)
+		if _drills[di]:
+			_build_drill_visual(di)
+	_refresh_pad_visibility()
 	UnlockPanel.bucket_dump = Callable(self, "_dump_bucket_into_pad")
 	_build_hud()
 	mine.attach_panel(_hud)
@@ -508,7 +567,7 @@ func _physics_process(delta: float) -> void:
 	if _stun_t > 0.0:
 		_stun_t -= delta
 		speed_mult *= 0.15
-	var target: Vector2 = input_vec.limit_length(1.0) * CAR_SPEED * speed_mult
+	var target: Vector2 = input_vec.limit_length(1.0) * CAR_SPEED * speed_mult * _garage_speed_mult()
 	_car_vel = _car_vel.move_toward(target, CAR_ACCEL * delta)
 	_car.velocity = SITE_BASIS * Vector3(_car_vel.x, _car_vel.y, 0.0)
 	_car.move_and_slide()
@@ -517,7 +576,7 @@ func _physics_process(delta: float) -> void:
 	_rigidize_front_tick()
 	# 鏟斗「載住」：入咗鏟斗弧內嘅礦即刻鎖喺鏟斗上（跟車郁，轉彎唔瀉，IG 式帶住走），
 	# 上限 = 鏟斗 tier 載量；超出嘅照物理推。賣礦／推入格／撞柱先會離開鏟斗。
-	var cap_carry: int = CARGO_CAP[clampi(mine.state.push_tier, 0, 2)]
+	var cap_carry: int = _cargo_cap()
 	var inv_c: Transform3D = _car.transform.affine_inverse()
 	var carried := 0
 	for k: Dictionary in _kicked:
@@ -727,7 +786,7 @@ func _pool_tick(delta: float) -> void:
 	for di in range(DEPOSITS.size()):
 		if di == 0 or not _dep_unlocked[di]:
 			continue
-		_dep_regen_t[di] += delta
+		_dep_regen_t[di] += delta * (DRILL_REGEN_MULT if _drills[di] else 1.0)
 		if _dep_regen_t[di] >= float(DEPOSITS[di][4]):
 			_dep_regen_t[di] = 0.0
 			_reveal_one(di)
@@ -794,13 +853,13 @@ func _build_props() -> void:
 	_site.add_child(props)
 	var wall_c := Color(MineConstants.PALETTE["wall_dark"])
 	# 大石：空位散落
-	for pos in [Vector2(-2.6, -2.6), Vector2(2.6, 2.6), Vector2(-1.2, -6.2), Vector2(6.0, 4.6), Vector2(-6.2, 4.6), Vector2(5.9, -0.4), Vector2(-0.4, -3.4)]:
+	for pos in [Vector2(-2.9, -2.4), Vector2(-2.4, 1.2), Vector2(-1.2, -6.2), Vector2(6.0, 4.6), Vector2(-6.2, 4.6), Vector2(0.8, -2.9), Vector2(-0.4, -3.6)]: # 東牆讓路俾走道，石頭移入場中空位
 		var rk := _rock(Vector3(rng.randf_range(0.5, 0.9), rng.randf_range(0.4, 0.7), rng.randf_range(0.45, 0.8)), wall_c.lightened(rng.randf_range(0.0, 0.2)))
 		rk.position = Vector3(pos.x, pos.y, 0.0)
 		rk.rotation.z = rng.randf_range(0.0, TAU)
 		props.add_child(rk)
 	# 廢車：灰車身 + 四粒輪 + 生鏽頂
-	for pos in [Vector2(-6.0, -2.4), Vector2(6.0, 2.0)]:
+	for pos in [Vector2(-6.0, -2.4), Vector2(-2.6, -5.2)]:
 		var wreck := Node3D.new()
 		wreck.position = Vector3(pos.x, pos.y, 0.0)
 		wreck.rotation.z = rng.randf_range(-0.5, 0.5)
@@ -818,7 +877,7 @@ func _build_props() -> void:
 				wreck.add_child(wheel)
 		props.add_child(wreck)
 	# 燈柱：礦坑兩側、熔爐旁
-	for pos in [Vector2(-2.4, 4.6), Vector2(2.4, 4.6), Vector2(6.2, -5.6), Vector2(-6.2, -6.2)]:
+	for pos in [Vector2(-2.4, 4.6), Vector2(2.4, 4.6), Vector2(6.2, -5.6), Vector2(-6.5, -3.6)]:
 		var post := VisualFactory.make_flat_box(Vector3(0.08, 0.08, 1.1), Color("#3A3140"))
 		post.position = Vector3(pos.x, pos.y, 0.55)
 		props.add_child(post)
@@ -832,7 +891,7 @@ func _build_props() -> void:
 		light.position = Vector3(pos.x, pos.y, 1.1)
 		props.add_child(light)
 	# 油桶堆、輪胎堆
-	for pos in [Vector2(6.1, -2.8), Vector2(-6.2, 2.2)]:
+	for pos in [Vector2(-0.3, -6.75), Vector2(-6.2, 2.2)]:
 		for i in range(4):
 			var b := VisualFactory.make_low_poly_cylinder(0.11, 0.24, Color("#2E5C9E") if i % 2 == 0 else Color("#B8894A"), 8, 0.35)
 			b.rotation_degrees.x = 90.0
@@ -888,11 +947,51 @@ func _build_deposit_pads() -> void:
 		p.add_child(area)
 		if _dep_unlocked[di]:
 			p.mark_unlocked()
+		# 請拖車仔墊 + 鑽機墊：排喺礦脈墊隔籬（左邊礦脈：同一列向上；右邊礦脈：同一行左右）
+		var hire_pos: Vector2 = Vector2(pad_pos.x, pad_pos.y + 0.6) if dp.x < 0.0 else Vector2(pad_pos.x + 1.1, pad_pos.y)
+		var drill_pos: Vector2 = Vector2(pad_pos.x, pad_pos.y + 1.2) if dp.x < 0.0 else Vector2(pad_pos.x - 1.1, pad_pos.y)
+		var hp := UnlockPanel.new()
+		hp.name = "HirePad%d" % di
+		hp.position = Vector3(hire_pos.x, hire_pos.y, 0.12)
+		_site.add_child(hp)
+		hp.setup("hire%d" % di, _hauler_cost(di, maxi(_hauler_lvl[di], 0)), "拖車仔", _on_hire_tap, "truck")
+		if _hauler_lvl[di] >= Hauler.MAX_LEVEL:
+			hp.title = "Lv%d MAX" % _hauler_lvl[di]
+			hp.mark_unlocked()
+		elif _hauler_lvl[di] > 0:
+			hp.rearm(_hauler_cost(di, _hauler_lvl[di]), "Lv%d ↑" % _hauler_lvl[di])
+		_hire_pads.append(hp)
+		var kp := UnlockPanel.new()
+		kp.name = "DrillPad%d" % di
+		kp.position = Vector3(drill_pos.x, drill_pos.y, 0.12)
+		_site.add_child(kp)
+		kp.setup("drill%d" % di, float(dep[3]) * DRILL_COST_MULT, "鑽機", _on_drill_tap, "drill", float(dep[5]) * 0.5)
+		if _drills[di]:
+			kp.mark_unlocked()
+		_drill_pads.append(kp)
+
+## 逐格露出（Farm Land 式）：淨係顯示下一條買得到嘅礦脈墊；拖車仔墊要礦脈開咗先出，鑽機墊要請咗拖車仔先出
+func _next_locked_vein() -> int:
+	for di in range(1, DEPOSITS.size()):
+		if not _dep_unlocked[di]:
+			return di
+	return -1
+
+func _refresh_pad_visibility() -> void:
+	var nxt: int = _next_locked_vein()
+	for di in range(1, DEPOSITS.size()):
+		var i: int = di - 1
+		if i < _dep_panels.size():
+			(_dep_panels[i] as Node3D).visible = _dep_unlocked[di] or di == nxt
+		if i < _hire_pads.size():
+			(_hire_pads[i] as Node3D).visible = _dep_unlocked[di]
+		if i < _drill_pads.size():
+			(_drill_pads[i] as Node3D).visible = _hauler_lvl[di] > 0
 
 func _on_deposit_tap(region_id: String, cost: float) -> void:
 	var di: int = int(region_id.trim_prefix("deposit"))
 	var pad: UnlockPanel = _dep_panels[di - 1]
-	if _dep_unlocked[di] or state.cash < cost or not pad.ore_ready():
+	if _dep_unlocked[di] or state.cash < cost or not pad.ore_ready() or di != _next_locked_vein():
 		return
 	state.cash -= cost
 	_dep_unlocked[di] = true
@@ -900,6 +999,13 @@ func _on_deposit_tap(region_id: String, cost: float) -> void:
 	if di - 1 < _vein_rubble.size():
 		(_vein_rubble[di - 1] as Node3D).visible = false
 	_popup_at(Vector3((DEPOSITS[di][0] as Vector2).x, (DEPOSITS[di][0] as Vector2).y, 0.5), "礦脈開啟！", Color(1.0, 0.85, 0.3))
+	_refresh_pad_visibility()
+	if di - 1 < _hire_pads.size():
+		_bounce(_hire_pads[di - 1])
+	var nxt: int = _next_locked_vein()
+	if nxt > 0 and nxt - 1 < _dep_panels.size():
+		_bounce(_dep_panels[nxt - 1])
+		_popup_at((_dep_panels[nxt - 1] as Node3D).position + Vector3(0.0, 0.0, 0.4), "新礦脈墊", Color(0.8, 0.9, 1.0))
 	# 逐粒湧出（3 秒內鋪滿）
 	var arr: Array = _dep_slots[di]
 	var tw := create_tween()
@@ -912,7 +1018,7 @@ func _on_deposit_tap(region_id: String, cost: float) -> void:
 
 ## 鏟斗前方捕獲：礦粒入到鏟斗前嘅捕獲區就上車（IG 式：車前堆住一堆礦帶走），滿咗就唔再收
 func _capture_tick() -> void:
-	var cap: int = CARGO_CAP[clampi(mine.state.push_tier, 0, 2)]
+	var cap: int = _cargo_cap()
 	if _cargo.size() >= cap:
 		return
 	var cp: Vector3 = _car.position
@@ -960,7 +1066,7 @@ func _dump_cargo() -> void:
 	if _cargo.is_empty():
 		return
 	var mult: float = mine.state.c.push_tier_scoop_mult[clampi(mine.state.push_tier, 0, 2)]
-	var fmult: float = mine.state.c.frenzy_income_mult if frenzy.active else 1.0
+	var fmult: float = (mine.state.c.frenzy_income_mult if frenzy.active else 1.0) * _price_mult()
 	var mouth_local: Vector3 = _furnace_node.position + Vector3(0.0, 0.2, 0.55) # 爐頂口（site 座標）
 	var total := 0.0
 	var n: int = _cargo.size()
@@ -996,7 +1102,7 @@ func _dump_cargo() -> void:
 func _sell_bucket_ore() -> void:
 	var inv: Transform3D = _car.transform.affine_inverse()
 	var mult: float = mine.state.c.push_tier_scoop_mult[clampi(mine.state.push_tier, 0, 2)]
-	var fmult: float = mine.state.c.frenzy_income_mult if frenzy.active else 1.0
+	var fmult: float = (mine.state.c.frenzy_income_mult if frenzy.active else 1.0) * _price_mult()
 	var mouth_local: Vector3 = _furnace_node.position + Vector3(0.0, 0.2, 0.55)
 	var total := 0.0
 	var i := 0
@@ -1233,6 +1339,9 @@ func _pad_dwell_tick(delta: float) -> void:
 	pads.append_array(_dep_panels)
 	pads.append_array(mine._layer_unlock_panels)
 	pads.append_array(mine._push_panels)
+	pads.append_array(_drill_pads)
+	if _walk_pad != null:
+		pads.append(_walk_pad)
 	var moving: bool = _car_vel.length() > 0.25
 	for p in pads:
 		var panel := p as UnlockPanel
@@ -1299,7 +1408,7 @@ func _on_sell_area_entered(body: Node3D) -> void:
 	# MineState 自己嗰個方法（同礦堆 tap 收礦、mine_zone.gd
 	# `_on_pile_tap()` 同一條公式），唔再喺呢度重複一份索引邏輯。
 	var mult: float = mine.state.scoop_value_mult()
-	var value: float = mine.state.c.ore_value(s["tier"]) * mult * (mine.state.c.frenzy_income_mult if frenzy.active else 1.0) * float(body.get_meta("mult", 1.0))
+	var value: float = mine.state.c.ore_value(s["tier"]) * mult * (mine.state.c.frenzy_income_mult if frenzy.active else 1.0) * _price_mult() * float(body.get_meta("mult", 1.0))
 	_furnace_total += value
 	_add_ingots(value)
 	state.cash += value
@@ -1335,6 +1444,8 @@ func _process(delta: float) -> void:
 		if _bucket_count() > 0:
 			_sell_bucket_ore()
 	_pad_dwell_tick(delta)
+	if _garage_panel != null:
+		_garage_panel.refresh(_garage, state.cash)
 	_watch_upgrades()
 	_manager_tick(delta)
 	_surface_team_tick(delta)
@@ -1448,6 +1559,18 @@ func _build_hud() -> void:
 	_mgr_button.pressed.connect(_on_mgr_pressed)
 	brow.add_child(_mgr_button)
 	_build_offline_panel()
+	_garage_panel = GaragePanel.new()
+	_garage_panel.name = "GaragePanel"
+	_garage_panel.setup(_on_garage_buy)
+	_hud.add_child(_garage_panel)
+	var garage_btn := Button.new()
+	garage_btn.text = "🔧"
+	garage_btn.custom_minimum_size = Vector2(90, 66)
+	garage_btn.add_theme_font_size_override("font_size", 30)
+	garage_btn.pressed.connect(func() -> void:
+		_garage_panel.visible = not _garage_panel.visible
+		_garage_panel.refresh(_garage, state.cash))
+	brow.add_child(garage_btn)
 
 	# arrow to the furnace when carrying ore (points along screen edge)
 	_furnace_arrow = TextureRect.new()
@@ -1507,8 +1630,10 @@ func _refresh_hud() -> void:
 		ic.modulate = Color(1.0, 0.35, 0.3, 1.0) if k == stage else Color(1, 1, 1, 0.85)
 		ic.scale = Vector2.ONE * (1.0 + 0.12 * pulse) if k == stage else Vector2.ONE
 	mine.refresh_afford_state()
-	for dp in _dep_panels:
+	for dp in _dep_panels + _hire_pads + _drill_pads:
 		(dp as UnlockPanel).refresh_afford_state(state.cash)
+	if _walk_pad != null:
+		_walk_pad.refresh_afford_state(state.cash)
 	_update_furnace_arrow()
 	_ai_button.text = ("AI " + ("●" if _ai_on else "○")) if _ai_unlocked else "AI ⚙%s|$%s" % [_fmt(AI_COST_COMPONENTS), _fmt(AI_COST_CASH)]
 	_ai_button.modulate = Color(0.6, 1.0, 0.6) if _ai_active else Color.WHITE
@@ -1649,7 +1774,19 @@ func _bounce(node: Node3D) -> void:
 func _pipeline_rate() -> float:
 	var ms := mine.state
 	var flow: float = minf(ms.total_mine_output(), minf(ms.cart_capacity(), ms.warehouse_capacity()))
-	return flow * (ms.c.ore_value_silver + ms.c.ore_value_gold) * 0.5
+	var blended: float = (ms.c.ore_value_silver + ms.c.ore_value_gold) * 0.5
+	var haul := 0.0 # 拖車仔離線都照跑：每程 cap 粒 × 7 折，一程 ≈ 來回路程 / 速度 + 裝貨
+	for di in range(1, DEPOSITS.size()):
+		var l: int = _hauler_lvl[di]
+		if l <= 0:
+			continue
+		var route: Array = HAUL_ROUTES[di]
+		var dist := 0.0
+		for i in range(route.size() - 1):
+			dist += (route[i] as Vector2).distance_to(route[i + 1])
+		var trip: float = dist * 2.0 / Hauler.level_speed(l) + (0.3 if _drills[di] else 1.5)
+		haul += float(Hauler.level_cap(l)) * HAULER_SELL_MULT / trip
+	return (flow + haul) * blended * _price_mult()
 
 func _settle_offline(saved: Dictionary) -> void:
 	if not saved.has("last_save_unix") or "--nooffline" in OS.get_cmdline_user_args():
@@ -1744,7 +1881,7 @@ func _on_mgr_pressed() -> void:
 
 ## AI 司機：去最近礦堆 → 鏟到 6 成 → 去爐賣 → 循環
 func _ai_steer(delta: float) -> Vector2:
-	var cap: int = CARGO_CAP[clampi(mine.state.push_tier, 0, 2)]
+	var cap: int = _cargo_cap()
 	var carrying: int = _bucket_count()
 	var pos := Vector2(_car.position.x, _car.position.y)
 	_ai_retarget_t -= delta
@@ -1759,7 +1896,7 @@ func _ai_steer(delta: float) -> Vector2:
 					if gp.y > pos.y - 0.5:
 						_ai_route.append(gp + Vector2(0.0, -0.8))
 						_ai_route.append(gp + Vector2(0.0, 0.8))
-			_ai_route.append(Vector2(2.0, 0.6))
+			_ai_route.append(Vector2(1.8, -1.8)) # 避開爐前礦脈（3.2,-0.6）同佢嘅鑽機墊
 			_ai_route.append(laser + Vector2(0.0, 1.1))
 			_ai_route.append(laser + Vector2(0.0, -0.7))
 			_ai_route.append(FURNACE_POS + Vector2(-0.1, -1.0))
@@ -1826,6 +1963,10 @@ func _manager_tick(delta: float) -> void:
 		options.append([ms.next_cart_cost(), func() -> void: ms.apply_cart_upgrade()])
 	if (stage == "warehouse" or stage == "balanced") and ms.can_upgrade_warehouse():
 		options.append([ms.next_warehouse_cost(), func() -> void: ms.apply_warehouse_upgrade()])
+	for axis in GaragePanel.AXES: # 車房三軸都由經理代買（最平嗰項先）
+		var gl: int = int(_garage[axis])
+		if gl < GaragePanel.MAX_LEVEL:
+			options.append([GaragePanel.cost_for(axis, gl), func() -> void: _garage[axis] = gl + 1])
 	if options.is_empty():
 		return
 	options.sort_custom(func(a, b): return a[0] < b[0])
@@ -1875,6 +2016,304 @@ func _surface_team_tick(delta: float) -> void:
 		state.cash += total
 		bot.queue_free())
 
+# ══════════════════════ 用戶 2026-09-18：車房 / 拖車仔 / 走道 / 鑽機 ══════════════════════
+
+func _garage_speed_mult() -> float:
+	return GaragePanel.speed_mult(int(_garage["speed"]))
+
+func _price_mult() -> float:
+	return GaragePanel.price_mult(int(_garage["price"]))
+
+func _cargo_cap() -> int:
+	return int(float(CARGO_CAP[clampi(mine.state.push_tier, 0, 2)]) * GaragePanel.cargo_mult(int(_garage["cargo"])))
+
+## 車房：一間小屋 + 門前一塊墊，車駛入就開三軸面板（車速／載量／賣價），駛出就收
+func _build_garage() -> void:
+	_garage_root = Node3D.new()
+	_garage_root.name = "Garage"
+	_garage_root.position = Vector3(GARAGE_POS.x, GARAGE_POS.y, 0.0)
+	_site.add_child(_garage_root)
+	var shed := VisualFactory.make_metal_box(Vector3(0.95, 0.7, 0.5), Color("#4A4652"))
+	shed.position = Vector3(0.0, 0.0, 0.25)
+	_garage_root.add_child(shed)
+	var roof := VisualFactory.make_metal_box(Vector3(1.05, 0.8, 0.08), Color("#F2C230"))
+	roof.position = Vector3(0.0, 0.0, 0.54)
+	_garage_root.add_child(roof)
+	var door := VisualFactory.make_metal_box(Vector3(0.5, 0.04, 0.38), Color("#26262B"))
+	door.position = Vector3(0.0, -0.36, 0.2)
+	_garage_root.add_child(door)
+	var shed_col := StaticBody3D.new()
+	var sc := CollisionShape3D.new()
+	var ss := BoxShape3D.new()
+	ss.size = Vector3(0.95, 0.7, 0.5)
+	sc.shape = ss
+	shed_col.add_child(sc)
+	shed_col.position = Vector3(0.0, 0.0, 0.25)
+	_garage_root.add_child(shed_col)
+	var pad := VisualFactory.make_flat_box(Vector3(1.0, 0.7, 0.03), Color("#F2C230").darkened(0.35))
+	pad.position = Vector3(0.0, -0.75, 0.015)
+	_garage_root.add_child(pad)
+	# 墊上一支扳手圖示（同 HUD 車房掣一樣）
+	var handle := VisualFactory.make_metal_box(Vector3(0.06, 0.32, 0.04), Color("#C9CFD6"))
+	handle.position = Vector3(0.0, -0.75, 0.05)
+	handle.rotation.z = 0.6
+	_garage_root.add_child(handle)
+	var head := VisualFactory.make_metal_box(Vector3(0.16, 0.12, 0.04), Color("#C9CFD6"))
+	head.position = Vector3(-0.1, -0.6, 0.05)
+	head.rotation.z = 0.6
+	_garage_root.add_child(head)
+	_garage_hint = Label3D.new()
+	_garage_hint.text = "車房"
+	_garage_hint.font_size = 72
+	_garage_hint.pixel_size = 0.0035
+	_garage_hint.outline_size = 12
+	_garage_hint.position = Vector3(0.0, 0.1, 0.75)
+	_garage_hint.rotation.x = deg_to_rad(70.0)
+	_garage_root.add_child(_garage_hint)
+	var area := Area3D.new()
+	var col := CollisionShape3D.new()
+	var shape := BoxShape3D.new()
+	shape.size = Vector3(1.0, 0.7, 0.6)
+	col.shape = shape
+	area.add_child(col)
+	area.position = Vector3(0.0, -0.75, 0.2)
+	area.body_entered.connect(func(b: Node3D) -> void:
+		if b == _car and _garage_panel != null and not _ai_active:
+			_garage_panel.visible = true
+			_garage_panel.refresh(_garage, state.cash))
+	area.body_exited.connect(func(b: Node3D) -> void:
+		if b == _car and _garage_panel != null:
+			_garage_panel.visible = false)
+	_garage_root.add_child(area)
+
+func _on_garage_buy(axis: String) -> void:
+	var lvl: int = int(_garage[axis])
+	if lvl >= GaragePanel.MAX_LEVEL:
+		return
+	var cst: float = GaragePanel.cost_for(axis, lvl)
+	if state.cash < cst:
+		return
+	state.cash -= cst
+	_garage[axis] = lvl + 1
+	var txt := ""
+	match axis:
+		"speed": txt = "車速 ↑ ×%.2f" % _garage_speed_mult()
+		"cargo": txt = "載量 ↑ %d" % _cargo_cap()
+		"price": txt = "賣價 ↑ ×%.1f" % _price_mult()
+	_popup_at(Vector3(_car.position.x, _car.position.y, 0.4), txt, Color(1.0, 0.85, 0.3))
+	_bounce(_car_body)
+	SfxPlayer.play("pile_mine")
+	_save_game()
+
+func _hauler_cost(di: int, lvl: int) -> float:
+	return float(DEPOSITS[di][3]) * HAULER_COST_MULT * pow(HAULER_LEVEL_GROWTH, float(lvl))
+
+func _on_hire_tap(region_id: String, cost: float) -> void:
+	var di: int = int(region_id.trim_prefix("hire"))
+	if not _dep_unlocked[di] or _hauler_lvl[di] >= Hauler.MAX_LEVEL or state.cash < cost:
+		return
+	state.cash -= cost
+	_hauler_lvl[di] += 1
+	var pad: UnlockPanel = _hire_pads[di - 1]
+	if _hauler_lvl[di] == 1:
+		_spawn_hauler(di)
+		_popup_at(pad.position + Vector3(0.0, 0.0, 0.4), "請咗拖車仔！", Color(1.0, 0.85, 0.3))
+	else:
+		var h: Hauler = _haulers[di]
+		if h != null:
+			h.set_level(_hauler_lvl[di])
+			h.refresh_label()
+			_bounce(h)
+		_popup_at(pad.position + Vector3(0.0, 0.0, 0.4), "拖車仔 Lv%d：載 %d" % [_hauler_lvl[di], Hauler.level_cap(_hauler_lvl[di])], Color(0.75, 1.0, 0.75))
+	if _hauler_lvl[di] >= Hauler.MAX_LEVEL:
+		pad.title = "Lv%d MAX" % _hauler_lvl[di]
+		pad.mark_unlocked()
+	else:
+		pad.rearm(_hauler_cost(di, _hauler_lvl[di]), "Lv%d ↑" % _hauler_lvl[di])
+	_refresh_pad_visibility()
+	_save_game()
+
+func _spawn_hauler(di: int) -> void:
+	if _haulers[di] != null:
+		return
+	var h := Hauler.new()
+	h.name = "Hauler%d" % di
+	_site.add_child(h)
+	h.setup(HAUL_ROUTES[di], _hauler_lvl[di], _hauler_load.bind(di), _hauler_sell)
+	h.load_secs = 0.3 if _drills[di] else 1.5
+	_haulers[di] = h
+
+## 拖車仔喺自己礦脈執礦：攞 cap 粒可見槽位（隱藏 MultiMesh 實例），返回 tier 清單
+func _hauler_load(h: Hauler, di: int) -> Array:
+	var got: Array = []
+	for s: Dictionary in _dep_slots[di]:
+		if got.size() >= h.cap:
+			break
+		if s["gone"] or s["active"]:
+			continue
+		s["gone"] = true
+		_hide_slot(s)
+		got.append(s["tier"])
+	return got
+
+func _hauler_sell(h: Hauler, tiers: Array) -> void:
+	var mult: float = mine.state.scoop_value_mult() * (mine.state.c.frenzy_income_mult if frenzy.active else 1.0) * _price_mult() * HAULER_SELL_MULT
+	var total := 0.0
+	for i in range(tiers.size()):
+		var value: float = mine.state.c.ore_value(tiers[i]) * mult
+		total += value
+		var gold: bool = tiers[i] == "gold"
+		var ball := VisualFactory.make_ore_ball(ORE_RADIUS * (1.3 if gold else 1.0), Color(MineConstants.PALETTE["ore_gold"] if gold else MineConstants.PALETTE["ore_silver"]), 0.3 if gold else 0.0)
+		ball.position = h.position + Vector3(0.0, 0.0, 0.2)
+		_site.add_child(ball)
+		_fly_into_furnace(ball, value, float(i) * 0.03)
+	if total > 0.0:
+		_furnace_total += total
+		_add_ingots(total)
+		_spawn_cash_popup(h.position + Vector3(0.0, 0.0, 0.3), total)
+
+## 一粒礦（任何 Node3D）飛入爐口，落爐即加錢；走道尾、拖車仔都用呢個
+func _fly_into_furnace(node: Node3D, value: float, delay: float = 0.0) -> void:
+	var mouth_local: Vector3 = _furnace_node.position + Vector3(0.0, 0.2, 0.55)
+	var tw := create_tween()
+	tw.tween_interval(delay + 0.001)
+	tw.set_parallel(true)
+	tw.tween_property(node, "position:x", mouth_local.x, 0.32).set_trans(Tween.TRANS_SINE)
+	tw.tween_property(node, "position:y", mouth_local.y, 0.32).set_trans(Tween.TRANS_SINE)
+	tw.tween_property(node, "position:z", mouth_local.z + 0.45, 0.16).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+	tw.chain().tween_property(node, "position:z", mouth_local.z, 0.16).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
+	tw.parallel().tween_property(node, "scale", Vector3.ONE * 0.3, 0.16)
+	tw.chain().tween_callback(func() -> void:
+		state.cash += value
+		_furnace_flash = 1.0
+		_spawn_spark(mouth_local)
+		node.queue_free())
+
+func _on_drill_tap(region_id: String, cost: float) -> void:
+	var di: int = int(region_id.trim_prefix("drill"))
+	var pad: UnlockPanel = _drill_pads[di - 1]
+	if _drills[di] or _hauler_lvl[di] <= 0 or state.cash < cost or not pad.ore_ready():
+		return
+	state.cash -= cost
+	_drills[di] = true
+	pad.mark_unlocked()
+	_build_drill_visual(di)
+	if _haulers[di] != null:
+		(_haulers[di] as Hauler).load_secs = 0.3
+	_popup_at(Vector3((DEPOSITS[di][0] as Vector2).x, (DEPOSITS[di][0] as Vector2).y, 0.6), "鑽機開工：回填 ×%d" % int(DRILL_REGEN_MULT), Color(1.0, 0.85, 0.3))
+	_save_game()
+
+## 鑽機：礦脈邊一座塔 + 斜插落礦嘅鑽頭，鑽頭不停轉
+func _build_drill_visual(di: int) -> void:
+	if _drill_nodes[di] != null:
+		return
+	var ctr: Vector2 = DEPOSITS[di][0]
+	var root := Node3D.new()
+	root.name = "Drill%d" % di
+	root.position = Vector3(ctr.x, ctr.y + 0.55, 0.0)
+	_site.add_child(root)
+	var base := VisualFactory.make_metal_box(Vector3(0.5, 0.36, 0.12), Color("#3A3140"))
+	base.position = Vector3(0.0, 0.0, 0.06)
+	root.add_child(base)
+	var tower := VisualFactory.make_metal_box(Vector3(0.22, 0.22, 0.7), Color("#5A5560"))
+	tower.position = Vector3(0.0, 0.0, 0.45)
+	root.add_child(tower)
+	var arm := VisualFactory.make_metal_box(Vector3(0.1, 0.6, 0.08), Color("#F2C230"))
+	arm.position = Vector3(0.0, -0.3, 0.78)
+	root.add_child(arm)
+	var bit := VisualFactory.make_low_poly_cylinder(0.07, 0.5, Color("#C9CFD6"), 6, 0.4)
+	bit.rotation_degrees.x = 90.0
+	bit.position = Vector3(0.0, -0.58, 0.4)
+	root.add_child(bit)
+	var tw := create_tween().set_loops()
+	tw.tween_property(bit, "rotation:y", TAU, 0.6).from(0.0)
+	var bob := create_tween().set_loops()
+	bob.tween_property(bit, "position:z", 0.25, 0.5).set_trans(Tween.TRANS_SINE)
+	bob.tween_property(bit, "position:z", 0.4, 0.5).set_trans(Tween.TRANS_SINE)
+	var light := OmniLight3D.new()
+	light.light_color = Color("#FFD27A")
+	light.light_energy = 0.6
+	light.omni_range = 1.4
+	light.position = Vector3(0.0, -0.3, 0.9)
+	root.add_child(light)
+	_drill_nodes[di] = root
+
+## 走道解鎖墊擺喺入口位；買咗就變成入口漏斗，礦粒推入去就自己沿東牆行去爐
+func _build_walkway_pad() -> void:
+	var start: Vector2 = WALKWAY_PATH[0]
+	_walk_pad = UnlockPanel.new()
+	_walk_pad.name = "WalkwayPad"
+	_walk_pad.position = Vector3(start.x, start.y, 0.12)
+	_site.add_child(_walk_pad)
+	_walk_pad.setup("walkway", WALKWAY_COST, "走道", _on_walkway_tap, "belt", WALKWAY_ORE)
+	if _walkway_unlocked:
+		_walk_pad.mark_unlocked()
+		_build_walkway()
+
+func _on_walkway_tap(_region_id: String, cost: float) -> void:
+	if _walkway_unlocked or state.cash < cost or not _walk_pad.ore_ready():
+		return
+	state.cash -= cost
+	_walkway_unlocked = true
+	_walk_pad.mark_unlocked()
+	_build_walkway()
+	_popup_at(_walk_pad.position + Vector3(0.0, 0.0, 0.5), "走道開通！推礦入口自動送去爐", Color(1.0, 0.85, 0.3))
+	_save_game()
+
+func _build_walkway() -> void:
+	if _walkway != null:
+		return
+	_walk_pad.visible = false
+	_walkway = Walkway.new()
+	_walkway.name = "Walkway"
+	_site.add_child(_walkway)
+	_walkway.setup(WALKWAY_PATH, _on_walkway_arrive)
+	var start: Vector2 = WALKWAY_PATH[0]
+	# 入口漏斗：一塊黃邊墊 + 三面矮牆（開口向西面向主堆）
+	var hop := Node3D.new()
+	hop.name = "Hopper"
+	hop.position = Vector3(start.x, start.y, 0.0)
+	_site.add_child(hop)
+	var mat := VisualFactory.make_flat_box(Vector3(0.9, 0.9, 0.03), Color("#F2C230").darkened(0.3))
+	mat.position = Vector3(0.0, 0.0, 0.015)
+	hop.add_child(mat)
+	for off in [Vector3(0.0, 0.47, 0.08), Vector3(0.0, -0.47, 0.08)]:
+		var wall := VisualFactory.make_metal_box(Vector3(0.9, 0.06, 0.16), Color("#5A5560"))
+		wall.position = off
+		hop.add_child(wall)
+	var arrow := VisualFactory.make_flat_box(Vector3(0.5, 0.08, 0.01), Color.WHITE)
+	arrow.position = Vector3(-0.1, 0.0, 0.035)
+	hop.add_child(arrow)
+	var ah := VisualFactory.make_rock_facet(Vector3(0.18, 0.02, 0.16), Color.WHITE, 0.5)
+	ah.rotation_degrees = Vector3(90.0, 0.0, -90.0)
+	ah.position = Vector3(0.2, 0.0, 0.035)
+	hop.add_child(ah)
+	_walk_hopper = Area3D.new()
+	var col := CollisionShape3D.new()
+	var shape := BoxShape3D.new()
+	shape.size = Vector3(0.8, 0.8, 0.5)
+	col.shape = shape
+	_walk_hopper.add_child(col)
+	_walk_hopper.position = Vector3(0.0, 0.0, 0.2)
+	_walk_hopper.body_entered.connect(_on_hopper_body)
+	hop.add_child(_walk_hopper)
+
+func _on_hopper_body(body: Node3D) -> void:
+	if not (body is RigidBody3D) or not body.has_meta("slot") or _walkway == null:
+		return
+	if body.get_parent() == _walkway:
+		return
+	_consume_ore_body(body, false)
+	_walkway.add_body.call_deferred(body)
+
+func _on_walkway_arrive(body: Node3D) -> void:
+	var s: Dictionary = body.get_meta("slot", {})
+	var tier: String = s.get("tier", "silver")
+	var value: float = mine.state.c.ore_value(tier) * mine.state.scoop_value_mult() * (mine.state.c.frenzy_income_mult if frenzy.active else 1.0) * _price_mult() * float(body.get_meta("mult", 1.0))
+	_furnace_total += value
+	_add_ingots(value)
+	_fly_into_furnace(body, value)
+
 func _fmt(v: float) -> String:
 	if v >= 1_000_000.0: return "%.1fM" % (v / 1_000_000.0)
 	if v >= 1_000.0: return "%.1fK" % (v / 1_000.0)
@@ -1904,6 +2343,10 @@ func _save_game() -> void:
 	d["field_mgr_unlocked"] = _mgr_unlocked
 	d["field_mgr_on"] = _mgr_on
 	d["field_deposits"] = _dep_unlocked
+	d["field_haulers"] = _hauler_lvl
+	d["field_drills"] = _drills
+	d["field_walkway"] = _walkway_unlocked
+	d["field_garage"] = _garage
 	Save.save_raw(d)
 
 func _notification(what: int) -> void:

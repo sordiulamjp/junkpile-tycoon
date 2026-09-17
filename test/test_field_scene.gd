@@ -422,3 +422,98 @@ func test_surface_team_tick_does_nothing_before_10_seconds() -> void:
 	field._surface_team_tick(4.0)
 
 	assert_eq(field._site.get_child_count(), before, "未夠 10 秒唔應該派人")
+
+
+# ── 用戶 2026-09-18：車房 / 拖車仔 / 走道 / 鑽機 / 逐格露出 ──
+
+func test_vein_pads_reveal_one_at_a_time_in_cost_order() -> void:
+	var field = _load_field()
+	assert_true(field._dep_panels[0].visible, "第一條（最平）礦脈墊開場應該見到")
+	for i in range(1, field._dep_panels.size()):
+		assert_false(field._dep_panels[i].visible, "其餘礦脈墊要等上一條買咗先露出")
+	field.state.cash = 1e9
+	for _p in field._dep_panels: _p.ore_fed = _p.ore_cost
+	field._on_deposit_tap("deposit2", field.DEPOSITS[2][3]) # 跳級買唔到
+	assert_false(field._dep_unlocked[2], "未買礦脈 1 唔可以買礦脈 2")
+	field._on_deposit_tap("deposit1", field.DEPOSITS[1][3])
+	assert_true(field._dep_unlocked[1])
+	assert_true(field._dep_panels[1].visible, "買咗礦脈 1 就露出礦脈 2 嘅墊")
+	assert_true(field._hire_pads[0].visible, "礦脈開咗先見到請拖車仔墊")
+	assert_false(field._drill_pads[0].visible, "未請拖車仔唔見鑽機墊")
+
+func test_hire_hauler_spawns_and_levels_up_until_max() -> void:
+	var field = _load_field()
+	field.state.cash = 1e9
+	for _p in field._dep_panels: _p.ore_fed = _p.ore_cost
+	field._on_hire_tap("hire1", field._hauler_cost(1, 0))
+	assert_eq(field._hauler_lvl[1], 0, "礦脈未開唔可以請")
+	field._on_deposit_tap("deposit1", field.DEPOSITS[1][3])
+	field._on_hire_tap("hire1", field._hauler_cost(1, 0))
+	assert_eq(field._hauler_lvl[1], 1)
+	assert_not_null(field._haulers[1], "請咗就有一架拖車仔喺場")
+	assert_true(field._drill_pads[0].visible, "請咗拖車仔先見到鑽機墊")
+	for _i in range(10):
+		field._on_hire_tap("hire1", field._hauler_cost(1, field._hauler_lvl[1]))
+	assert_eq(field._hauler_lvl[1], Hauler.MAX_LEVEL, "升到頂就停")
+	assert_eq((field._haulers[1] as Hauler).cap, Hauler.level_cap(Hauler.MAX_LEVEL))
+
+func test_hauler_loads_from_its_own_vein_and_sells_at_discount() -> void:
+	var field = _load_field()
+	field.state.cash = 1e9
+	for _p in field._dep_panels: _p.ore_fed = _p.ore_cost
+	field._on_deposit_tap("deposit1", field.DEPOSITS[1][3])
+	field._on_hire_tap("hire1", field._hauler_cost(1, 0))
+	var h: Hauler = field._haulers[1]
+	for s in field._dep_slots[1]: s["gone"] = false # 開礦脈嘅湧出動畫仲未完，直接當鋪滿
+	var got: Array = field._hauler_load(h, 1)
+	assert_eq(got.size(), h.cap, "一次執 cap 粒")
+	var before: float = field._furnace_total
+	field._hauler_sell(h, ["silver"])
+	var expect: float = field.mine.state.c.ore_value_silver * field.HAULER_SELL_MULT
+	assert_almost_eq(field._furnace_total - before, expect, 0.01, "拖車仔賣礦打 7 折，冇門倍數")
+
+func test_garage_buy_raises_speed_cargo_price_and_charges_cash() -> void:
+	var field = _load_field()
+	field.state.cash = 1000.0
+	var cap0: int = field._cargo_cap()
+	field._on_garage_buy("cargo")
+	assert_eq(field._garage["cargo"], 1)
+	assert_almost_eq(field.state.cash, 1000.0 - GaragePanel.cost_for("cargo", 0), 0.01)
+	assert_gt(field._cargo_cap(), cap0, "載量升級要見得到")
+	field._on_garage_buy("speed")
+	assert_gt(field._garage_speed_mult(), 1.0)
+	field._on_garage_buy("price")
+	assert_gt(field._price_mult(), 1.0)
+	field.state.cash = 0.0
+	field._on_garage_buy("price")
+	assert_eq(field._garage["price"], 1, "冇錢唔升")
+
+func test_walkway_unlock_builds_belt_and_hopper_sells_ore() -> void:
+	var field = _load_field()
+	field.state.cash = 1e9
+	field._walk_pad.ore_fed = field._walk_pad.ore_cost
+	field._on_walkway_tap("walkway", field.WALKWAY_COST)
+	assert_true(field._walkway_unlocked)
+	assert_not_null(field._walkway)
+	# 一粒剛體礦放入漏斗
+	var s: Dictionary = field._slots[0]
+	s["gone"] = false; s["active"] = false
+	field._activate_slot(s)
+	var body: RigidBody3D = field._kicked[-1]["node"]
+	field._on_hopper_body(body)
+	await wait_seconds(0.1)
+	assert_eq(field._walkway.count(), 1, "礦粒上咗走道")
+	assert_true(s["gone"], "槽位標記用咗")
+
+func test_save_roundtrip_keeps_garage_haulers_walkway_drills() -> void:
+	var field = _load_field()
+	field._garage = {"speed": 2, "cargo": 1, "price": 3}
+	field._hauler_lvl[1] = 2
+	field._drills[1] = true
+	field._walkway_unlocked = true
+	field._save_game()
+	var saved: Dictionary = SaveManager.load_state()
+	assert_eq(int(saved["field_garage"]["speed"]), 2)
+	assert_eq(int(saved["field_haulers"][1]), 2)
+	assert_true(bool(saved["field_drills"][1]))
+	assert_true(bool(saved["field_walkway"]))
