@@ -517,3 +517,23 @@ func test_save_roundtrip_keeps_garage_haulers_walkway_drills() -> void:
 	assert_eq(int(saved["field_haulers"][1]), 2)
 	assert_true(bool(saved["field_drills"][1]))
 	assert_true(bool(saved["field_walkway"]))
+
+func test_hidden_vein_pads_are_physics_disabled_so_ore_is_not_swallowed() -> void:
+	var field = _load_field()
+	assert_eq(field._dep_panels[1].process_mode, Node.PROCESS_MODE_DISABLED, "未露出嘅墊要停物理")
+	assert_eq(field._dep_panels[0].process_mode, Node.PROCESS_MODE_INHERIT)
+	field.state.cash = 1e9
+	for _p in field._dep_panels: _p.ore_fed = _p.ore_cost
+	field._on_deposit_tap("deposit1", field.DEPOSITS[1][3])
+	assert_eq(field._dep_panels[1].process_mode, Node.PROCESS_MODE_INHERIT, "露出後恢復")
+	assert_eq(field._hire_pads[0].process_mode, Node.PROCESS_MODE_INHERIT)
+
+func test_ai_route_from_right_side_goes_down_the_east_side() -> void:
+	var field = _load_field()
+	field._ai_mode = "heap"
+	field._car.position = field._site_to_local(Vector2(4.4, 1.6), field.CAR_Z)
+	for i in range(field.CARGO_CAP[0]):
+		field._kicked.append({"slot": field._slots[i], "node": field._car, "t": 0.0, "carried": true, "local": Vector3.ZERO})
+	field._ai_steer(0.1)
+	assert_eq(field._ai_mode, "furnace")
+	assert_gt(field._ai_target.x, 2.5, "喺右邊礦脈裝滿，第一個航點行東側，唔穿爐前礦脈")

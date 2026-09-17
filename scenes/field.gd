@@ -89,7 +89,7 @@ const HAULER_LEVEL_GROWTH := 1.6
 const HAULER_SELL_MULT := 0.7   # 拖車仔賣礦冇倍數門，再打 7 折
 const DRILL_COST_MULT := 2.0    # 鑽機 = 礦脈開價 × 2 + 一半礦料
 const DRILL_REGEN_MULT := 3.0
-const WALKWAY_PATH := [Vector2(1.9, 3.2), Vector2(6.4, 3.2), Vector2(6.4, -4.4), Vector2(5.7, -4.4)] # 主堆東側入口 → 沿東牆 → 爐
+const WALKWAY_PATH := [Vector2(1.9, 3.5), Vector2(6.4, 3.5), Vector2(6.4, -4.4), Vector2(5.7, -4.4)] # 主堆東側入口 → 沿東牆 → 爐
 const WALKWAY_COST := 8000.0
 const WALKWAY_ORE := 400.0
 const GARAGE_POS := Vector2(-1.6, -3.0)  # 車房：出生點左下，三軸升級亭
@@ -982,11 +982,16 @@ func _refresh_pad_visibility() -> void:
 	for di in range(1, DEPOSITS.size()):
 		var i: int = di - 1
 		if i < _dep_panels.size():
-			(_dep_panels[i] as Node3D).visible = _dep_unlocked[di] or di == nxt
+			_set_pad_shown(_dep_panels[i], _dep_unlocked[di] or di == nxt)
 		if i < _hire_pads.size():
-			(_hire_pads[i] as Node3D).visible = _dep_unlocked[di]
+			_set_pad_shown(_hire_pads[i], _dep_unlocked[di])
 		if i < _drill_pads.size():
-			(_drill_pads[i] as Node3D).visible = _hauler_lvl[di] > 0
+			_set_pad_shown(_drill_pads[i], _hauler_lvl[di] > 0)
+
+## 隱藏嘅墊連物理都要停：visible=false 唔會停 Area3D，礦推過去照樣被食、車駛入照樣觸發
+func _set_pad_shown(pad: Node3D, shown: bool) -> void:
+	pad.visible = shown
+	pad.process_mode = Node.PROCESS_MODE_INHERIT if shown else Node.PROCESS_MODE_DISABLED
 
 func _on_deposit_tap(region_id: String, cost: float) -> void:
 	var di: int = int(region_id.trim_prefix("deposit"))
@@ -1896,7 +1901,8 @@ func _ai_steer(delta: float) -> Vector2:
 					if gp.y > pos.y - 0.5:
 						_ai_route.append(gp + Vector2(0.0, -0.8))
 						_ai_route.append(gp + Vector2(0.0, 0.8))
-			_ai_route.append(Vector2(1.8, -1.8)) # 避開爐前礦脈（3.2,-0.6）同佢嘅鑽機墊
+			# 避開爐前礦脈（3.2,-0.6）同佢嘅墊：左／中由 (1.8,-1.8) 入，右邊（礦脈 2）沿東側落
+			_ai_route.append(Vector2(5.3, 0.6) if pos.x > 2.5 else Vector2(1.8, -1.8))
 			_ai_route.append(laser + Vector2(0.0, 1.1))
 			_ai_route.append(laser + Vector2(0.0, -0.7))
 			_ai_route.append(FURNACE_POS + Vector2(-0.1, -1.0))
