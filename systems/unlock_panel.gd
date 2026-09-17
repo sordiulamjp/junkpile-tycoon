@@ -27,7 +27,9 @@ var _area: Area3D
 var ore_cost: float = 0.0 # 要推幾多粒礦入嚟（0 = 唔使）
 var ore_fed: float = 0.0  # 已推入幾多粒（用戶 2026-09-17：唔入庫存，直接推現貨入升級格）
 var _feed_area: Area3D
-static var bucket_dump: Callable # field 設定：車入格時將鏟斗入面嘅礦整斗倒入
+static var bucket_dump: Callable # field 設定：車喺格內停定 1 秒後將鏟斗入面嘅礦整斗倒入
+var car_over: bool = false # 車而家喺格上（field 每幀睇住，停 1 秒先倒）
+var dwell: float = 0.0
 var icon_kind: String = "" # "blade" | "blade_big" | "furnace" | "pickaxe" | "" — 用戶 2026-09-14：墊上用圖示，唔用文字
 var _icon: Node3D
 
@@ -210,14 +212,15 @@ func _build_feed_area() -> void:
 	_feed_area.add_child(col)
 	_feed_area.position = Vector3(0.0, 0.0, 0.2)
 	_feed_area.body_entered.connect(_on_feed_body)
+	_feed_area.body_exited.connect(func(b: Node3D) -> void: if b is CharacterBody3D: car_over = false; dwell = 0.0)
 	add_child(_feed_area)
 
 func _on_feed_body(body: Node3D) -> void:
 	if _unlocked or ore_fed >= ore_cost:
 		return
 	if body is CharacterBody3D:
-		if bucket_dump.is_valid():
-			bucket_dump.call_deferred(self) # 物理回呼入面唔可以改場景樹，延後一幀
+		car_over = true
+		dwell = 0.0
 		return
 	if not (body is RigidBody3D) or not body.has_meta("slot"):
 		return

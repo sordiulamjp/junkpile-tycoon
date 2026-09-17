@@ -64,11 +64,11 @@ var _respawn_accum := 0.0
 # ── 有限資源（用戶 2026-09-17）：礦集中喺「礦脈」，靠升級逐步開啟 ──
 const DEPOSITS := [ # [pos, capacity, start_revealed, unlock_cost, regen_secs, ore_cost]
 	[Vector2(0.0, 3.2), 1400, 700, 0.0, 0.0, 0.0],        # 中央主堆：由礦坑輸出補充
-	[Vector2(-4.8, 0.9), 1200, 0, 400.0, 12.0, 30.0],     # 左門道中段
-	[Vector2(4.4, 1.6), 1200, 0, 1500.0, 12.0, 120.0],    # 右側
-	[Vector2(-4.8, -5.3), 1200, 0, 5000.0, 10.0, 400.0],  # 左門道起點
-	[Vector2(1.6, -5.4), 1200, 0, 15000.0, 8.0, 1000.0],  # 下方
-	[Vector2(3.2, -0.6), 1200, 0, 40000.0, 6.0, 2500.0],  # 爐前
+	[Vector2(-4.8, 0.9), 1200, 0, 600.0, 12.0, 40.0],     # 左門道中段（用戶 2026-09-17：貴啲）
+	[Vector2(4.4, 1.6), 1200, 0, 2500.0, 12.0, 160.0],    # 右側
+	[Vector2(-4.8, -5.3), 1200, 0, 8000.0, 10.0, 500.0],  # 左門道起點
+	[Vector2(1.6, -5.4), 1200, 0, 25000.0, 8.0, 1200.0],  # 下方
+	[Vector2(3.2, -0.6), 1200, 0, 70000.0, 6.0, 3000.0],  # 爐前
 ]
 var _dep_slots: Array = []        # per deposit: Array of slot dicts
 var _dep_unlocked: Array = []     # per deposit: bool
@@ -186,6 +186,7 @@ func _ready() -> void:
 	_clear_ore_around(Vector2(_car.position.x, _car.position.y), 1.0)
 	_build_gates()
 	_build_ingot_rack()
+	_build_props()
 	UnlockPanel.bucket_dump = Callable(self, "_dump_bucket_into_pad")
 	_build_hud()
 	mine.attach_panel(_hud)
@@ -497,7 +498,7 @@ func _physics_process(delta: float) -> void:
 	if _autodrive:
 		# demo/debug: drive heap -> furnace -> heap ... (waypoints in site coords)
 		_autodrive_t += delta
-		var wps := [Vector2(0.0, 2.2), Vector2(0.0, 3.8), Vector2(-2.2, 3.6), Vector2(-3.55, 1.8), Vector2(-3.55, 0.0), Vector2(-3.55, -1.6)] # demo：由下穿過主堆 → 弧線去礦脈墊（唔倒車，礦留喺鏟內）
+		var wps := [Vector2(0.0, 2.2), Vector2(0.0, 3.8), Vector2(-2.6, 3.4), Vector2(-6.05, 1.4), Vector2(-6.05, 0.0), Vector2(-6.05, 0.0), Vector2(-4.0, -2.0)] # demo：由下穿過主堆 → 去礦脈墊停 1 秒倒礦
 		var wp: Vector2 = wps[mini(int(_autodrive_t / 2.6), wps.size() - 1)]
 		var to: Vector2 = wp - Vector2(_car.position.x, _car.position.y)
 		input_vec = to.normalized() if to.length() > 0.15 else Vector2.ZERO
@@ -783,6 +784,65 @@ func _reveal_one(di: int) -> void:
 # ══════════════════════ 礦脈開啟墊 ══════════════════════
 
 var _vein_rubble: Array = []
+# ══════════════════════ 場地擺設（純裝飾，冇碰撞；用戶 2026-09-17：加擺設） ══════════════════════
+
+func _build_props() -> void:
+	var props := Node3D.new()
+	props.name = "Props"
+	_site.add_child(props)
+	var wall_c := Color(MineConstants.PALETTE["wall_dark"])
+	# 大石：空位散落
+	for pos in [Vector2(-2.6, -2.6), Vector2(2.6, 2.6), Vector2(-1.2, -6.2), Vector2(6.0, 4.6), Vector2(-6.2, 4.6), Vector2(5.9, -0.4), Vector2(-0.4, -3.4)]:
+		var rk := _rock(Vector3(rng.randf_range(0.5, 0.9), rng.randf_range(0.4, 0.7), rng.randf_range(0.45, 0.8)), wall_c.lightened(rng.randf_range(0.0, 0.2)))
+		rk.position = Vector3(pos.x, pos.y, 0.0)
+		rk.rotation.z = rng.randf_range(0.0, TAU)
+		props.add_child(rk)
+	# 廢車：灰車身 + 四粒輪 + 生鏽頂
+	for pos in [Vector2(-6.0, -2.4), Vector2(6.0, 2.0)]:
+		var wreck := Node3D.new()
+		wreck.position = Vector3(pos.x, pos.y, 0.0)
+		wreck.rotation.z = rng.randf_range(-0.5, 0.5)
+		var body := VisualFactory.make_metal_box(Vector3(0.5, 0.9, 0.3), Color("#5A5560"))
+		body.position = Vector3(0.0, 0.0, 0.2)
+		wreck.add_child(body)
+		var roof := VisualFactory.make_metal_box(Vector3(0.44, 0.4, 0.22), Color("#7A4A3A"))
+		roof.position = Vector3(0.0, -0.05, 0.45)
+		wreck.add_child(roof)
+		for wx in [-0.28, 0.28]:
+			for wy in [-0.3, 0.3]:
+				var wheel := VisualFactory.make_low_poly_cylinder(0.1, 0.06, Color("#1E1E22"), 8, 0.1)
+				wheel.rotation_degrees.y = 90.0
+				wheel.position = Vector3(wx, wy, 0.1)
+				wreck.add_child(wheel)
+		props.add_child(wreck)
+	# 燈柱：礦坑兩側、熔爐旁
+	for pos in [Vector2(-2.4, 4.6), Vector2(2.4, 4.6), Vector2(6.2, -5.6), Vector2(-6.2, -6.2)]:
+		var post := VisualFactory.make_flat_box(Vector3(0.08, 0.08, 1.1), Color("#3A3140"))
+		post.position = Vector3(pos.x, pos.y, 0.55)
+		props.add_child(post)
+		var lamp := VisualFactory.make_lamp(0.08, Color("#FFD27A"), 1.6)
+		lamp.position = Vector3(pos.x, pos.y, 1.15)
+		props.add_child(lamp)
+		var light := OmniLight3D.new()
+		light.light_color = Color("#FFD27A")
+		light.light_energy = 0.9
+		light.omni_range = 2.2
+		light.position = Vector3(pos.x, pos.y, 1.1)
+		props.add_child(light)
+	# 油桶堆、輪胎堆
+	for pos in [Vector2(6.1, -2.8), Vector2(-6.2, 2.2)]:
+		for i in range(4):
+			var b := VisualFactory.make_low_poly_cylinder(0.11, 0.24, Color("#2E5C9E") if i % 2 == 0 else Color("#B8894A"), 8, 0.35)
+			b.rotation_degrees.x = 90.0
+			b.position = Vector3(pos.x + float(i % 2) * 0.24, pos.y + float(i / 2) * 0.24, 0.12)
+			props.add_child(b)
+	for pos in [Vector2(-3.4, -6.4), Vector2(3.6, 6.6)]:
+		for i in range(3):
+			var t := VisualFactory.make_low_poly_cylinder(0.16, 0.08, Color("#1E1E22"), 10, 0.1)
+			t.rotation_degrees.x = 90.0
+			t.position = Vector3(pos.x + float(i) * 0.05, pos.y, 0.04 + float(i) * 0.08)
+			props.add_child(t)
+
 func _build_deposit_pads() -> void:
 	for di in range(1, DEPOSITS.size()):
 		var dep = DEPOSITS[di]
@@ -807,9 +867,10 @@ func _build_deposit_pads() -> void:
 		_vein_rubble.append(rub)
 		var p := UnlockPanel.new()
 		p.name = "DepositPad%d" % di
-		# 墊擺喺礦床斜前方（靠場地中央嗰邊），唔壓住門道同礦床
-		var side: float = 1.0 if (dep[0] as Vector2).x < 0.0 else -1.0
-		p.position = Vector3((dep[0] as Vector2).x + side * 1.25, (dep[0] as Vector2).y - 0.9, 0.12)
+		# 墊擺喺礦床外側（左邊礦脈：再左；右邊礦脈：北面），避開 AI 司機去爐嘅走廊
+		var dp: Vector2 = dep[0]
+		var pad_pos: Vector2 = Vector2(dp.x - 1.25, dp.y - 0.9) if dp.x < 0.0 else Vector2(dp.x, dp.y + 1.0)
+		p.position = Vector3(pad_pos.x, pad_pos.y, 0.12)
 		_site.add_child(p)
 		p.setup("deposit%d" % di, float(dep[3]), "礦脈", _on_deposit_tap, "pickaxe", float(dep[5]))
 		_dep_panels.append(p)
@@ -1164,10 +1225,29 @@ func _activate_slot(s: Dictionary) -> void:
 	_kicked.append({"slot": s, "node": body, "t": 0.0})
 
 ## 升級格吸收一粒礦：由剛體清單移除、槽位標記為用咗
-## 車駛入要礦嘅升級格：鏟斗入面嘅礦整斗倒入（逐粒飛入，直到夠數）
+## 用戶 2026-09-17：車要喺格上停定 1 秒先倒礦（避免路過誤觸）
+func _pad_dwell_tick(delta: float) -> void:
+	var pads: Array = []
+	pads.append_array(_dep_panels)
+	pads.append_array(mine._layer_unlock_panels)
+	pads.append_array(mine._push_panels)
+	var moving: bool = _car_vel.length() > 0.25
+	for p in pads:
+		var panel := p as UnlockPanel
+		if panel == null or not panel.car_over or panel.ore_cost <= 0.0 or panel.ore_ready():
+			continue
+		if moving or _ai_active:
+			panel.dwell = 0.0
+			continue
+		panel.dwell += delta
+		if panel.dwell >= 1.0:
+			panel.dwell = -999.0 # 呢次停留只倒一次
+			_dump_bucket_into_pad(panel)
+
+## 鏟斗入面嘅礦整斗倒入升級格（逐粒飛入，直到夠數）
 func _dump_bucket_into_pad(panel: UnlockPanel) -> void:
 	if _ai_active:
-		return # AI 司機路過升級格唔會倒礦（渲染見到佢將礦餵咗入 40K 格）；由玩家自己決定
+		return # AI 司機唔會倒礦入升級格；由玩家自己決定
 	var inv: Transform3D = _car.transform.affine_inverse()
 	for k: Dictionary in _kicked.duplicate():
 		if panel.ore_ready():
@@ -1252,6 +1332,7 @@ func _process(delta: float) -> void:
 		_sell_poll_t = 0.0
 		if _bucket_count() > 0:
 			_sell_bucket_ore()
+	_pad_dwell_tick(delta)
 	_watch_upgrades()
 	_manager_tick(delta)
 	_surface_team_tick(delta)
