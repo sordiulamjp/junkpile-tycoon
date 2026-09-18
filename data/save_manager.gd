@@ -25,9 +25,13 @@ class_name SaveManager
 ## ALTA-229（VR-13）備註：區域 2 外圍險路（regions/region2_outer_path/
 ## region2_zone.gd）加咗 "region2_zone" 子 dict（UPGRADE 小屋 tier，見
 ## v3→v4 遷移分支）。
+##
+## ALTA-285（VR-07a）備註：加咗 "monetization" 子 dict（兩個 rewarded 位
+## 每日額度 + 去廣告 IAP 擁有狀態，見 systems/monetization_state.gd，
+## v4→v5 遷移分支）。
 
 const SAVE_PATH := "user://save-v1.json"
-const CURRENT_VERSION := 4
+const CURRENT_VERSION := 5
 
 ## 全新存檔嘅預設狀態。
 static func default_state() -> Dictionary:
@@ -53,6 +57,12 @@ static func default_state() -> Dictionary:
 		},
 		"region2_zone": {
 			"shack_tier": 0,
+		},
+		"monetization": {
+			"ads_removed": false,
+			"quota_day": 0,
+			"offline_x2_used_today": 0,
+			"extra_frenzy_used_today": 0,
 		},
 	}
 
@@ -123,6 +133,16 @@ static func _migrate(data: Dictionary) -> Dictionary:
 		if not data.has("region2_zone"):
 			data["region2_zone"] = {"shack_tier": 0}
 		version = 4
-	# 未來新版本喺呢度逐級加：if version < 5: ... version = 5
+	if version < 5:
+		# v4 -> v5（ALTA-285）：加 monetization（未去廣告、額度未用）。
+		if not data.has("monetization"):
+			data["monetization"] = {
+				"ads_removed": false,
+				"quota_day": 0,
+				"offline_x2_used_today": 0,
+				"extra_frenzy_used_today": 0,
+			}
+		version = 5
+	# 未來新版本喺呢度逐級加：if version < 6: ... version = 6
 	data["version"] = version
 	return data

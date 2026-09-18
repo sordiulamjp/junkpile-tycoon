@@ -1,33 +1,32 @@
 extends Node
-## VR-07 商業化第一階段：AdMob rewarded 廣告驗證（ALTA-154）。
+## VR-07a 商業化實作（ALTA-285）：包一層 Poing Studios AdMob plugin
+## （res://addons/admob，Google Mobile Ads SDK wrapper）：UMP 同意表格 →
+## child-directed = false → MobileAds 初始化 → rewarded 廣告位。前身係
+## VR-07 第一步（ALTA-154）「只得一個 rewarded 位」嘅空 APK 驗證，證實
+## plugin 對準 Godot 4.7.2 可用之後，呢度擴到兩個正式位（離線收入 ×2／
+## 免費狂熱一次，額度見 GameConstants.rewarded_offline_x2_per_day／
+## rewarded_extra_frenzy_per_day，用量狀態機見 systems/monetization_state.gd）。
 ##
-## 包一層 Poing Studios AdMob plugin（res://addons/admob，Google Mobile Ads SDK
-## wrapper）：UMP 同意表格 → child-directed = false → MobileAds 初始化 → 一個
-## rewarded 廣告位（Google 官方公開測試單元）。用嚟驗證 plugin 對準 Godot 4.7.2
-## 可用（"先做「只得一個 rewarded 位」嘅空 APK 驗證...先繼續"）。
+## 廣告單元 id 集中喺 AdConfig（ads/ad_config.gd），呢度淨係負責同 AdMob
+## SDK 溝通，唔識任何遊戲數值／每日額度邏輯（嗰啲留返俾呼叫方
+## scenes/field.gd + MonetizationState）。
 ##
-## 兩個正式 rewarded 位（離線收入 ×2 / 免費狂熱一次，額度見
-## GameConstants.rewarded_offline_x2_per_day / rewarded_extra_frenzy_per_day）
-## 同 Google Play Billing 去廣告 IAP，留返呢步驗證通過、用戶提供真 AdMob／
-## Play Console 帳戶到手先接（見 ALTA-154 留言）。
-##
-## 用法：autoload 單例。App 開頭（例如主選單 _ready）call 一次
+## 用法：autoload 單例。App 開頭（例如主場景 _ready）call 一次
 ## request_consent_and_initialize()，等 ad_initialized 之後先可以
-## load_test_rewarded_ad()。
+## load_rewarded_ad(placement)（placement 用 AdConfig.PLACEMENT_*）。
+## 呢個 SDK 同一時間淨係揸得住一個 rewarded 廣告個體，一個位載緊／播緊
+## 嗰陣唔好同時載第二個位——呼叫方（field.gd）負責一次淨處理一個 pending
+## placement，唔喺呢層做排隊。
 
 signal ad_initialized
-signal rewarded_ad_ready
-signal rewarded_ad_load_failed(message: String)
-signal rewarded_ad_earned_reward(amount: int, type: String)
-signal rewarded_ad_dismissed
-
-## Google 官方公開嘅測試 rewarded 廣告單元 ID（唔屬於任何 AdMob 帳戶）。
-## 上架前一定要換成真 AdMob 帳戶開嘅正式單元，唔准帶呢個 ID 落 Play 正式版。
-const TEST_REWARDED_AD_UNIT_ANDROID := "ca-app-pub-3940256099942544/5224354917"
-const TEST_REWARDED_AD_UNIT_IOS := "ca-app-pub-3940256099942544/1712485313"
+signal rewarded_ad_ready(placement: String)
+signal rewarded_ad_load_failed(placement: String, message: String)
+signal rewarded_ad_earned_reward(placement: String, amount: int, type: String)
+signal rewarded_ad_dismissed(placement: String)
 
 var _rewarded_ad: RewardedAd
 var _rewarded_loader: RewardedAdLoader
+var _ready_placement: String = ""
 
 
 ## 入口：UMP 同意 → 初始化 SDK。跟足 plugin 官方 sample 嘅 fallback 規則——
@@ -78,46 +77,48 @@ func _initialize_ads() -> void:
 	MobileAds.initialize(init_listener)
 
 
-## 攞得一個位嘅測試廣告（ALTA-154 第一步驗證用；唔係正式嘅離線 ×2／免費狂熱位）。
-func load_test_rewarded_ad() -> void:
-	var ad_unit_id := (
-		TEST_REWARDED_AD_UNIT_ANDROID if OS.get_name() == "Android" else TEST_REWARDED_AD_UNIT_IOS
-	)
+## 載入指定位置嘅 rewarded 廣告（placement 用 AdConfig.PLACEMENT_*）。兩個
+## 位而家共用 AdConfig.rewarded_ad_unit_id()（沙盒測試單元），真帳戶到手
+## 之後喺 AdConfig 分開填正式單元 id，呢度唔使改。
+func load_rewarded_ad(placement: String) -> void:
 	_rewarded_loader = RewardedAdLoader.new()
 
 	var callback := RewardedAdLoadCallback.new()
 	callback.on_ad_loaded = func(ad: RewardedAd) -> void:
 		_rewarded_ad = ad
-		_setup_rewarded_callbacks()
-		rewarded_ad_ready.emit()
+		_ready_placement = placement
+		_setup_rewarded_callbacks(placement)
+		rewarded_ad_ready.emit(placement)
 	callback.on_ad_failed_to_load = func(error: LoadAdError) -> void:
-		rewarded_ad_load_failed.emit(error.message)
+		rewarded_ad_load_failed.emit(placement, error.message)
 
-	_rewarded_loader.load(ad_unit_id, AdRequest.new(), callback)
+	_rewarded_loader.load(AdConfig.rewarded_ad_unit_id(), AdRequest.new(), callback)
 
 
-func _setup_rewarded_callbacks() -> void:
+func _setup_rewarded_callbacks(placement: String) -> void:
 	var content_callback := FullScreenContentCallback.new()
 	content_callback.on_ad_dismissed_full_screen_content = func() -> void:
 		_rewarded_ad.destroy()
 		_rewarded_ad = null
-		rewarded_ad_dismissed.emit()
+		_ready_placement = ""
+		rewarded_ad_dismissed.emit(placement)
 	content_callback.on_ad_failed_to_show_full_screen_content = func(error: AdError) -> void:
 		push_warning("AdManager: rewarded ad failed to show: %s" % error.message)
 		_rewarded_ad.destroy()
 		_rewarded_ad = null
+		_ready_placement = ""
 	_rewarded_ad.full_screen_content_callback = content_callback
 
 
-func has_rewarded_ad_ready() -> bool:
-	return _rewarded_ad != null
+func has_rewarded_ad_ready(placement: String) -> bool:
+	return _rewarded_ad != null and _ready_placement == placement
 
 
-func show_rewarded_ad() -> void:
-	if not _rewarded_ad:
-		push_warning("AdManager: no rewarded ad loaded yet")
+func show_rewarded_ad(placement: String) -> void:
+	if not has_rewarded_ad_ready(placement):
+		push_warning("AdManager: no rewarded ad loaded yet for placement %s" % placement)
 		return
 	var reward_listener := OnUserEarnedRewardListener.new()
 	reward_listener.on_user_earned_reward = func(item: RewardedItem) -> void:
-		rewarded_ad_earned_reward.emit(item.amount, item.type)
+		rewarded_ad_earned_reward.emit(placement, item.amount, item.type)
 	_rewarded_ad.show(reward_listener)
