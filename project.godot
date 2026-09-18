@@ -24,26 +24,24 @@ config/icon="res://assets/icon.png"
 Wallet="*res://autoload/wallet.gd"
 Save="*res://autoload/save.gd"
 AdManager="*res://ads/ad_manager.gd"
+BillingManager="*res://billing/billing_manager.gd"
 SfxPlayer="*res://systems/sfx_player.gd"
 
 [display]
 
 window/size/viewport_width=720
 window/size/viewport_height=960
-window/handheld/orientation=1
 window/stretch/mode="canvas_items"
 window/stretch/aspect="expand"
+window/handheld/orientation=1
 
 [editor_plugins]
 
-enabled=PackedStringArray()
+enabled=PackedStringArray("res://addons/admob/plugin.cfg", "res://addons/GodotGooglePlayBilling/plugin.cfg")
 
 [physics]
 
 3d/physics_engine="Jolt Physics"
-
-[physics]
-
 common/physics_interpolation=true
 
 [rendering]

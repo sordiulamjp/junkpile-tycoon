@@ -35,29 +35,29 @@ func _on_ad_initialized() -> void:
 func _on_load_pressed() -> void:
 	_load_button.disabled = true
 	_set_status("載入緊測試 rewarded 廣告…")
-	AdManager.load_test_rewarded_ad()
+	AdManager.load_rewarded_ad(AdConfig.PLACEMENT_OFFLINE_X2)
 
 
-func _on_rewarded_ad_ready() -> void:
+func _on_rewarded_ad_ready(_placement: String) -> void:
 	_set_status("廣告已載入。撳「播廣告」。")
 	_show_button.disabled = false
 
 
-func _on_rewarded_ad_load_failed(message: String) -> void:
+func _on_rewarded_ad_load_failed(_placement: String, message: String) -> void:
 	_set_status("廣告載入失敗：%s" % message)
 	_load_button.disabled = false
 
 
 func _on_show_pressed() -> void:
 	_show_button.disabled = true
-	AdManager.show_rewarded_ad()
+	AdManager.show_rewarded_ad(AdConfig.PLACEMENT_OFFLINE_X2)
 
 
-func _on_rewarded_ad_earned_reward(amount: int, type: String) -> void:
+func _on_rewarded_ad_earned_reward(_placement: String, amount: int, type: String) -> void:
 	_set_status("✅ 已發獎：%d %s" % [amount, type])
 
 
-func _on_rewarded_ad_dismissed() -> void:
+func _on_rewarded_ad_dismissed(_placement: String) -> void:
 	_load_button.disabled = false
 
 

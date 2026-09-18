@@ -180,6 +180,13 @@ var _offline_label: Label
 var _offline_claim_button: Button
 var _offline_double_button: Button
 var _offline_pending := 0.0
+var _offline_elapsed_secs := 0.0
+var _offline_doubled_this_session := false
+
+# -- ALTA-285（VR-07a）：商業化——兩個 rewarded 位（離線 ×2／免費狂熱一次）+ 去廣告 IAP --
+var monetization: MonetizationState
+var _pending_rewarded_placement: String = ""
+var _remove_ads_button: Button
 
 
 func _ready() -> void:
@@ -187,6 +194,7 @@ func _ready() -> void:
 	c = GameConstants.new()
 	state = GameState.new(c)
 	frenzy = FrenzyState.new(c)
+	monetization = MonetizationState.new(c)
 	_autodrive = "--autodrive" in OS.get_cmdline_user_args()
 	_overview = "--overview" in OS.get_cmdline_user_args()
 	var _demo_ai: bool = "--ai" in OS.get_cmdline_user_args() # debug：即刻解鎖 AI 司機 + 經理（渲染示範用）
@@ -204,6 +212,7 @@ func _ready() -> void:
 		state.cash = Wallet.cash
 		state.components = Wallet.components
 		state.eco = Wallet.eco
+		monetization.from_dict(saved.get("monetization", {}))
 	_ai_unlocked = bool(saved.get("field_ai_unlocked", false))
 	_ai_on = bool(saved.get("field_ai_on", true))
 	_mgr_unlocked = bool(saved.get("field_mgr_unlocked", false))
@@ -253,6 +262,15 @@ func _ready() -> void:
 	mine.attach_panel(_hud)
 	get_viewport().physics_object_picking = true
 	_settle_offline(saved)
+
+	AdManager.rewarded_ad_ready.connect(_on_rewarded_ad_ready)
+	AdManager.rewarded_ad_load_failed.connect(_on_rewarded_ad_load_failed)
+	AdManager.rewarded_ad_earned_reward.connect(_on_rewarded_ad_earned_reward)
+	AdManager.rewarded_ad_dismissed.connect(_on_rewarded_ad_dismissed)
+	AdManager.request_consent_and_initialize()
+	BillingManager.remove_ads_purchase_completed.connect(_on_remove_ads_purchase_completed)
+	BillingManager.remove_ads_restore_completed.connect(_on_remove_ads_restore_completed)
+	BillingManager.restore_purchases()
 
 
 # ══════════════════════ world / environment ══════════════════════
@@ -1576,6 +1594,13 @@ func _build_hud() -> void:
 		_garage_panel.visible = not _garage_panel.visible
 		_garage_panel.refresh(_garage, state.cash))
 	brow.add_child(garage_btn)
+	_remove_ads_button = Button.new()
+	_remove_ads_button.text = "🚫"
+	_remove_ads_button.custom_minimum_size = Vector2(70, 66)
+	_remove_ads_button.add_theme_font_size_override("font_size", 28)
+	_remove_ads_button.tooltip_text = "去廣告 HK$38（購買後兩個 rewarded 位停用）"
+	_remove_ads_button.pressed.connect(_on_remove_ads_pressed)
+	brow.add_child(_remove_ads_button)
 
 	# arrow to the furnace when carrying ore (points along screen edge)
 	_furnace_arrow = TextureRect.new()
@@ -1625,8 +1650,15 @@ func _refresh_hud() -> void:
 		_frenzy_button.disabled = true
 	else:
 		var cd: float = frenzy.cooldown_remaining
-		_frenzy_button.disabled = cd > 0.0
-		_frenzy_button.text = (" %ds" % int(ceil(cd))) if cd > 0.0 else ""
+		if cd > 0.0 and monetization.can_use_extra_frenzy(Time.get_unix_time_from_system()):
+			_frenzy_button.text = "📺%ds" % int(ceil(cd))
+			_frenzy_button.disabled = false
+			_frenzy_button.tooltip_text = "睇廣告即刻狂熱"
+		else:
+			_frenzy_button.disabled = cd > 0.0
+			_frenzy_button.text = (" %ds" % int(ceil(cd))) if cd > 0.0 else ""
+			_frenzy_button.tooltip_text = ""
+	_remove_ads_button.visible = not monetization.ads_removed
 	var stage: String = mine.state.bottleneck_stage()
 	_status_label.text = stage
 	var pulse: float = 0.55 + 0.45 * sin(Time.get_ticks_msec() / 180.0)
@@ -1802,8 +1834,104 @@ func _settle_offline(saved: Dictionary) -> void:
 	if yield_cash < 1.0:
 		return
 	_offline_pending = yield_cash
-	_offline_label.text = OfflineReport.raccoon_message(yield_cash, float(result["elapsed_secs"]), c.offline_cap_secs) + "\n\n+%s" % _fmt(yield_cash)
+	_offline_elapsed_secs = float(result["elapsed_secs"])
+	_offline_doubled_this_session = false
+	_refresh_offline_label()
+	_refresh_offline_double_button()
 	_offline_panel.visible = true
+
+## VR-07a：拆出嚟俾 _settle_offline() 同 rewarded ×2 到帳之後共用，
+## 兩處都要用返同一份 elapsed_secs 先令浣熊經理文案（分級門檻睇 elapsed）
+## 唔會因為 ×2 之後 cash_yield 變大而錯配去另一級文案。
+func _refresh_offline_label() -> void:
+	_offline_label.text = (
+		OfflineReport.raccoon_message(_offline_pending, _offline_elapsed_secs, c.offline_cap_secs)
+		+ "\n\n+%s" % _fmt(_offline_pending)
+	)
+
+func _refresh_offline_double_button() -> void:
+	if _offline_doubled_this_session:
+		_offline_double_button.disabled = true
+		_offline_double_button.tooltip_text = "呢次已經 ×2 咗"
+		return
+	var now := Time.get_unix_time_from_system()
+	if monetization.can_use_offline_x2(now):
+		_offline_double_button.disabled = false
+		_offline_double_button.tooltip_text = ""
+	else:
+		_offline_double_button.disabled = true
+		_offline_double_button.tooltip_text = "去咗廣告" if monetization.ads_removed else "今日額度用晒"
+
+func _on_offline_double_pressed() -> void:
+	_offline_double_button.disabled = true
+	_request_rewarded(AdConfig.PLACEMENT_OFFLINE_X2)
+
+## 兩個 rewarded 位共用嘅請求入口：廣告已經載好就即刻播，未載好就記低
+## 呢個位係「玩家啱啱撳咗想睇」，載完自動播（見 _on_rewarded_ad_ready()）。
+func _request_rewarded(placement: String) -> void:
+	if AdManager.has_rewarded_ad_ready(placement):
+		AdManager.show_rewarded_ad(placement)
+		return
+	_pending_rewarded_placement = placement
+	AdManager.load_rewarded_ad(placement)
+
+func _on_rewarded_ad_ready(placement: String) -> void:
+	if placement == _pending_rewarded_placement:
+		_pending_rewarded_placement = ""
+		AdManager.show_rewarded_ad(placement)
+
+## 載入失敗／冇網 fallback：唔再等，還原返個掣俾玩家自己再試。
+func _on_rewarded_ad_load_failed(placement: String, message: String) -> void:
+	if placement == _pending_rewarded_placement:
+		_pending_rewarded_placement = ""
+	push_warning("Field: rewarded ad load failed (%s): %s" % [placement, message])
+	if placement == AdConfig.PLACEMENT_OFFLINE_X2:
+		_refresh_offline_double_button()
+
+func _on_rewarded_ad_earned_reward(placement: String, _amount: int, _type: String) -> void:
+	var now := Time.get_unix_time_from_system()
+	match placement:
+		AdConfig.PLACEMENT_OFFLINE_X2:
+			if monetization.use_offline_x2(now):
+				_offline_pending *= 2.0
+				_offline_doubled_this_session = true
+				_refresh_offline_label()
+				_refresh_offline_double_button()
+				EventLog.log_event("rewarded_offline_x2", {"cash_yield": _offline_pending})
+				_save_game()
+		AdConfig.PLACEMENT_EXTRA_FRENZY:
+			if monetization.use_extra_frenzy(now):
+				frenzy.cooldown_remaining = 0.0
+				EventLog.log_event("rewarded_extra_frenzy")
+				_save_game()
+				_on_frenzy_pressed()
+
+## 玩家未睇完就撳走（未觸發 earned_reward）：冇獎冇扣額度，淨係還原返個掣
+## 俾佢再試——用 _refresh_offline_double_button() 嘅現有額度判斷，唔使
+## 呢度另外記一次「係咪已經攞咗獎」。
+func _on_rewarded_ad_dismissed(placement: String) -> void:
+	if placement == AdConfig.PLACEMENT_OFFLINE_X2:
+		_refresh_offline_double_button()
+
+func _on_remove_ads_pressed() -> void:
+	_remove_ads_button.disabled = true
+	BillingManager.purchase_remove_ads()
+
+func _on_remove_ads_purchase_completed(success: bool) -> void:
+	_remove_ads_button.disabled = false
+	if not success:
+		return
+	monetization.set_ads_removed(true)
+	EventLog.log_event("remove_ads_purchased")
+	_save_game()
+
+## 開 App 自動查一次（Play Billing 標準做法，等同「恢復購買」）：
+## owned=false 唔會冚走本機已有嘅 ads_removed（見 BillingManager 檔頭註解）。
+func _on_remove_ads_restore_completed(owned: bool) -> void:
+	if owned and not monetization.ads_removed:
+		monetization.set_ads_removed(true)
+		EventLog.log_event("remove_ads_restored")
+		_save_game()
 
 func _build_offline_panel() -> void:
 	_offline_panel = PanelContainer.new()
@@ -1835,14 +1963,13 @@ func _build_offline_panel() -> void:
 	buttons_row.alignment = BoxContainer.ALIGNMENT_CENTER
 	buttons_row.add_theme_constant_override("separation", 16)
 	v.add_child(buttons_row)
-	# VR-07（留位）：×2 睇廣告——同 main.gd _build_offline_panel() 一樣做法，
-	# 呢度淨係擺位＋停用，接駁廣告係另一張 issue。
+	# ALTA-285（VR-07a）：×2 睇廣告——rewarded 廣告接駁，見 _on_offline_double_pressed()。
 	_offline_double_button = Button.new()
 	_offline_double_button.text = "×2（睇廣告）"
 	_offline_double_button.disabled = true
-	_offline_double_button.tooltip_text = "未接（VR-07）"
 	_offline_double_button.custom_minimum_size = Vector2(180, 64)
 	_offline_double_button.add_theme_font_size_override("font_size", 22)
+	_offline_double_button.pressed.connect(_on_offline_double_pressed)
 	buttons_row.add_child(_offline_double_button)
 	_offline_claim_button = Button.new()
 	_offline_claim_button.text = "收下"
@@ -2326,8 +2453,14 @@ func _fmt(v: float) -> String:
 	return str(int(v))
 
 func _on_frenzy_pressed() -> void:
-	if frenzy.start(state.current_income_rate()):
-		SfxPlayer.play("frenzy_start")
+	if frenzy.can_start():
+		if frenzy.start(state.current_income_rate()):
+			SfxPlayer.play("frenzy_start")
+		return
+	# 免費觸發用盡（冷卻中）：用一次 rewarded 廣告額度即刻清冷卻，等玩家
+	# 額外觸發一次（"免費狂熱一次"，見 GameConstants.rewarded_extra_frenzy_per_day）。
+	if not frenzy.active and monetization.can_use_extra_frenzy(Time.get_unix_time_from_system()):
+		_request_rewarded(AdConfig.PLACEMENT_EXTRA_FRENZY)
 
 ## main.gd 同一個名／同一個做法——存檔之前一定要 call 一次，等 Wallet
 ## 記憶體嗰份同即將存落 disk 嗰份一致（見 autoload/wallet.gd 頂部註解）。
@@ -2353,6 +2486,7 @@ func _save_game() -> void:
 	d["field_drills"] = _drills
 	d["field_walkway"] = _walkway_unlocked
 	d["field_garage"] = _garage
+	d["monetization"] = monetization.to_dict()
 	Save.save_raw(d)
 
 func _notification(what: int) -> void:

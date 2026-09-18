@@ -154,3 +154,21 @@ func test_migration_v3_to_v4_does_not_overwrite_existing_region2_zone() -> void:
 	var state := {"version": 3, "region2_zone": {"shack_tier": 2}}
 	var migrated := SaveManager._migrate(state)
 	assert_eq(migrated["region2_zone"]["shack_tier"], 2)
+
+## ALTA-285（VR-07a）：v4 存檔（VR-13 嗰個形狀，冇 monetization）陞級到
+## v5 應該補返預設 monetization（未去廣告、兩個 rewarded 位額度未用）。
+func test_migration_v4_to_v5_backfills_monetization() -> void:
+	var v4_state := {"version": 4, "cash": 500.0, "region2_zone": {"shack_tier": 1}}
+	var migrated := SaveManager._migrate(v4_state)
+	assert_eq(migrated["version"], SaveManager.CURRENT_VERSION)
+	var mon: Dictionary = migrated["monetization"]
+	assert_eq(mon["ads_removed"], false)
+	assert_eq(mon["offline_x2_used_today"], 0)
+	assert_eq(mon["extra_frenzy_used_today"], 0)
+	assert_almost_eq(migrated["cash"], 500.0, EPS, "遷移唔應該影響現有欄位")
+
+func test_migration_v4_to_v5_does_not_overwrite_existing_monetization() -> void:
+	var state := {"version": 4, "monetization": {"ads_removed": true, "offline_x2_used_today": 2}}
+	var migrated := SaveManager._migrate(state)
+	assert_eq(migrated["monetization"]["ads_removed"], true)
+	assert_eq(migrated["monetization"]["offline_x2_used_today"], 2)

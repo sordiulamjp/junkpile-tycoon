@@ -19,6 +19,7 @@ const MAX_LINES := 500 # 自動滾動上限；超過就淨保留最新呢咁多�
 ## 嘅 type 一樣照寫，方便日後擴充，唔使兩處同步）。
 const EVENT_TYPES := [
 	"session_start", "frenzy_start", "frenzy_end", "offline_claim", "upgrade", "prestige",
+	"rewarded_offline_x2", "rewarded_extra_frenzy", "remove_ads_purchased", "remove_ads_restored",
 ]
 
 
