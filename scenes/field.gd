@@ -19,6 +19,7 @@ const MINE_POS := Vector2(0.0, 5.2)      # 後方：礦坑核心
 const FURNACE_POS := Vector2(4.8, -4.6)  # 右下：熔爐（鐳射門喺北面入口）
 const CAR_START := Vector2(0.0, -0.4)
 const CAR_Z := 0.14
+const CAR_BOUND_MARGIN := 0.3  # 車身半闊 + buffer，撞柱後 clamp 用（ALTA-298）
 const JOY_RADIUS_PX := 110.0
 
 # TUNE (IG feel: slow, heavy)
@@ -589,8 +590,12 @@ func _physics_process(delta: float) -> void:
 	_car_vel = _car_vel.move_toward(target, CAR_ACCEL * delta)
 	_car.velocity = SITE_BASIS * Vector3(_car_vel.x, _car_vel.y, 0.0)
 	_car.move_and_slide()
-	# keep on the ground plane
+	# 撞窄柱／斜面時 slide 法線帶 z 分量，歸零先重置 z，避免落後一幀反覆 depenetration
+	_car.velocity.z = 0.0
 	_car.position.z = CAR_Z
+	# 保險：無論點撞都唔畀車被推出場地邊界（留返車身闊度嘅 margin）
+	_car.position.x = clampf(_car.position.x, FIELD_MIN.x + CAR_BOUND_MARGIN, FIELD_MAX.x - CAR_BOUND_MARGIN)
+	_car.position.y = clampf(_car.position.y, FIELD_MIN.y + CAR_BOUND_MARGIN, FIELD_MAX.y - CAR_BOUND_MARGIN)
 	_rigidize_front_tick()
 	# 鏟斗「載住」：入咗鏟斗弧內嘅礦即刻鎖喺鏟斗上（跟車郁，轉彎唔瀉，IG 式帶住走），
 	# 上限 = 鏟斗 tier 載量；超出嘅照物理推。賣礦／推入格／撞柱先會離開鏟斗。
