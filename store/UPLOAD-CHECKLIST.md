@@ -64,6 +64,39 @@ Play Console → 用戶自己嘅 Google 帳戶登入 → 畀 US$25 一次性開�
 - 上載去 **Testing → Closed testing → 建立新軌道**（唔好一開始就用 Production／
   Internal testing 之外嘅其他軌道，跟父 issue 決定嘅「封閉測試 14 日」流程）
 
+### 出新版點樣重新簽名（version code 2 或之後每次都要跟呢段）
+
+密碼特登唔入 `export_presets.cfg`（公開 repo，唔可以帶簽名密碼），改用三個
+`GODOT_ANDROID_KEYSTORE_RELEASE_*` env var 喺出 build 嗰刻臨時注入。出新版之前記得
+先喺 `project.godot`／`export_presets.cfg` 加版號（`version/code`／`version/name`），
+再行：
+
+```sh
+export JAVA_HOME=~/jdk17
+export ANDROID_HOME=~/Android/Sdk
+export ANDROID_SDK_ROOT=~/Android/Sdk
+export PATH="$JAVA_HOME/bin:$PATH"
+export GODOT_ANDROID_KEYSTORE_RELEASE_PATH="$HOME/keys/junkpile-upload-keystore.jks"
+export GODOT_ANDROID_KEYSTORE_RELEASE_USER="upload"
+export GODOT_ANDROID_KEYSTORE_RELEASE_PASSWORD="$(cat $HOME/keys/junkpile-upload-keystore.password.txt)"
+
+cd ~/junkpile-tycoon   # 或者當時嘅 issue worktree
+mkdir -p build
+~/godot/Godot_v4.7.2-stable_linux.x86_64 --headless --install-android-build-template \
+  --export-release "Android" build/junkpile-tycoon.aab
+
+# 核實簽名（憑證要同 ~/keys/junkpile-upload-keystore.jks 一致，唔可以每次唔同）：
+~/jdk17/bin/keytool -printcert -jarfile build/junkpile-tycoon.aab
+
+# 派畀用戶：
+cp build/junkpile-tycoon.aab ~/.cache/apk-serve/junkpile-tycoon-<version>-code<N>-<日期>.aab
+```
+
+`export_presets.cfg` 嘅 `gradle_build/export_format=1` 已經令輸出係 AAB（1=aab，
+0=apk）；`keystore/release*` 三個欄位刻意留空，全靠上面三個 env var 補上，Godot 4.7
+內建支援讀呢啲 env var（`--help` 有列），所以**絕對唔好將密碼寫返落
+`export_presets.cfg`**。
+
 ## 6. Closed testing
 
 - 跟 `store/CLOSED-TESTING-PLAN.md` 加齊 12+ 位測試者電郵
