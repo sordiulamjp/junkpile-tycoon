@@ -590,8 +590,9 @@ func _physics_process(delta: float) -> void:
 	_car_vel = _car_vel.move_toward(target, CAR_ACCEL * delta)
 	_car.velocity = SITE_BASIS * Vector3(_car_vel.x, _car_vel.y, 0.0)
 	_car.move_and_slide()
-	# 撞窄柱／斜面時 slide 法線帶 z 分量，歸零先重置 z，避免落後一幀反覆 depenetration
-	_car.velocity.z = 0.0
+	# 撞窄柱／斜面時 slide 法線帶高度分量，歸零先重置（世界 y 係高度，SITE_BASIS 將場地 z 映去世界 y），
+	# 避免落後一幀反覆 depenetration；世界 z 係場地前後方向，唔可以喺度清（會令 vcar 推唔郁礦）
+	_car.velocity.y = 0.0
 	_car.position.z = CAR_Z
 	# 保險：無論點撞都唔畀車被推出場地邊界（留返車身闊度嘅 margin）
 	_car.position.x = clampf(_car.position.x, FIELD_MIN.x + CAR_BOUND_MARGIN, FIELD_MAX.x - CAR_BOUND_MARGIN)
