@@ -35,9 +35,9 @@ const KICK_RADIUS := 0.9   # 車前方呢個半徑內嘅礦轉做真剛體，俾
 const KICK_LIFETIME := 1.0
 const KICK_BUDGET := 700   # 用戶 2026-09-21：疊高 20 層，一次瀉落嘅礦多咗
 # 礦碎 = 盒仔（非圓體，唔會滾走），正方晶格疊高：每格 CELL 闊，每層 LAYER_H 高
-const CHUNK := Vector3(0.062, 0.062, 0.05)
-const CELL := 0.068
-const LAYER_H := 0.052
+const CHUNK := Vector3(0.124, 0.124, 0.1) # 用戶 2026-09-21：礦太細粒，放大一倍
+const CELL := 0.136
+const LAYER_H := 0.104
 const RESPAWN_PER_SEC := 6.0
 
 var c: GameConstants
@@ -69,12 +69,12 @@ var _respawn_accum := 0.0
 # ── 有限資源（用戶 2026-09-17）：礦集中喺「礦脈」，靠升級逐步開啟 ──
 const HEAP_LAYERS := 20         # 用戶 2026-09-21：主堆疊高 20 層（≈1.04），要符合物理引擎
 const DEPOSITS := [ # [pos, radius, layers, unlock_cost, regen_secs, ore_cost]
-	[Vector2(0.0, 2.9), 1.0, HEAP_LAYERS, 0.0, 0.0, 0.0], # 中央主堆：錐形 20 層，玩家主要鏟呢度；由礦坑輸出補充
-	[Vector2(-4.8, 0.9), 0.72, 10, 600.0, 12.0, 40.0],    # 左門道中段（用戶 2026-09-17：貴啲）
-	[Vector2(4.4, 1.6), 0.72, 10, 2500.0, 12.0, 160.0],   # 右側
-	[Vector2(-4.8, -5.3), 0.72, 10, 8000.0, 10.0, 500.0], # 左門道起點
-	[Vector2(1.6, -5.4), 0.72, 10, 25000.0, 8.0, 1200.0], # 下方
-	[Vector2(3.2, -0.6), 0.72, 10, 70000.0, 6.0, 3000.0], # 爐前
+	[Vector2(0.0, 2.9), 1.4, HEAP_LAYERS, 0.0, 0.0, 0.0], # 中央主堆：錐形 20 層（≈2.1 高），玩家主要鏟呢度；由礦坑輸出補充
+	[Vector2(-4.8, 0.9), 0.9, 10, 600.0, 12.0, 40.0],     # 左門道中段（用戶 2026-09-17：貴啲）
+	[Vector2(4.4, 1.6), 0.9, 10, 2500.0, 12.0, 160.0],    # 右側
+	[Vector2(-4.8, -5.3), 0.9, 10, 8000.0, 10.0, 500.0],  # 左門道起點
+	[Vector2(1.6, -5.4), 0.9, 10, 25000.0, 8.0, 1200.0],  # 下方
+	[Vector2(3.2, -0.6), 0.9, 10, 70000.0, 6.0, 3000.0],  # 爐前
 ]
 var _dep_cols: Array = []         # per deposit: Array of column dicts {slots(bottom→top), cs, shape}
 var _dep_body: Array = []         # per deposit: StaticBody3D 承托剛體嘅晶格柱碰撞
@@ -665,7 +665,7 @@ func _physics_process(delta: float) -> void:
 		if lp.y > 0.0 and lp.y < 0.85 * _blade_w() and absf(lp.x) < 0.55 * _blade_w():
 			var w: float = _blade_w()
 			var local := Vector3(clampf(lp.x, -0.38 * w, 0.38 * w), clampf(lp.y, 0.08, 0.5 * w), 0.0)
-			local.z = ORE_RADIUS + float(carried / 14) * 0.065 - CAR_Z
+			local.z = LAYER_H * 0.5 + float(carried / 14) * LAYER_H - CAR_Z
 			nb.freeze_mode = RigidBody3D.FREEZE_MODE_KINEMATIC
 			nb.freeze = true
 			k["carried"] = true
@@ -919,7 +919,7 @@ func _rigidize_front_tick() -> void:
 			if s["active"] or s["gone"]:
 				continue
 			var p: Vector3 = s["pos"]
-			if Vector2(p.x, p.y).distance_squared_to(cp) > r2 or p.z > 0.42:
+			if Vector2(p.x, p.y).distance_squared_to(cp) > r2 or p.z > 0.45:
 				continue # 只轉鏟斗夠得到嘅高度（上面嘅由 _activate_slot 級聯帶落）
 			var lp: Vector3 = inv * p
 			if lp.y < -0.4 or lp.y > 1.2 * _blade_w() or absf(lp.x) > 0.75 * _blade_w():
