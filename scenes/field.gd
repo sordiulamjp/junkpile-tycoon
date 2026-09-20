@@ -348,8 +348,23 @@ func _build_ground() -> void:
 	floor_body.position = Vector3(mid.x, mid.y, -0.1)
 	_site.add_child(floor_body)
 
-func _rock(size: Vector3, tone: Color) -> Node3D:
+## 用戶 2026-09-20：全部物品都要有貼實模型嘅碰撞——一個 helper，任何裝飾件都掛一個 StaticBody3D
+func _static_box(parent: Node3D, size: Vector3, pos: Vector3, rot_z: float = 0.0) -> StaticBody3D:
+	var sb := StaticBody3D.new()
+	var col := CollisionShape3D.new()
+	var shape := BoxShape3D.new()
+	shape.size = size
+	col.shape = shape
+	sb.add_child(col)
+	sb.position = pos
+	sb.rotation.z = rot_z
+	parent.add_child(sb)
+	return sb
+
+func _rock(size: Vector3, tone: Color, solid: bool = true) -> Node3D:
 	var root := Node3D.new()
+	if solid:
+		_static_box(root, Vector3(size.x, size.y, size.z), Vector3(0.0, 0.0, size.z * 0.5 - 0.05))
 	var body := VisualFactory.make_flat_box(Vector3(size.x, size.y, size.z * 0.72), tone)
 	body.position = Vector3(0.0, 0.0, size.z * 0.36 - 0.05)
 	root.add_child(body)
@@ -533,6 +548,30 @@ func _rebuild_blade() -> void:
 	var w: float = _blade_w()
 	_blade_tier_built = mine.state.push_tier if mine != null else 0
 	var col_tint := Color("#F2C230").darkened(0.1) if w < 1.2 else (Color("#F2A030") if w < 1.6 else Color("#FF8C2A"))
+	# 用戶 2026-09-20：升級直接變模型——車房三軸都畫出嚟
+	var lv_cargo: int = int(_garage["cargo"])
+	var lv_speed: int = int(_garage["speed"])
+	var lv_price: int = int(_garage["price"])
+	var wing_h: float = 0.14 + 0.025 * float(lv_cargo)  # 載量 → 側翼越來越高 + 後擋板
+	if lv_cargo > 0:
+		var back := VisualFactory.make_metal_box(Vector3(0.62 * w, 0.03, wing_h * 0.8), Color("#F2C230").darkened(0.25))
+		back.position = Vector3(0.0, 0.03, 0.0)
+		_car_body.add_child(back)
+		_blade_nodes.append(back)
+	for e in range(mini(1 + lv_speed / 3, 4)): # 車速 → 排氣管一支支加，Lv3/6/9 各多一支
+		if lv_speed == 0:
+			break
+		var pipe := VisualFactory.make_low_poly_cylinder(0.025, 0.16 + 0.02 * float(e), Color("#8A8A94"), 6, 0.3)
+		pipe.rotation_degrees.x = 90.0
+		pipe.position = Vector3(-0.12 + float(e) * 0.08, -0.16, 0.16)
+		_car_body.add_child(pipe)
+		_blade_nodes.append(pipe)
+	if lv_price > 0: # 賣價 → 車頂金頂 + 越高級越金
+		var gold := Color("#F2C230").lerp(Color("#FFE27A"), float(lv_price) / 10.0)
+		var trim := VisualFactory.make_metal_box(Vector3(0.2, 0.18, 0.03), gold, gold, 0.3 + 0.1 * float(lv_price))
+		trim.position = Vector3(0.0, -0.04, 0.2)
+		_car_body.add_child(trim)
+		_blade_nodes.append(trim)
 	for i in range(5):
 		var a: float = (float(i) - 2.0) * 0.32
 		var seg := VisualFactory.make_metal_box(Vector3(0.16 * w, 0.04, 0.16 + 0.05 * (w - 1.0)), col_tint)
@@ -552,15 +591,15 @@ func _rebuild_blade() -> void:
 		_blade_nodes.append(bc)
 	# 側翼：鏟斗兩端向後延伸嘅矮牆，礦唔會由兩側瀉走（視覺 + 碰撞）
 	for sx in [-1.0, 1.0]:
-		var wing := VisualFactory.make_metal_box(Vector3(0.04, 0.26, 0.14), Color("#F2C230").darkened(0.2))
-		wing.position = Vector3(sx * 0.38 * w, 0.14, 0.0)
+		var wing := VisualFactory.make_metal_box(Vector3(0.04, 0.26, wing_h), Color("#F2C230").darkened(0.2))
+		wing.position = Vector3(sx * 0.38 * w, 0.14, wing_h * 0.5 - 0.07)
 		_car_body.add_child(wing)
 		_blade_nodes.append(wing)
 		var wc := CollisionShape3D.new()
 		var ws := BoxShape3D.new()
-		ws.size = Vector3(0.05, 0.28, 0.22)
+		ws.size = Vector3(0.05, 0.28, 0.22 + wing_h - 0.14)
 		wc.shape = ws
-		wc.position = Vector3(sx * 0.38 * w, 0.12, -0.03)
+		wc.position = Vector3(sx * 0.38 * w, 0.12, -0.03 + (wing_h - 0.14) * 0.5)
 		_car.add_child(wc)
 		_blade_nodes.append(wc)
 
@@ -877,7 +916,7 @@ func _build_props() -> void:
 	_site.add_child(props)
 	var wall_c := Color(MineConstants.PALETTE["wall_dark"])
 	# 大石：空位散落
-	for pos in [Vector2(-2.9, -2.4), Vector2(-2.4, 1.2), Vector2(-1.2, -6.2), Vector2(6.0, 4.6), Vector2(-6.2, 4.6), Vector2(0.8, -2.9), Vector2(-0.4, -3.6)]: # 東牆讓路俾走道，石頭移入場中空位
+	for pos in [Vector2(-2.2, -1.0), Vector2(-2.4, 1.2), Vector2(0.4, -4.9), Vector2(6.0, 4.6), Vector2(-6.2, 4.6), Vector2(0.8, -2.9), Vector2(-0.2, -4.6)]: # 有碰撞之後：全部避開拖車仔路線同車房墊
 		var rk := _rock(Vector3(rng.randf_range(0.5, 0.9), rng.randf_range(0.4, 0.7), rng.randf_range(0.45, 0.8)), wall_c.lightened(rng.randf_range(0.0, 0.2)))
 		rk.position = Vector3(pos.x, pos.y, 0.0)
 		rk.rotation.z = rng.randf_range(0.0, TAU)
@@ -899,12 +938,14 @@ func _build_props() -> void:
 				wheel.rotation_degrees.y = 90.0
 				wheel.position = Vector3(wx, wy, 0.1)
 				wreck.add_child(wheel)
+		_static_box(wreck, Vector3(0.56, 0.9, 0.55), Vector3(0.0, 0.0, 0.27))
 		props.add_child(wreck)
 	# 燈柱：礦坑兩側、熔爐旁
 	for pos in [Vector2(-2.4, 4.6), Vector2(2.4, 4.6), Vector2(6.2, -5.6), Vector2(-6.5, -3.6)]:
 		var post := VisualFactory.make_flat_box(Vector3(0.08, 0.08, 1.1), Color("#3A3140"))
 		post.position = Vector3(pos.x, pos.y, 0.55)
 		props.add_child(post)
+		_static_box(props, Vector3(0.1, 0.1, 1.1), Vector3(pos.x, pos.y, 0.55))
 		var lamp := VisualFactory.make_lamp(0.08, Color("#FFD27A"), 1.6)
 		lamp.position = Vector3(pos.x, pos.y, 1.15)
 		props.add_child(lamp)
@@ -915,18 +956,20 @@ func _build_props() -> void:
 		light.position = Vector3(pos.x, pos.y, 1.1)
 		props.add_child(light)
 	# 油桶堆、輪胎堆
-	for pos in [Vector2(-0.3, -6.75), Vector2(-6.2, 2.2)]:
+	for pos in [Vector2(1.4, -3.9), Vector2(-6.2, 2.2)]:
 		for i in range(4):
 			var b := VisualFactory.make_low_poly_cylinder(0.11, 0.24, Color("#2E5C9E") if i % 2 == 0 else Color("#B8894A"), 8, 0.35)
 			b.rotation_degrees.x = 90.0
 			b.position = Vector3(pos.x + float(i % 2) * 0.24, pos.y + float(i / 2) * 0.24, 0.12)
 			props.add_child(b)
+		_static_box(props, Vector3(0.46, 0.46, 0.24), Vector3(pos.x + 0.12, pos.y + 0.12, 0.12))
 	for pos in [Vector2(-3.4, -6.4), Vector2(3.6, 6.6)]:
 		for i in range(3):
 			var t := VisualFactory.make_low_poly_cylinder(0.16, 0.08, Color("#1E1E22"), 10, 0.1)
 			t.rotation_degrees.x = 90.0
 			t.position = Vector3(pos.x + float(i) * 0.05, pos.y, 0.04 + float(i) * 0.08)
 			props.add_child(t)
+		_static_box(props, Vector3(0.36, 0.36, 0.26), Vector3(pos.x + 0.05, pos.y, 0.13))
 
 func _build_deposit_pads() -> void:
 	for di in range(1, DEPOSITS.size()):
@@ -949,6 +992,7 @@ func _build_deposit_pads() -> void:
 			ob.position = Vector3(rng.randf_range(-0.8, 0.8), rng.randf_range(-0.5, 0.5), ORE_RADIUS)
 			rub.add_child(ob)
 		rub.visible = not _dep_unlocked[di]
+		rub.process_mode = Node.PROCESS_MODE_INHERIT if rub.visible else Node.PROCESS_MODE_DISABLED
 		_vein_rubble.append(rub)
 		var p := UnlockPanel.new()
 		p.name = "DepositPad%d" % di
@@ -1027,6 +1071,7 @@ func _on_deposit_tap(region_id: String, cost: float) -> void:
 	(_dep_panels[di - 1] as UnlockPanel).mark_unlocked()
 	if di - 1 < _vein_rubble.size():
 		(_vein_rubble[di - 1] as Node3D).visible = false
+		(_vein_rubble[di - 1] as Node3D).process_mode = Node.PROCESS_MODE_DISABLED # 礦床石頭嘅碰撞一齊收
 	_popup_at(Vector3((DEPOSITS[di][0] as Vector2).x, (DEPOSITS[di][0] as Vector2).y, 0.5), "礦脈開啟！", Color(1.0, 0.85, 0.3))
 	_refresh_pad_visibility()
 	if di - 1 < _hire_pads.size():
@@ -1189,6 +1234,7 @@ func _build_gates() -> void:
 			post.rotation_degrees.x = 90.0
 			post.position = Vector3(px, 0.0, 0.275)
 			root.add_child(post)
+			_static_box(root, Vector3(0.08, 0.08, 0.55), Vector3(px, 0.0, 0.275)) # 柱係實嘅，車同礦都撞得到
 			var cap := VisualFactory.make_low_poly_cylinder(0.05, 0.05, Color("#FF3B3B") if laser else Color("#FF5FA8"), 8, 0.3)
 			cap.rotation_degrees.x = 90.0
 			cap.position = Vector3(px, 0.0, 0.57)
@@ -1284,6 +1330,7 @@ func _build_ingot_rack() -> void:
 	var base := VisualFactory.make_flat_box(Vector3(1.0, 0.7, 0.06), Color("#3A3140"))
 	base.position = Vector3(0.0, 0.0, 0.03)
 	_ingot_root.add_child(base)
+	_static_box(_ingot_root, Vector3(1.0, 0.7, 0.3), Vector3(0.0, 0.0, 0.15))
 
 func _add_ingots(value: float) -> void:
 	var n: int = clampi(int(value / 150.0), 1, 6)
@@ -2105,7 +2152,9 @@ func _manager_tick(delta: float) -> void:
 	for axis in GaragePanel.AXES: # 車房三軸都由經理代買（最平嗰項先）
 		var gl: int = int(_garage[axis])
 		if gl < GaragePanel.MAX_LEVEL:
-			options.append([GaragePanel.cost_for(axis, gl), func() -> void: _garage[axis] = gl + 1])
+			options.append([GaragePanel.cost_for(axis, gl), func() -> void:
+				_garage[axis] = gl + 1
+				_rebuild_blade()])
 	if options.is_empty():
 		return
 	options.sort_custom(func(a, b): return a[0] < b[0])
@@ -2234,6 +2283,7 @@ func _on_garage_buy(axis: String) -> void:
 		return
 	state.cash -= cst
 	_garage[axis] = lvl + 1
+	_rebuild_blade() # 升級即變模型
 	var txt := ""
 	match axis:
 		"speed": txt = "車速 ↑ ×%.2f" % _garage_speed_mult()
@@ -2357,6 +2407,7 @@ func _build_drill_visual(di: int) -> void:
 	var tower := VisualFactory.make_metal_box(Vector3(0.22, 0.22, 0.7), Color("#5A5560"))
 	tower.position = Vector3(0.0, 0.0, 0.45)
 	root.add_child(tower)
+	_static_box(root, Vector3(0.5, 0.36, 0.8), Vector3(0.0, 0.0, 0.4))
 	var arm := VisualFactory.make_metal_box(Vector3(0.1, 0.6, 0.08), Color("#F2C230"))
 	arm.position = Vector3(0.0, -0.3, 0.78)
 	root.add_child(arm)
@@ -2420,6 +2471,7 @@ func _build_walkway() -> void:
 		var wall := VisualFactory.make_metal_box(Vector3(0.9, 0.06, 0.16), Color("#5A5560"))
 		wall.position = off
 		hop.add_child(wall)
+		_static_box(hop, Vector3(0.9, 0.06, 0.16), off)
 	var arrow := VisualFactory.make_flat_box(Vector3(0.5, 0.08, 0.01), Color.WHITE)
 	arrow.position = Vector3(-0.1, 0.0, 0.035)
 	hop.add_child(arrow)

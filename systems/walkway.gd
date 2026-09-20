@@ -38,6 +38,15 @@ func _build_visual() -> void:
 			var rail := VisualFactory.make_metal_box(Vector3(0.06, len + BELT_W, 0.12), Color("#5A5560"))
 			rail.position = Vector3(sx * (BELT_W * 0.5 + 0.03), 0.0, 0.06)
 			seg.add_child(rail)
+		# 用戶 2026-09-20：整條帶係實體——車撞到會停，礦唔會滾上帶
+		var sb := StaticBody3D.new()
+		var col := CollisionShape3D.new()
+		var shape := BoxShape3D.new()
+		shape.size = Vector3(BELT_W + 0.12, len + BELT_W, 0.12)
+		col.shape = shape
+		col.position = Vector3(0.0, 0.0, 0.06)
+		sb.add_child(col)
+		seg.add_child(sb)
 		var n: int = int(len / 0.4)
 		for k in range(n):
 			var chev := VisualFactory.make_flat_box(Vector3(BELT_W * 0.7, 0.05, 0.012), Color("#F2C230"))

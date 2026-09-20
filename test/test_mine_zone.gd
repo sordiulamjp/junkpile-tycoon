@@ -202,3 +202,31 @@ func test_mine_zone_progress_round_trips_through_save_and_reload() -> void:
 	assert_eq(reloaded.state.push_tier, 1)
 	assert_eq(reloaded.state.cart_level, 2)
 	assert_eq(reloaded.state.warehouse_level, 2)
+
+
+# ── 用戶 2026-09-20：升級直接變模型 ──
+
+func test_cart_and_warehouse_and_miners_change_model_with_levels() -> void:
+	var zone := MineZone.new()
+	add_child_autofree(zone)
+	zone.setup(GameState.new(GameConstants.new()), FrenzyState.new(GameConstants.new()), {})
+	zone.tick(0.01)
+	var cart_scale0: float = zone._cart_mesh.scale.x
+	var crates0: int = zone._wh_crates.size()
+	var miners0 := 0
+	for c in zone._layer_root.get_children():
+		if c.name.begins_with("LayerMiner0_"):
+			miners0 += 1
+	zone.state.cart_level += 1
+	zone.state.warehouse_level += 1
+	zone.state.layer_level[0] += 1
+	zone.tick(0.01)
+	await wait_frames(2)
+	assert_gt(zone._cart_mesh.scale.x, cart_scale0, "礦車升級變大架")
+	assert_gt(zone._wh_crates.size(), crates0, "倉庫升級多幾個箱")
+	var miners1 := 0
+	for c in zone._layer_root.get_children():
+		if c.name.begins_with("LayerMiner0_"):
+			miners1 += 1
+	assert_gt(miners1, miners0, "礦層升級多一個礦工")
+	assert_gt(zone.get_node("Warehouse").get_parent().get_children().filter(func(n): return n is StaticBody3D).size(), 0, "倉庫有實體碰撞")

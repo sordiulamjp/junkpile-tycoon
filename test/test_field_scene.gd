@@ -537,3 +537,54 @@ func test_ai_route_from_right_side_goes_down_the_east_side() -> void:
 	field._ai_steer(0.1)
 	assert_eq(field._ai_mode, "furnace")
 	assert_gt(field._ai_target.x, 2.5, "喺右邊礦脈裝滿，第一個航點行東側，唔穿爐前礦脈")
+
+# ── 用戶 2026-09-20：全部物品實體碰撞 + 升級直接變模型 ──
+
+func _count_bodies(root: Node, cls: String) -> int:
+	var n := 0
+	for c in root.get_children():
+		if c.is_class(cls):
+			n += 1
+		n += _count_bodies(c, cls)
+	return n
+
+func test_props_rubble_gates_rack_all_have_static_colliders() -> void:
+	var field = _load_field()
+	assert_gt(_count_bodies(field._site.get_node("Props"), "StaticBody3D"), 12, "石／廢車／燈柱／油桶／輪胎全部有 StaticBody3D")
+	assert_gt(_count_bodies(field._vein_rubble[0], "StaticBody3D"), 0, "礦床石頭係實體")
+	assert_eq(field._vein_rubble[0].process_mode, Node.PROCESS_MODE_INHERIT)
+	assert_gt(_count_bodies(field._site.get_node("Gate_x2"), "StaticBody3D"), 1, "倍數門兩支柱都係實體")
+	assert_gt(_count_bodies(field._ingot_root, "StaticBody3D"), 0)
+	field.state.cash = 1e9
+	for _p in field._dep_panels: _p.ore_fed = _p.ore_cost
+	field._on_deposit_tap("deposit1", field.DEPOSITS[1][3])
+	assert_eq(field._vein_rubble[0].process_mode, Node.PROCESS_MODE_DISABLED, "開咗礦脈，礦床石頭連碰撞一齊收")
+
+func test_hauler_is_solid_and_changes_model_on_level_up() -> void:
+	var field = _load_field()
+	field.state.cash = 1e9
+	for _p in field._dep_panels: _p.ore_fed = _p.ore_cost
+	field._on_deposit_tap("deposit1", field.DEPOSITS[1][3])
+	field._on_hire_tap("hire1", field._hauler_cost(1, 0))
+	var h: Hauler = field._haulers[1]
+	assert_true(h._body is AnimatableBody3D, "拖車仔車身係 AnimatableBody3D")
+	var wheels_lv1: int = _count_bodies(h, "MeshInstance3D")
+	h.set_level(3)
+	await wait_frames(2)
+	assert_gt(_count_bodies(h, "MeshInstance3D"), wheels_lv1, "Lv3 三軸：模型件數多過 Lv1")
+
+func test_garage_levels_change_car_model() -> void:
+	var field = _load_field()
+	var parts0: int = field._blade_nodes.size()
+	field.state.cash = 1e9
+	field._on_garage_buy("speed"); field._on_garage_buy("speed"); field._on_garage_buy("speed")
+	field._on_garage_buy("cargo")
+	field._on_garage_buy("price")
+	assert_gt(field._blade_nodes.size(), parts0, "車速／載量／賣價升級後車模型多咗零件")
+
+func test_walkway_segments_are_solid() -> void:
+	var field = _load_field()
+	field.state.cash = 1e9
+	field._walk_pad.ore_fed = field._walk_pad.ore_cost
+	field._on_walkway_tap("walkway", field.WALKWAY_COST)
+	assert_eq(_count_bodies(field._walkway, "StaticBody3D"), field.WALKWAY_PATH.size() - 1, "每段帶一個 StaticBody3D")

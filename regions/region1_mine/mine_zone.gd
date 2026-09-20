@@ -121,11 +121,55 @@ func to_save_dict() -> Dictionary:
 
 # ══════════════════════ 每幀模擬 ══════════════════════
 
+var _seen_cart_level := -1
+var _seen_wh_level := -1
+var _seen_layer_levels: Array = []
+var _wh_crates: Array = []
+
 func tick(delta: float) -> void:
 	var result := state.tick(delta)
 	_game_state.cash += float(result["cash_gain"])
 	_animate_cart(delta)
-	panel.refresh() # 面板自己 visible=false 就即刻 return，收埋嗰陣冇額外成本
+	_watch_model_upgrades()
+	if panel != null:
+		panel.refresh() # 面板自己 visible=false 就即刻 return，收埋嗰陣冇額外成本
+
+## 用戶 2026-09-20：升級直接變模型——礦車越大架、倉庫頂疊多啲箱、礦層每級多一個礦工（最多 5）
+func _watch_model_upgrades() -> void:
+	if state.cart_level != _seen_cart_level:
+		_seen_cart_level = state.cart_level
+		if _cart_mesh != null:
+			_cart_mesh.scale = Vector3.ONE * (1.0 + 0.18 * float(state.cart_level - 1))
+	if state.warehouse_level != _seen_wh_level:
+		_seen_wh_level = state.warehouse_level
+		_rebuild_wh_crates()
+	if _seen_layer_levels != state.layer_level:
+		var first: bool = _seen_layer_levels.is_empty()
+		_seen_layer_levels = state.layer_level.duplicate()
+		if not first:
+			_rebuild_layers()
+
+func _miners_for_level(lvl: int) -> int:
+	return clampi(1 + lvl, 1, 5)
+
+func _rebuild_wh_crates() -> void:
+	for c in _wh_crates:
+		if is_instance_valid(c):
+			c.queue_free()
+	_wh_crates.clear()
+	var base := Vector3(LAYER_WIDTH * 0.5 + 0.65, -0.25, 0.25)
+	var n: int = clampi(state.warehouse_level, 1, 6)
+	for i in range(n):
+		var col: int = i % 3
+		var row: int = i / 3
+		var crate := VisualFactory.make_flat_box(Vector3(0.22, 0.22, 0.18), Color("#B8894A"))
+		crate.position = base + Vector3(-0.24 + float(col) * 0.24, 0.0, 0.4 + float(row) * 0.19)
+		add_child(crate)
+		_wh_crates.append(crate)
+		var band := VisualFactory.make_flat_box(Vector3(0.24, 0.06, 0.2), Color("#6B4A24"))
+		band.position = crate.position
+		add_child(band)
+		_wh_crates.append(band)
 
 func _animate_miner(node: Node3D, phase: float) -> void:
 	var base_z := node.position.z
@@ -139,6 +183,10 @@ func _animate_miner(node: Node3D, phase: float) -> void:
 	sw.tween_interval(phase)
 	sw.tween_property(node, "rotation:x", deg_to_rad(90.0) + 0.35, 0.18).set_trans(Tween.TRANS_SINE)
 	sw.tween_property(node, "rotation:x", deg_to_rad(90.0), 0.24).set_trans(Tween.TRANS_SINE)
+	# 礦工被 _rebuild_layers() 拆走嗰陣先殺 tween，否則 loop tween 對住已 free 嘅節點會報 Infinite loop
+	node.tree_exiting.connect(func() -> void:
+		tw.kill()
+		sw.kill())
 
 func _animate_cart(delta: float) -> void:
 	_cart_anim_t += delta * (0.6 + 0.12 * float(state.cart_level - 1)) # 升級礦車即見到行快咗
@@ -186,6 +234,7 @@ func _build_back_wall() -> void:
 ## 成本可以忽略）。
 func _rebuild_layers() -> void:
 	for child in _layer_root.get_children():
+		child.name = "_old_" + child.name # 讓出名稱：新起嘅同名節點先唔會被改名（LayerMiner0_0 → @Node3D@80）
 		child.queue_free()
 	_layer_unlock_panels.clear()
 	for idx in range(MineConstants.LAYER_COUNT):
@@ -218,10 +267,13 @@ func _build_layer_terrace(idx: int) -> void:
 	if unlocked:
 		# issue：「每層：自己嘅礦工（層 1 開場 1 隻）」。
 		# Analyst polish：每層 3 個礦工沿前緣分佈，面向岩壁揮鎬（tween）
-		for m in range(3):
+		var n_m: int = _miners_for_level(state.layer_level[idx])
+		for m in range(n_m):
 			var miner := VisualFactory.make_miner()
 			miner.name = "LayerMiner%d_%d" % [idx, m]
-			miner.position = _layer_center(idx) + Vector3(-0.7 + float(m) * 0.7, -MineConstants.LAYER_DEPTH_STEP * 0.25, box_size.z * 0.5 + 0.02)
+			var spread: float = LAYER_WIDTH * 0.8
+			var mx: float = 0.0 if n_m == 1 else -spread * 0.5 + spread * float(m) / float(n_m - 1)
+			miner.position = _layer_center(idx) + Vector3(mx, -MineConstants.LAYER_DEPTH_STEP * 0.25, box_size.z * 0.5 + 0.02)
 			miner.rotation_degrees.x = 90.0
 			_layer_root.add_child(miner)
 			_animate_miner(miner, float(m) * 0.13)
@@ -273,6 +325,14 @@ func _build_rail_and_cart() -> void:
 	_cart_mesh.name = "Cart"
 	_cart_mesh.position = Vector3(LAYER_WIDTH * 0.5 + 0.2, 0.0, 0.12)
 	add_child(_cart_mesh)
+	var cb := AnimatableBody3D.new() # 用戶 2026-09-20：礦車係實體
+	cb.sync_to_physics = true
+	var cc := CollisionShape3D.new()
+	var cs := BoxShape3D.new()
+	cs.size = Vector3(0.22, 0.16, 0.14)
+	cc.shape = cs
+	cb.add_child(cc)
+	_cart_mesh.add_child(cb)
 
 func _build_warehouse() -> void:
 	var wh := VisualFactory.make_flat_box(Vector3(0.8, 0.55, 0.5), Color(PALETTE["wall_light"]).darkened(0.15))
@@ -285,13 +345,15 @@ func _build_warehouse() -> void:
 	roof.position = wh.position + Vector3(0.0, 0.0, 0.28)
 	add_child(roof)
 
-	# 用戶 2026-09-14：圖示代替文字——屋頂放一個木箱圖示 + 正面門
-	var crate := VisualFactory.make_flat_box(Vector3(0.24, 0.24, 0.2), Color("#B8894A"))
-	crate.position = wh.position + Vector3(0.0, 0.0, 0.41)
-	add_child(crate)
-	var band := VisualFactory.make_flat_box(Vector3(0.26, 0.06, 0.22), Color("#6B4A24"))
-	band.position = crate.position
-	add_child(band)
+	var whb := StaticBody3D.new() # 用戶 2026-09-20：倉庫係實體
+	var whc := CollisionShape3D.new()
+	var whs := BoxShape3D.new()
+	whs.size = Vector3(0.9, 0.65, 0.6)
+	whc.shape = whs
+	whb.add_child(whc)
+	whb.position = wh.position + Vector3(0.0, 0.0, 0.05)
+	add_child(whb)
+	# 屋頂木箱由 _rebuild_wh_crates() 按倉庫等級疊
 	var door := VisualFactory.make_flat_box(Vector3(0.3, 0.02, 0.32), Color(PALETTE["wall_dark"]).darkened(0.3))
 	door.position = wh.position + Vector3(0.0, -0.28, -0.08)
 	add_child(door)

@@ -45,25 +45,49 @@ func set_level(l: int) -> void:
 	level = clampi(l, 1, MAX_LEVEL)
 	speed = level_speed(level)
 	cap = level_cap(level)
+	if _body != null:
+		_build_visual() # 用戶 2026-09-20：升級直接變模型
 
+## 車身跟等級變：Lv1 細貨斗 → 每級斗長啲、Lv3 起三軸、Lv5 紅色重型；碰撞體同步變
 func _build_visual() -> void:
-	_body = Node3D.new()
+	if _body != null:
+		_body.queue_free()
+		var old_lbl := get_node_or_null("Lvl")
+		if old_lbl != null:
+			old_lbl.queue_free()
+		_cargo_nodes.clear()
+	_body = AnimatableBody3D.new() # 實體：車、礦都撞得到，跟 tween 郁
+	(_body as AnimatableBody3D).sync_to_physics = true
 	add_child(_body)
-	var chassis := VisualFactory.make_metal_box(Vector3(0.24, 0.36, 0.1), Color("#D9773A"))
+	var bed_len: float = 0.3 + 0.06 * float(level - 1)
+	var body_len: float = 0.36 + 0.06 * float(level - 1)
+	var tint: Color = Color("#D9773A") if level < 5 else Color("#C8342A")
+	var chassis := VisualFactory.make_metal_box(Vector3(0.24, body_len, 0.1), tint)
 	chassis.position = Vector3(0.0, 0.0, 0.1)
 	_body.add_child(chassis)
-	var cab := VisualFactory.make_metal_box(Vector3(0.2, 0.12, 0.12), Color("#F2A35A"))
-	cab.position = Vector3(0.0, 0.14, 0.2)
+	var cab := VisualFactory.make_metal_box(Vector3(0.2, 0.12, 0.12 + 0.01 * float(level)), tint.lightened(0.25))
+	cab.position = Vector3(0.0, body_len * 0.5 - 0.06, 0.2)
 	_body.add_child(cab)
+	for sx in [-0.11, 0.11]: # 貨斗兩側矮欄
+		var rail := VisualFactory.make_metal_box(Vector3(0.02, bed_len, 0.06), tint.darkened(0.3))
+		rail.position = Vector3(sx, -body_len * 0.5 + bed_len * 0.5, 0.18)
+		_body.add_child(rail)
 	_bed = Node3D.new()
-	_bed.position = Vector3(0.0, -0.06, 0.15)
+	_bed.position = Vector3(0.0, -body_len * 0.5 + bed_len * 0.5, 0.15)
 	_body.add_child(_bed)
+	var axles: Array = [-0.12, 0.12] if level < 3 else [-0.14, 0.0, 0.14]
 	for sx in [-0.13, 0.13]:
-		for sy in [-0.12, 0.12]:
+		for sy in axles:
 			var w := VisualFactory.make_low_poly_cylinder(0.05, 0.05, Color("#1E1E22"), 8, 0.1)
 			w.rotation_degrees.y = 90.0
-			w.position = Vector3(sx, sy, 0.05)
+			w.position = Vector3(sx, sy * body_len / 0.36, 0.05)
 			_body.add_child(w)
+	var col := CollisionShape3D.new()
+	var shape := BoxShape3D.new()
+	shape.size = Vector3(0.28, body_len, 0.3)
+	col.shape = shape
+	col.position = Vector3(0.0, 0.0, 0.15)
+	_body.add_child(col)
 	var lvl := Label3D.new()
 	lvl.name = "Lvl"
 	lvl.text = "Lv%d" % level
