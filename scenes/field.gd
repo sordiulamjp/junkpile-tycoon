@@ -554,8 +554,8 @@ func _rebuild_blade() -> void:
 	var lv_price: int = int(_garage["price"])
 	var wing_h: float = 0.14 + 0.025 * float(lv_cargo)  # 載量 → 側翼越來越高 + 後擋板
 	if lv_cargo > 0:
-		var back := VisualFactory.make_metal_box(Vector3(0.62 * w, 0.03, wing_h * 0.8), Color("#F2C230").darkened(0.25))
-		back.position = Vector3(0.0, 0.03, 0.0)
+		var back := VisualFactory.make_metal_box(Vector3(0.3 * w, 0.03, wing_h * 0.6), Color("#F2C230").darkened(0.3))
+		back.position = Vector3(0.0, 0.17, wing_h * 0.3 - 0.07) # 貼住車頭嘅矮擋板，唔會伸出車身兩側
 		_car_body.add_child(back)
 		_blade_nodes.append(back)
 	for e in range(mini(1 + lv_speed / 3, 4)): # 車速 → 排氣管一支支加，Lv3/6/9 各多一支
@@ -2105,7 +2105,9 @@ func _ai_steer(delta: float) -> Vector2:
 		_ai_stuck_t += delta
 		if _ai_stuck_t > 2.0:
 			_ai_stuck_t = 0.0
-			_ai_target = pos + Vector2(rng.randf_range(-1.5, 1.5), rng.randf_range(-1.5, 1.5))
+			# 撞住實物（石／礦床／拖車仔）：先向後退 1.2，唔係亂跳一個方向
+			var away: Vector2 = (pos - _ai_target).normalized() if _ai_target != Vector2.INF and pos.distance_to(_ai_target) > 0.05 else Vector2(rng.randf_range(-1.0, 1.0), rng.randf_range(-1.0, 1.0)).normalized()
+			_ai_target = pos + away * 1.2
 			_ai_target.x = clampf(_ai_target.x, FIELD_MIN.x + 0.5, FIELD_MAX.x - 0.5)
 			_ai_target.y = clampf(_ai_target.y, FIELD_MIN.y + 0.5, MINE_POS.y - 0.6)
 	else:
