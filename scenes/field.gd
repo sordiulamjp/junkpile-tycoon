@@ -773,7 +773,7 @@ func _build_ore_pool() -> void:
 		specs.append(cols)
 	var next_idx := {"silver": 0, "gold": 0}
 	for tier: String in tiers.keys():
-		var count: int = int(ceil(float(total) * float(tiers[tier][0]))) + 64
+		var count: int = int(ceil(float(total) * (float(tiers[tier][0]) + 0.04))) + 64 # 15% 係隨機，留 4% + 64 粒餘量免爆 index
 		var mmi := VisualFactory.make_ore_chunk_multimesh(CHUNK, tiers[tier][1], 0.35 if tier == "gold" else 0.0, count)
 		mmi.name = "Pool_%s" % tier
 		_site.add_child(mmi)
@@ -811,7 +811,7 @@ func _build_ore_pool() -> void:
 				var idx: int = next_idx[tier]
 				next_idx[tier] = idx + 1
 				var pos := Vector3(spec[0] + rng.randf_range(-0.004, 0.004), spec[1] + rng.randf_range(-0.004, 0.004), LAYER_H * 0.5 + float(k) * LAYER_H)
-				var slot := {"tier": tier, "idx": idx, "pos": pos, "scale": sc, "rot": rng.randf_range(-0.3, 0.3), "active": false, "gone": k >= filled, "dep": di, "col": col, "layer": k}
+				var slot := {"tier": tier, "idx": idx, "pos": pos, "home": pos, "scale": sc, "rot": rng.randf_range(-0.3, 0.3), "active": false, "gone": k >= filled, "loose": false, "dep": di, "col": col, "layer": k}
 				if not slot["gone"]:
 					_show_slot(slot)
 				_slots.append(slot)
@@ -826,11 +826,15 @@ func _build_ore_pool() -> void:
 		_dep_regen_t.append(0.0)
 	_build_deposit_pads()
 
+## 槽位而家係咪真係企喺自己晶格位（唔係隱藏、唔係剛體、唔係散落咗喺地面）
+func _in_lattice(s: Dictionary) -> bool:
+	return not s["gone"] and not s["active"] and not s.get("loose", false)
+
 ## 晶格柱碰撞：柱入面由底數上去連續有礦嘅層數 = 碰撞高度；剛體礦就靠呢個承托，唔會浮空／穿地
 func _column_refresh(col: Dictionary) -> void:
 	var n := 0
 	for s: Dictionary in col["slots"]:
-		if s["gone"] or s["active"]:
+		if not _in_lattice(s):
 			break
 		n += 1
 	var cs: CollisionShape3D = col["cs"]
@@ -850,7 +854,7 @@ func _take_top_slot(di: int, near: Vector2 = Vector2.INF, radius: float = INF) -
 			continue
 		var top: Dictionary = {}
 		for s: Dictionary in col["slots"]:
-			if s["gone"] or s["active"]:
+			if not _in_lattice(s):
 				break
 			top = s
 		if top.is_empty():
@@ -875,7 +879,7 @@ func _slot_supported(s: Dictionary) -> bool:
 	if k == 0:
 		return true
 	var below: Dictionary = (s["col"]["slots"] as Array)[k - 1]
-	return not below["gone"] and not below["active"]
+	return _in_lattice(below)
 
 func _clear_ore_around(center: Vector2, radius: float) -> void:
 	var r2 := radius * radius
@@ -1258,8 +1262,8 @@ func _sell_bucket_ore() -> void:
 		var s: Dictionary = k["slot"]
 		var value: float = mine.state.c.ore_value(s["tier"]) * mult * fmult * float(node.get_meta("mult", 1.0))
 		total += value
-		s["gone"] = true
 		s["active"] = false
+		_slot_gone(s)
 		_kicked.erase(k)
 		node.freeze = true
 		node.collision_layer = 0
@@ -1453,9 +1457,12 @@ func _activate_slot(s: Dictionary) -> int:
 		var col: Dictionary = s["col"]
 		var k: int = int(s["layer"])
 		var slots: Array = col["slots"]
+		if s.get("loose", false): # 散落地面嘅礦：淨係自己轉，唔關條柱事
+			_activate_one(s)
+			return 1
 		for i in range(k, slots.size()):
 			var o: Dictionary = slots[i]
-			if o["gone"] or o["active"]:
+			if not _in_lattice(o):
 				break
 			_activate_one(o)
 			n += 1
@@ -1539,12 +1546,19 @@ func _consume_ore_body(body: RigidBody3D, free_node: bool = true) -> void:
 			_kicked.erase(k)
 			var s: Dictionary = k["slot"]
 			s["active"] = false
-			s["gone"] = true
-			if s.get("col") != null:
-				_column_refresh(s["col"])
+			_slot_gone(s)
 			break
 	if free_node:
 		body.queue_free()
+
+## 礦用咗（賣／推入格／出界）：返回自己晶格位等補礦
+func _slot_gone(s: Dictionary) -> void:
+	s["gone"] = true
+	s["loose"] = false
+	if s.has("home"):
+		s["pos"] = s["home"]
+	if s.get("col") != null:
+		_column_refresh(s["col"])
 
 func _settle_kick(k: Dictionary) -> void:
 	_kicked.erase(k)
@@ -1556,10 +1570,10 @@ func _settle_kick(k: Dictionary) -> void:
 		if p.x > FIELD_MIN.x and p.x < FIELD_MAX.x and p.y > FIELD_MIN.y and p.y < FIELD_MAX.y:
 			s["pos"] = Vector3(p.x, p.y, LAYER_H * 0.5 * float(s["scale"]))
 			s["rot"] = node.rotation.z
-			s["col"] = null # 散落地面嘅礦脫離晶格，唔再承托其他礦
+			s["loose"] = true # 散落地面：脫離晶格，唔承托其他礦；賣咗／推入格之後個晶格位先可以再補
 			_show_slot(s)
 		else:
-			s["gone"] = true
+			_slot_gone(s)
 		node.queue_free()
 
 func _on_sell_area_entered(body: Node3D) -> void:
@@ -1580,7 +1594,7 @@ func _on_sell_area_entered(body: Node3D) -> void:
 	_add_ingots(value)
 	state.cash += value
 	s["active"] = false
-	s["gone"] = true
+	_slot_gone(s)
 	for k: Dictionary in _kicked:
 		if k["node"] == body:
 			_kicked.erase(k)
@@ -2427,7 +2441,7 @@ func _spawn_hauler(di: int) -> void:
 func _hauler_load(h: Hauler, di: int) -> Array:
 	var got: Array = []
 	while got.size() < h.cap:
-		var s: Dictionary = _take_top_slot(di)
+		var s: Dictionary = _take_top_slot(di, DEPOSITS[di][0], INF) # 由堆頂（最近中心嘅柱）執落嚟
 		if s.is_empty():
 			break
 		got.append(s["tier"])

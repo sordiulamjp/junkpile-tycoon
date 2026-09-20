@@ -637,3 +637,24 @@ func test_refill_only_reveals_supported_slots() -> void:
 		assert_true(field._slot_supported(s), "補礦只落喺有承托嘅位")
 		s["gone"] = false
 	pass_test("ok")
+
+func test_settled_chunk_leaves_lattice_and_returns_home_when_used() -> void:
+	var field = _load_field()
+	var col: Dictionary = field._dep_cols[0][field._dep_cols[0].size() / 2]
+	var stacked := 0
+	for s in col["slots"]:
+		if not s["gone"]:
+			stacked += 1
+	var top: Dictionary = col["slots"][stacked - 1]
+	field._activate_slot(top)
+	var k: Dictionary = field._kicked[-1]
+	var node: RigidBody3D = k["node"]
+	node.position = Vector3(0.0, -2.0, 0.05) # 當佢瀉咗去老遠地面
+	field._settle_kick(k)
+	assert_true(top["loose"], "散落地面 = loose")
+	assert_false(field._in_lattice(top))
+	assert_almost_eq((col["shape"] as BoxShape3D).size.z, field.LAYER_H * float(stacked - 1), 0.001, "碰撞柱唔計散落嗰粒")
+	assert_false(field._slot_supported(col["slots"][stacked]) if stacked < col["slots"].size() else false, "loose 唔可以承托上面補礦")
+	field._slot_gone(top)
+	assert_eq(top["pos"], top["home"], "用咗之後返回晶格位等補礦")
+	assert_false(top["loose"])
