@@ -63,8 +63,10 @@ var _kick_root: Node3D
 var _scan_accum := 0.0
 var _respawn_accum := 0.0
 # ── 有限資源（用戶 2026-09-17）：礦集中喺「礦脈」，靠升級逐步開啟 ──
+const HEAP_LAYERS := 9          # 用戶 2026-09-21：礦堆向高空疊——最高 9 層（≈0.6）
+const HEAP_RADIUS := 1.0
 const DEPOSITS := [ # [pos, capacity, start_revealed, unlock_cost, regen_secs, ore_cost]
-	[Vector2(0.0, 3.2), 1400, 700, 0.0, 0.0, 0.0],        # 中央主堆：由礦坑輸出補充
+	[Vector2(0.0, 2.9), 2200, 1400, 0.0, 0.0, 0.0],       # 中央主堆：大、高，玩家主要鏟呢度；由礦坑輸出補充
 	[Vector2(-4.8, 0.9), 1200, 0, 600.0, 12.0, 40.0],     # 左門道中段（用戶 2026-09-17：貴啲）
 	[Vector2(4.4, 1.6), 1200, 0, 2500.0, 12.0, 160.0],    # 右側
 	[Vector2(-4.8, -5.3), 1200, 0, 8000.0, 10.0, 500.0],  # 左門道起點
@@ -765,9 +767,14 @@ func _build_ore_pool() -> void:
 		for i in range(cap):
 			var tier: String = "gold" if rng.randf() < 0.15 else "silver"
 			var sc: float = float(tiers[tier][2])
+			# 錐形礦堆：越近中心可以疊越高；每粒隨機揀一層，之後由外圍鏟入會逐層瀉落
 			var a := rng.randf_range(0.0, TAU)
-			var r := sqrt(rng.randf()) * 0.85
-			var pos := Vector3(ctr.x + cos(a) * r * 1.2, ctr.y + sin(a) * r, ORE_RADIUS * sc)
+			var rr: float = sqrt(rng.randf())
+			var big: bool = di == 0
+			var r := rr * (HEAP_RADIUS if big else 0.85)
+			var max_layer: int = int(floor(float(HEAP_LAYERS if big else 5) * pow(1.0 - rr, 1.15)))
+			var layer: int = rng.randi_range(0, max_layer)
+			var pos := Vector3(ctr.x + cos(a) * r * 1.15, ctr.y + sin(a) * r, ORE_RADIUS * sc + float(layer) * ORE_RADIUS * 1.75)
 			var idx: int = next_idx[tier]
 			next_idx[tier] = idx + 1
 			var slot := {"tier": tier, "idx": idx, "pos": pos, "scale": sc, "active": false, "gone": i >= revealed, "dep": di}
@@ -875,6 +882,7 @@ func _spawn_spill_nugget() -> void:
 	var gold: bool = slot["tier"] == "gold"
 	var n := VisualFactory.make_ore_ball(ORE_RADIUS * float(slot["scale"]), Color(MineConstants.PALETTE["ore_gold"] if gold else MineConstants.PALETTE["ore_silver"]), 0.3 if gold else 0.0)
 	var start := Vector3(MINE_POS.x + rng.randf_range(-0.25, 0.25), MINE_POS.y + 0.1, 0.45)
+	slot["pos"] = _supported_pos(0, slot)
 	var target: Vector3 = slot["pos"]
 	n.position = start
 	_site.add_child(n)
@@ -902,8 +910,23 @@ func _reveal_one(di: int) -> void:
 	var s: Dictionary = _pick_hidden_slot(di)
 	if s.is_empty():
 		return
+	s["pos"] = _supported_pos(di, s)
 	s["gone"] = false
 	_show_slot(s)
+
+## 回填／礦坑補礦嗰陣：原本疊高嘅位如果下面已經鏟空，就落返地面，唔會浮喺半空
+func _supported_pos(di: int, s: Dictionary) -> Vector3:
+	var p: Vector3 = s["pos"]
+	var ground: float = ORE_RADIUS * float(s["scale"])
+	if p.z <= ground + 0.01:
+		return p
+	for o: Dictionary in _dep_slots[di]:
+		if o == s or o["gone"] or o["active"]:
+			continue
+		var op: Vector3 = o["pos"]
+		if absf(op.x - p.x) < 0.09 and absf(op.y - p.y) < 0.09 and op.z < p.z and op.z > p.z - 0.09:
+			return p
+	return Vector3(p.x, p.y, ground)
 
 # ══════════════════════ 礦脈開啟墊 ══════════════════════
 
