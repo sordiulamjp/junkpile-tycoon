@@ -31,9 +31,13 @@ const CAPTURE_R := 0.9
 const PUSH_IMPULSE := 0.35
 const ORE_RADIUS := 0.035
 const ORE_COUNT := 9000
-const KICK_RADIUS := 1.0   # 車前方呢個半徑內嘅礦轉做真剛體，俾鏟斗物理推
+const KICK_RADIUS := 0.9   # 車前方呢個半徑內嘅礦轉做真剛體，俾鏟斗物理推
 const KICK_LIFETIME := 1.0
-const KICK_BUDGET := 260
+const KICK_BUDGET := 700   # 用戶 2026-09-21：疊高 20 層，一次瀉落嘅礦多咗
+# 礦碎 = 盒仔（非圓體，唔會滾走），正方晶格疊高：每格 CELL 闊，每層 LAYER_H 高
+const CHUNK := Vector3(0.062, 0.062, 0.05)
+const CELL := 0.068
+const LAYER_H := 0.052
 const RESPAWN_PER_SEC := 6.0
 
 var c: GameConstants
@@ -63,16 +67,17 @@ var _kick_root: Node3D
 var _scan_accum := 0.0
 var _respawn_accum := 0.0
 # ── 有限資源（用戶 2026-09-17）：礦集中喺「礦脈」，靠升級逐步開啟 ──
-const HEAP_LAYERS := 9          # 用戶 2026-09-21：礦堆向高空疊——最高 9 層（≈0.6）
-const HEAP_RADIUS := 1.0
-const DEPOSITS := [ # [pos, capacity, start_revealed, unlock_cost, regen_secs, ore_cost]
-	[Vector2(0.0, 2.9), 2200, 1400, 0.0, 0.0, 0.0],       # 中央主堆：大、高，玩家主要鏟呢度；由礦坑輸出補充
-	[Vector2(-4.8, 0.9), 1200, 0, 600.0, 12.0, 40.0],     # 左門道中段（用戶 2026-09-17：貴啲）
-	[Vector2(4.4, 1.6), 1200, 0, 2500.0, 12.0, 160.0],    # 右側
-	[Vector2(-4.8, -5.3), 1200, 0, 8000.0, 10.0, 500.0],  # 左門道起點
-	[Vector2(1.6, -5.4), 1200, 0, 25000.0, 8.0, 1200.0],  # 下方
-	[Vector2(3.2, -0.6), 1200, 0, 70000.0, 6.0, 3000.0],  # 爐前
+const HEAP_LAYERS := 20         # 用戶 2026-09-21：主堆疊高 20 層（≈1.04），要符合物理引擎
+const DEPOSITS := [ # [pos, radius, layers, unlock_cost, regen_secs, ore_cost]
+	[Vector2(0.0, 2.9), 1.0, HEAP_LAYERS, 0.0, 0.0, 0.0], # 中央主堆：錐形 20 層，玩家主要鏟呢度；由礦坑輸出補充
+	[Vector2(-4.8, 0.9), 0.72, 10, 600.0, 12.0, 40.0],    # 左門道中段（用戶 2026-09-17：貴啲）
+	[Vector2(4.4, 1.6), 0.72, 10, 2500.0, 12.0, 160.0],   # 右側
+	[Vector2(-4.8, -5.3), 0.72, 10, 8000.0, 10.0, 500.0], # 左門道起點
+	[Vector2(1.6, -5.4), 0.72, 10, 25000.0, 8.0, 1200.0], # 下方
+	[Vector2(3.2, -0.6), 0.72, 10, 70000.0, 6.0, 3000.0], # 爐前
 ]
+var _dep_cols: Array = []         # per deposit: Array of column dicts {slots(bottom→top), cs, shape}
+var _dep_body: Array = []         # per deposit: StaticBody3D 承托剛體嘅晶格柱碰撞
 var _dep_slots: Array = []        # per deposit: Array of slot dicts
 var _dep_unlocked: Array = []     # per deposit: bool
 var _dep_regen_t: Array = []
@@ -744,57 +749,137 @@ func _build_ore_pool() -> void:
 	_kick_root = Node3D.new()
 	_kick_root.name = "KickedOre"
 	_site.add_child(_kick_root)
-	var tiers := {"silver": [0.85, Color(MineConstants.PALETTE["ore_silver"]), 1.0], "gold": [0.15, Color(MineConstants.PALETTE["ore_gold"]), 1.3]}
-	# 礦集中喺幾個「礦脈」；每脈固定容量，開場只有中央主堆有礦，其餘要用錢開啟
+	var tiers := {"silver": [0.85, Color(MineConstants.PALETTE["ore_silver"]), 1.0], "gold": [0.15, Color(MineConstants.PALETTE["ore_gold"]), 1.15]}
+	# 先數晶格總數：每個礦堆係正方晶格錐——半徑 R、K 層，(i,j) 格可以疊 floor(K*(1-r/R)) 層
+	var specs: Array = [] # per deposit: Array of [x, y, layers]
 	var total := 0
-	for dep in DEPOSITS:
-		total += int(dep[1])
+	for di in range(DEPOSITS.size()):
+		var dep = DEPOSITS[di]
+		var ctr: Vector2 = dep[0]
+		var R: float = float(dep[1])
+		var K: int = int(dep[2])
+		var cols: Array = []
+		var n: int = int(ceil(R / CELL))
+		for i in range(-n, n + 1):
+			for j in range(-n, n + 1):
+				var x: float = float(i) * CELL
+				var y: float = float(j) * CELL
+				var r: float = sqrt(x * x + y * y)
+				if r > R:
+					continue
+				var layers: int = int(floor(float(K) * (1.0 - r / R))) + 1
+				cols.append([ctr.x + x, ctr.y + y, layers])
+				total += layers
+		specs.append(cols)
 	var next_idx := {"silver": 0, "gold": 0}
 	for tier: String in tiers.keys():
-		var count: int = int(ceil(float(total) * float(tiers[tier][0]))) + 8
-		var mmi := VisualFactory.make_ore_pool_multimesh(ORE_RADIUS, tiers[tier][1], 0.35 if tier == "gold" else 0.0, count)
+		var count: int = int(ceil(float(total) * float(tiers[tier][0]))) + 64
+		var mmi := VisualFactory.make_ore_chunk_multimesh(CHUNK, tiers[tier][1], 0.35 if tier == "gold" else 0.0, count)
 		mmi.name = "Pool_%s" % tier
 		_site.add_child(mmi)
 		_pool_mmi[tier] = mmi
 		for i in range(count):
 			mmi.multimesh.set_instance_transform(i, Transform3D(Basis.IDENTITY.scaled(Vector3.ZERO), Vector3.ZERO))
 	for di in range(DEPOSITS.size()):
-		var dep = DEPOSITS[di]
-		var ctr: Vector2 = dep[0]
-		var cap: int = int(dep[1])
-		var revealed: int = int(dep[2])
-		var arr: Array = []
-		for i in range(cap):
-			var tier: String = "gold" if rng.randf() < 0.15 else "silver"
-			var sc: float = float(tiers[tier][2])
-			# 錐形礦堆：越近中心可以疊越高；每粒隨機揀一層，之後由外圍鏟入會逐層瀉落
-			var a := rng.randf_range(0.0, TAU)
-			var rr: float = sqrt(rng.randf())
-			var big: bool = di == 0
-			var r := rr * (HEAP_RADIUS if big else 0.85)
-			var max_layer: int = int(floor(float(HEAP_LAYERS if big else 5) * pow(1.0 - rr, 1.15)))
-			var layer: int = rng.randi_range(0, max_layer)
-			var pos := Vector3(ctr.x + cos(a) * r * 1.15, ctr.y + sin(a) * r, ORE_RADIUS * sc + float(layer) * ORE_RADIUS * 1.75)
-			var idx: int = next_idx[tier]
-			next_idx[tier] = idx + 1
-			var slot := {"tier": tier, "idx": idx, "pos": pos, "scale": sc, "active": false, "gone": i >= revealed, "dep": di}
-			if not slot["gone"]:
-				_show_slot(slot)
-			_slots.append(slot)
-			arr.append(slot)
-		_dep_slots.append(arr)
 		var was_unlocked: bool = di == 0 or (di < _dep_unlocked_saved.size() and bool(_dep_unlocked_saved[di]))
+		var arr: Array = []
+		var cols: Array = []
+		var body := StaticBody3D.new()
+		body.name = "HeapColumns%d" % di
+		_site.add_child(body)
+		for spec in specs[di]:
+			var col := {"x": spec[0], "y": spec[1], "slots": [], "cs": null, "shape": null}
+			var cs := CollisionShape3D.new()
+			var shape := BoxShape3D.new()
+			shape.size = Vector3(CELL, CELL, LAYER_H)
+			cs.shape = shape
+			cs.position = Vector3(spec[0], spec[1], LAYER_H * 0.5)
+			cs.disabled = true
+			body.add_child(cs)
+			col["cs"] = cs
+			col["shape"] = shape
+			# 開場：主堆每柱下面 7 成有礦（頂部留返俾礦坑補）；讀檔返嚟嘅礦脈當半滿；未開礦脈全部隱藏
+			var layers: int = int(spec[2])
+			var filled: int = 0
+			if di == 0:
+				filled = int(ceil(float(layers) * 0.7))
+			elif was_unlocked:
+				filled = rng.randi_range(0, layers)
+			for k in range(layers):
+				var tier: String = "gold" if rng.randf() < 0.15 else "silver"
+				var sc: float = float(tiers[tier][2])
+				var idx: int = next_idx[tier]
+				next_idx[tier] = idx + 1
+				var pos := Vector3(spec[0] + rng.randf_range(-0.004, 0.004), spec[1] + rng.randf_range(-0.004, 0.004), LAYER_H * 0.5 + float(k) * LAYER_H)
+				var slot := {"tier": tier, "idx": idx, "pos": pos, "scale": sc, "rot": rng.randf_range(-0.3, 0.3), "active": false, "gone": k >= filled, "dep": di, "col": col, "layer": k}
+				if not slot["gone"]:
+					_show_slot(slot)
+				_slots.append(slot)
+				arr.append(slot)
+				(col["slots"] as Array).append(slot)
+			cols.append(col)
+			_column_refresh(col)
+		_dep_slots.append(arr)
+		_dep_cols.append(cols)
+		_dep_body.append(body)
 		_dep_unlocked.append(was_unlocked)
 		_dep_regen_t.append(0.0)
-		if was_unlocked and di > 0:
-			for s2 in arr:
-				s2["gone"] = rng.randf() < 0.5 # 讀檔返嚟：已開嘅礦脈當半滿
-				if not s2["gone"]:
-					_show_slot(s2)
 	_build_deposit_pads()
+
+## 晶格柱碰撞：柱入面由底數上去連續有礦嘅層數 = 碰撞高度；剛體礦就靠呢個承托，唔會浮空／穿地
+func _column_refresh(col: Dictionary) -> void:
+	var n := 0
+	for s: Dictionary in col["slots"]:
+		if s["gone"] or s["active"]:
+			break
+		n += 1
+	var cs: CollisionShape3D = col["cs"]
+	if n == 0:
+		cs.disabled = true
+		return
+	(col["shape"] as BoxShape3D).size = Vector3(CELL, CELL, LAYER_H * float(n))
+	cs.position = Vector3(col["x"], col["y"], LAYER_H * float(n) * 0.5)
+	cs.disabled = false
+
+## 柱頂嗰粒（拖車仔／地面隊執礦用），保證柱由底向上連續
+func _take_top_slot(di: int, near: Vector2 = Vector2.INF, radius: float = INF) -> Dictionary:
+	var best: Dictionary = {}
+	var best_d := INF
+	for col: Dictionary in _dep_cols[di]:
+		if near != Vector2.INF and Vector2(col["x"], col["y"]).distance_to(near) > radius:
+			continue
+		var top: Dictionary = {}
+		for s: Dictionary in col["slots"]:
+			if s["gone"] or s["active"]:
+				break
+			top = s
+		if top.is_empty():
+			continue
+		var d: float = 0.0 if near == Vector2.INF else Vector2(col["x"], col["y"]).distance_squared_to(near)
+		if d < best_d:
+			best_d = d
+			best = top
+			if near == Vector2.INF:
+				break
+	if not best.is_empty():
+		best["gone"] = true
+		_hide_slot(best)
+		_column_refresh(best["col"])
+	return best
+
+## 隱藏槽位可以露出嘅條件：底層，或者正下面嗰粒喺度（符合物理：唔會浮空）
+func _slot_supported(s: Dictionary) -> bool:
+	if s.get("col") == null:
+		return true
+	var k: int = int(s["layer"])
+	if k == 0:
+		return true
+	var below: Dictionary = (s["col"]["slots"] as Array)[k - 1]
+	return not below["gone"] and not below["active"]
 
 func _clear_ore_around(center: Vector2, radius: float) -> void:
 	var r2 := radius * radius
+	var touched: Array = []
 	for s: Dictionary in _slots:
 		if s["gone"] or s["active"]:
 			continue
@@ -802,12 +887,17 @@ func _clear_ore_around(center: Vector2, radius: float) -> void:
 		if Vector2(p.x, p.y).distance_squared_to(center) < r2:
 			s["gone"] = true
 			_hide_slot(s)
+			if s.get("col") != null and not (s["col"] in touched):
+				touched.append(s["col"])
+	for col in touched:
+		_column_refresh(col)
 
 func _hide_slot(s: Dictionary) -> void:
 	(_pool_mmi[s["tier"]] as MultiMeshInstance3D).multimesh.set_instance_transform(s["idx"], Transform3D(Basis.IDENTITY.scaled(Vector3.ZERO), Vector3.ZERO))
 
 func _show_slot(s: Dictionary) -> void:
-	(_pool_mmi[s["tier"]] as MultiMeshInstance3D).multimesh.set_instance_transform(s["idx"], Transform3D(Basis.IDENTITY.scaled(Vector3.ONE * float(s["scale"])), s["pos"]))
+	var b := Basis(Vector3(0, 0, 1), float(s.get("rot", 0.0))).scaled(Vector3.ONE * float(s["scale"]))
+	(_pool_mmi[s["tier"]] as MultiMeshInstance3D).multimesh.set_instance_transform(s["idx"], Transform3D(b, s["pos"]))
 
 ## 車前方半徑內嘅靜態礦轉做真剛體（無衝力），俾弧形鏟斗物理推住、堆喺鏟內
 func _rigidize_front_tick() -> void:
@@ -818,26 +908,31 @@ func _rigidize_front_tick() -> void:
 	var budget: int = KICK_BUDGET - _kicked.size()
 	if budget <= 0:
 		return
-	var cp: Vector3 = _car.position
+	var cp := Vector2(_car.position.x, _car.position.y)
 	var r2: float = (KICK_RADIUS + 0.4) * (KICK_RADIUS + 0.4)
 	var inv: Transform3D = _car.transform.affine_inverse()
 	var cands: Array = []
-	for s: Dictionary in _slots:
-		if s["active"] or s["gone"]:
-			continue
-		var p: Vector3 = s["pos"]
-		if p.distance_squared_to(cp) > r2:
-			continue
-		var lp: Vector3 = inv * p
-		if lp.y < -0.4 or lp.y > 1.2 * _blade_w() or absf(lp.x) > 0.75 * _blade_w():
-			continue
-		cands.append([lp.y, s])
+	for di in range(DEPOSITS.size()):
+		if cp.distance_to(DEPOSITS[di][0]) > float(DEPOSITS[di][1]) + KICK_RADIUS + 0.6:
+			continue # 成個礦堆都唔近車，唔使逐粒掃
+		for s: Dictionary in _dep_slots[di]:
+			if s["active"] or s["gone"]:
+				continue
+			var p: Vector3 = s["pos"]
+			if Vector2(p.x, p.y).distance_squared_to(cp) > r2 or p.z > 0.42:
+				continue # 只轉鏟斗夠得到嘅高度（上面嘅由 _activate_slot 級聯帶落）
+			var lp: Vector3 = inv * p
+			if lp.y < -0.4 or lp.y > 1.2 * _blade_w() or absf(lp.x) > 0.75 * _blade_w():
+				continue
+			cands.append([lp.y, s])
 	cands.sort_custom(func(a, b): return a[0] < b[0]) # 最貼近車頭嘅先轉（佔用預算最有用）
 	for c_ in cands:
 		if budget <= 0:
 			break
-		_activate_slot(c_[1])
-		budget -= 1
+		var s: Dictionary = c_[1]
+		if s["active"] or s["gone"]:
+			continue
+		budget -= _activate_slot(s)
 
 func _pool_tick(delta: float) -> void:
 	for k: Dictionary in _kicked.duplicate():
@@ -880,9 +975,8 @@ func _spawn_spill_nugget() -> void:
 	if slot.is_empty():
 		return # 主堆已滿：礦坑輸出全部走管線變現金
 	var gold: bool = slot["tier"] == "gold"
-	var n := VisualFactory.make_ore_ball(ORE_RADIUS * float(slot["scale"]), Color(MineConstants.PALETTE["ore_gold"] if gold else MineConstants.PALETTE["ore_silver"]), 0.3 if gold else 0.0)
+	var n := VisualFactory.make_metal_box(CHUNK * float(slot["scale"]), Color(MineConstants.PALETTE["ore_gold"] if gold else MineConstants.PALETTE["ore_silver"]), Color(MineConstants.PALETTE["ore_gold"]) if gold else Color.BLACK, 0.3 if gold else 0.0)
 	var start := Vector3(MINE_POS.x + rng.randf_range(-0.25, 0.25), MINE_POS.y + 0.1, 0.45)
-	slot["pos"] = _supported_pos(0, slot)
 	var target: Vector3 = slot["pos"]
 	n.position = start
 	_site.add_child(n)
@@ -896,13 +990,15 @@ func _spawn_spill_nugget() -> void:
 		n.queue_free()
 		slot["active"] = false
 		slot["gone"] = false
-		_show_slot(slot))
+		_show_slot(slot)
+		if slot.get("col") != null:
+			_column_refresh(slot["col"]))
 
 func _pick_hidden_slot(di: int) -> Dictionary:
 	var arr: Array = _dep_slots[di]
-	for _i in range(40):
+	for _i in range(60):
 		var s: Dictionary = arr[rng.randi_range(0, arr.size() - 1)]
-		if s["gone"] and not s["active"]:
+		if s["gone"] and not s["active"] and _slot_supported(s):
 			return s
 	return {}
 
@@ -910,23 +1006,10 @@ func _reveal_one(di: int) -> void:
 	var s: Dictionary = _pick_hidden_slot(di)
 	if s.is_empty():
 		return
-	s["pos"] = _supported_pos(di, s)
 	s["gone"] = false
 	_show_slot(s)
-
-## 回填／礦坑補礦嗰陣：原本疊高嘅位如果下面已經鏟空，就落返地面，唔會浮喺半空
-func _supported_pos(di: int, s: Dictionary) -> Vector3:
-	var p: Vector3 = s["pos"]
-	var ground: float = ORE_RADIUS * float(s["scale"])
-	if p.z <= ground + 0.01:
-		return p
-	for o: Dictionary in _dep_slots[di]:
-		if o == s or o["gone"] or o["active"]:
-			continue
-		var op: Vector3 = o["pos"]
-		if absf(op.x - p.x) < 0.09 and absf(op.y - p.y) < 0.09 and op.z < p.z and op.z > p.z - 0.09:
-			return p
-	return Vector3(p.x, p.y, ground)
+	if s.get("col") != null:
+		_column_refresh(s["col"])
 
 # ══════════════════════ 礦脈開啟墊 ══════════════════════
 
@@ -970,8 +1053,9 @@ func _build_deposit_pads() -> void:
 			rk.rotation.z = rng.randf_range(0.0, TAU)
 			rub.add_child(rk)
 		for _o in range(10):
-			var ob := VisualFactory.make_ore_ball(ORE_RADIUS * 1.2, Color(MineConstants.PALETTE["ore_gold"]), 0.3)
-			ob.position = Vector3(rng.randf_range(-0.8, 0.8), rng.randf_range(-0.5, 0.5), ORE_RADIUS)
+			var ob := VisualFactory.make_metal_box(CHUNK * 1.2, Color(MineConstants.PALETTE["ore_gold"]), Color(MineConstants.PALETTE["ore_gold"]), 0.3)
+			ob.position = Vector3(rng.randf_range(-0.8, 0.8), rng.randf_range(-0.5, 0.5), LAYER_H * 0.6)
+			ob.rotation.z = rng.randf_range(0.0, TAU)
 			rub.add_child(ob)
 		rub.visible = not _dep_unlocked[di]
 		rub.process_mode = Node.PROCESS_MODE_INHERIT if rub.visible else Node.PROCESS_MODE_DISABLED
@@ -1069,7 +1153,8 @@ func _on_deposit_tap(region_id: String, cost: float) -> void:
 		var s: Dictionary = arr[i]
 		tw.tween_callback(func() -> void:
 			s["gone"] = false
-			_show_slot(s)).set_delay(0.0 if i == 0 else 0.0025)
+			_show_slot(s)
+			_column_refresh(s["col"])).set_delay(0.0 if i == 0 else 0.0015)
 	_save_game()
 
 ## 鏟斗前方捕獲：礦粒入到鏟斗前嘅捕獲區就上車（IG 式：車前堆住一堆礦帶走），滿咗就唔再收
@@ -1361,20 +1446,40 @@ func _spawn_cash_popup(at: Vector3, amount: float) -> void:
 	tw.tween_property(lbl, "modulate:a", 0.0, 1.1).set_delay(0.4)
 	tw.chain().tween_callback(lbl.queue_free)
 
-func _activate_slot(s: Dictionary) -> void:
+## 一粒靜態礦轉做剛體；同一柱上面嘅全部一齊轉（下面走咗，上面唔可以浮空）。回傳轉咗幾粒
+func _activate_slot(s: Dictionary) -> int:
+	var n := 0
+	if s.get("col") != null:
+		var col: Dictionary = s["col"]
+		var k: int = int(s["layer"])
+		var slots: Array = col["slots"]
+		for i in range(k, slots.size()):
+			var o: Dictionary = slots[i]
+			if o["gone"] or o["active"]:
+				break
+			_activate_one(o)
+			n += 1
+		_column_refresh(col)
+	else:
+		_activate_one(s)
+		n = 1
+	return n
+
+func _activate_one(s: Dictionary) -> void:
 	s["active"] = true
 	_hide_slot(s)
 	var body := RigidBody3D.new()
-	body.mass = 0.15
 	body.set_meta("slot", s)
-	var radius: float = ORE_RADIUS * float(s["scale"])
-	body.add_child(VisualFactory.make_ore_ball(radius, Color(MineConstants.PALETTE["ore_gold"] if s["tier"] == "gold" else MineConstants.PALETTE["ore_silver"]), 0.3 if s["tier"] == "gold" else 0.0))
+	var sz: Vector3 = CHUNK * float(s["scale"])
+	var gold: bool = s["tier"] == "gold"
+	body.add_child(VisualFactory.make_metal_box(sz, Color(MineConstants.PALETTE["ore_gold"] if gold else MineConstants.PALETTE["ore_silver"]), Color(MineConstants.PALETTE["ore_gold"]) if gold else Color.BLACK, 0.3 if gold else 0.0))
 	var col := CollisionShape3D.new()
-	var shape := SphereShape3D.new()
-	shape.radius = radius
+	var shape := BoxShape3D.new()
+	shape.size = sz
 	col.shape = shape
 	body.add_child(col)
 	body.position = s["pos"]
+	body.rotation.z = float(s.get("rot", 0.0))
 	var mat := PhysicsMaterial.new()
 	mat.friction = 0.7
 	mat.bounce = 0.05
@@ -1384,7 +1489,7 @@ func _activate_slot(s: Dictionary) -> void:
 	body.set_meta("consume", Callable(self, "_consume_ore_body"))
 	body.mass = 0.05
 	body.linear_damp = 2.5
-	body.angular_damp = 4.0
+	body.angular_damp = 8.0 # 盒仔 + 高角阻尼：推到就停，唔會滾走
 	body.continuous_cd = true
 	body.can_sleep = false
 	_kick_root.add_child(body)
@@ -1435,6 +1540,8 @@ func _consume_ore_body(body: RigidBody3D, free_node: bool = true) -> void:
 			var s: Dictionary = k["slot"]
 			s["active"] = false
 			s["gone"] = true
+			if s.get("col") != null:
+				_column_refresh(s["col"])
 			break
 	if free_node:
 		body.queue_free()
@@ -1447,7 +1554,9 @@ func _settle_kick(k: Dictionary) -> void:
 	if is_instance_valid(node):
 		var p: Vector3 = node.position
 		if p.x > FIELD_MIN.x and p.x < FIELD_MAX.x and p.y > FIELD_MIN.y and p.y < FIELD_MAX.y:
-			s["pos"] = Vector3(p.x, p.y, ORE_RADIUS * float(s["scale"]))
+			s["pos"] = Vector3(p.x, p.y, LAYER_H * 0.5 * float(s["scale"]))
+			s["rot"] = node.rotation.z
+			s["col"] = null # 散落地面嘅礦脫離晶格，唔再承托其他礦
 			_show_slot(s)
 		else:
 			s["gone"] = true
@@ -2168,17 +2277,15 @@ func _surface_team_tick(delta: float) -> void:
 	tw.tween_property(bot, "position", Vector3(target.x, target.y, 0.0), trip).set_trans(Tween.TRANS_SINE)
 	tw.tween_callback(func() -> void:
 		var picked: Array = []
-		for _i in range(80):
-			var s: Dictionary = _slots[rng.randi_range(0, _slots.size() - 1)]
-			if s["gone"] or s["active"]:
-				continue
-			var p: Vector3 = s["pos"]
-			if Vector2(p.x, p.y).distance_to(target) < 0.5:
-				s["gone"] = true
-				_hide_slot(s)
-				picked.append(s["tier"])
-				if picked.size() >= 3:
-					break
+		var di_near := 0
+		for di in range(DEPOSITS.size()):
+			if _dep_unlocked[di] and target.distance_to(DEPOSITS[di][0]) < float(DEPOSITS[di][1]) + 0.3:
+				di_near = di
+		for _i in range(3):
+			var s: Dictionary = _take_top_slot(di_near, target, 0.6)
+			if s.is_empty():
+				break
+			picked.append(s["tier"])
 		bot.set_meta("picked", picked))
 	tw.tween_property(bot, "position", Vector3(wh.x, wh.y - 0.4, 0.0), trip).set_trans(Tween.TRANS_SINE)
 	tw.tween_callback(func() -> void:
@@ -2319,13 +2426,10 @@ func _spawn_hauler(di: int) -> void:
 ## 拖車仔喺自己礦脈執礦：攞 cap 粒可見槽位（隱藏 MultiMesh 實例），返回 tier 清單
 func _hauler_load(h: Hauler, di: int) -> Array:
 	var got: Array = []
-	for s: Dictionary in _dep_slots[di]:
-		if got.size() >= h.cap:
+	while got.size() < h.cap:
+		var s: Dictionary = _take_top_slot(di)
+		if s.is_empty():
 			break
-		if s["gone"] or s["active"]:
-			continue
-		s["gone"] = true
-		_hide_slot(s)
 		got.append(s["tier"])
 	return got
 

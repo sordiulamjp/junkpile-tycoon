@@ -180,6 +180,19 @@ static func make_ore_ball(radius: float, color: Color, emission_energy: float = 
 ## call site（frenzy_yard_view.gd _build_ore_pool()）逐粒 set_instance_transform()
 ## 擺位；轉做 rigid 嗰陣將對應 index 嘅 transform 縮做 0（_hide_pool_slot()）
 ## 令個靜態粒隱形，唔會同真 rigid 個 mesh 疊埋一齊。
+## 用戶 2026-09-21：礦碎係非圓體（盒仔），唔會滾走；靜態堆用 BoxMesh instancing
+static func make_ore_chunk_multimesh(size: Vector3, color: Color, emission_energy: float, instance_count: int) -> MultiMeshInstance3D:
+	var mmi := MultiMeshInstance3D.new()
+	var mm := MultiMesh.new()
+	mm.transform_format = MultiMesh.TRANSFORM_3D
+	var box := BoxMesh.new()
+	box.size = size
+	mm.mesh = box
+	mm.instance_count = maxi(instance_count, 0)
+	mmi.multimesh = mm
+	mmi.material_override = flat_material(color, color, emission_energy, 0.0, 0.6)
+	return mmi
+
 static func make_ore_pool_multimesh(radius: float, color: Color, emission_energy: float, instance_count: int) -> MultiMeshInstance3D:
 	var mmi := MultiMeshInstance3D.new()
 	var mm := MultiMesh.new()

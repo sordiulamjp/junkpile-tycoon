@@ -588,3 +588,52 @@ func test_walkway_segments_are_solid() -> void:
 	field._walk_pad.ore_fed = field._walk_pad.ore_cost
 	field._on_walkway_tap("walkway", field.WALKWAY_COST)
 	assert_eq(_count_bodies(field._walkway, "StaticBody3D"), field.WALKWAY_PATH.size() - 1, "每段帶一個 StaticBody3D")
+
+# ── 用戶 2026-09-21：疊高 20 層、盒仔礦碎、符合物理 ──
+
+func test_heap_is_a_20_layer_lattice_cone_with_column_colliders() -> void:
+	var field = _load_field()
+	var top_layer := 0
+	for s in field._dep_slots[0]:
+		top_layer = maxi(top_layer, int(s["layer"]))
+	assert_eq(top_layer, field.HEAP_LAYERS, "主堆中心柱有 20 層")
+	var enabled := 0
+	for col in field._dep_cols[0]:
+		if not (col["cs"] as CollisionShape3D).disabled:
+			enabled += 1
+	assert_gt(enabled, 300, "每條有礦嘅柱都有承托碰撞")
+	# 柱由底向上連續：冇「下面空、上面有」
+	for col in field._dep_cols[0]:
+		var seen_gap := false
+		for s in col["slots"]:
+			if s["gone"]:
+				seen_gap = true
+			elif seen_gap:
+				fail_test("柱入面有浮空礦")
+				return
+	pass_test("冇浮空")
+
+func test_activating_a_low_chunk_cascades_the_column_and_shrinks_the_collider() -> void:
+	var field = _load_field()
+	var col: Dictionary = field._dep_cols[0][field._dep_cols[0].size() / 2]
+	var stacked := 0
+	for s in col["slots"]:
+		if not s["gone"]:
+			stacked += 1
+	if stacked < 3:
+		pass_test("呢條柱太矮，跳過"); return
+	var n: int = field._activate_slot(col["slots"][1])
+	assert_eq(n, stacked - 1, "轉第 2 層，上面全部一齊轉做剛體")
+	assert_almost_eq((col["shape"] as BoxShape3D).size.z, field.LAYER_H, 0.001, "碰撞柱縮到只剩底層")
+	var body: RigidBody3D = field._kicked[-1]["node"]
+	assert_true(body.get_child(1).shape is BoxShape3D, "礦碎係盒仔碰撞，唔會滾走")
+
+func test_refill_only_reveals_supported_slots() -> void:
+	var field = _load_field()
+	for _i in range(200):
+		var s: Dictionary = field._pick_hidden_slot(0)
+		if s.is_empty():
+			break
+		assert_true(field._slot_supported(s), "補礦只落喺有承托嘅位")
+		s["gone"] = false
+	pass_test("ok")
