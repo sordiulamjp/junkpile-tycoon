@@ -911,65 +911,24 @@ var _vein_rubble: Array = []
 # ══════════════════════ 場地擺設（純裝飾，冇碰撞；用戶 2026-09-17：加擺設） ══════════════════════
 
 func _build_props() -> void:
+	# 用戶 2026-09-21：場內唔要非分區嘅障礙物——大石／廢車／油桶／輪胎全部拆走，
+	# 只留燈柱，而且燈柱搬出場界（嵌喺石牆入面），唔會阻路
 	var props := Node3D.new()
 	props.name = "Props"
 	_site.add_child(props)
-	var wall_c := Color(MineConstants.PALETTE["wall_dark"])
-	# 大石：空位散落
-	for pos in [Vector2(-2.2, -1.0), Vector2(-2.4, 1.2), Vector2(0.4, -4.9), Vector2(6.0, 4.6), Vector2(-6.2, 4.6), Vector2(0.8, -2.9), Vector2(-0.2, -4.6)]: # 有碰撞之後：全部避開拖車仔路線同車房墊
-		var rk := _rock(Vector3(rng.randf_range(0.5, 0.9), rng.randf_range(0.4, 0.7), rng.randf_range(0.45, 0.8)), wall_c.lightened(rng.randf_range(0.0, 0.2)))
-		rk.position = Vector3(pos.x, pos.y, 0.0)
-		rk.rotation.z = rng.randf_range(0.0, TAU)
-		props.add_child(rk)
-	# 廢車：灰車身 + 四粒輪 + 生鏽頂
-	for pos in [Vector2(-6.0, -2.4), Vector2(-2.6, -5.2)]:
-		var wreck := Node3D.new()
-		wreck.position = Vector3(pos.x, pos.y, 0.0)
-		wreck.rotation.z = rng.randf_range(-0.5, 0.5)
-		var body := VisualFactory.make_metal_box(Vector3(0.5, 0.9, 0.3), Color("#5A5560"))
-		body.position = Vector3(0.0, 0.0, 0.2)
-		wreck.add_child(body)
-		var roof := VisualFactory.make_metal_box(Vector3(0.44, 0.4, 0.22), Color("#7A4A3A"))
-		roof.position = Vector3(0.0, -0.05, 0.45)
-		wreck.add_child(roof)
-		for wx in [-0.28, 0.28]:
-			for wy in [-0.3, 0.3]:
-				var wheel := VisualFactory.make_low_poly_cylinder(0.1, 0.06, Color("#1E1E22"), 8, 0.1)
-				wheel.rotation_degrees.y = 90.0
-				wheel.position = Vector3(wx, wy, 0.1)
-				wreck.add_child(wheel)
-		_static_box(wreck, Vector3(0.56, 0.9, 0.55), Vector3(0.0, 0.0, 0.27))
-		props.add_child(wreck)
-	# 燈柱：礦坑兩側、熔爐旁
-	for pos in [Vector2(-2.4, 4.6), Vector2(2.4, 4.6), Vector2(6.2, -5.6), Vector2(-6.5, -3.6)]:
+	for pos in [Vector2(-2.4, FIELD_MAX.y + 0.45), Vector2(2.4, FIELD_MAX.y + 0.45), Vector2(FIELD_MAX.x + 0.45, -5.6), Vector2(FIELD_MIN.x - 0.45, -3.6)]:
 		var post := VisualFactory.make_flat_box(Vector3(0.08, 0.08, 1.1), Color("#3A3140"))
 		post.position = Vector3(pos.x, pos.y, 0.55)
 		props.add_child(post)
-		_static_box(props, Vector3(0.1, 0.1, 1.1), Vector3(pos.x, pos.y, 0.55))
 		var lamp := VisualFactory.make_lamp(0.08, Color("#FFD27A"), 1.6)
 		lamp.position = Vector3(pos.x, pos.y, 1.15)
 		props.add_child(lamp)
 		var light := OmniLight3D.new()
 		light.light_color = Color("#FFD27A")
 		light.light_energy = 0.9
-		light.omni_range = 2.2
+		light.omni_range = 2.6
 		light.position = Vector3(pos.x, pos.y, 1.1)
 		props.add_child(light)
-	# 油桶堆、輪胎堆
-	for pos in [Vector2(1.4, -3.9), Vector2(-6.2, 2.2)]:
-		for i in range(4):
-			var b := VisualFactory.make_low_poly_cylinder(0.11, 0.24, Color("#2E5C9E") if i % 2 == 0 else Color("#B8894A"), 8, 0.35)
-			b.rotation_degrees.x = 90.0
-			b.position = Vector3(pos.x + float(i % 2) * 0.24, pos.y + float(i / 2) * 0.24, 0.12)
-			props.add_child(b)
-		_static_box(props, Vector3(0.46, 0.46, 0.24), Vector3(pos.x + 0.12, pos.y + 0.12, 0.12))
-	for pos in [Vector2(-3.4, -6.4), Vector2(3.6, 6.6)]:
-		for i in range(3):
-			var t := VisualFactory.make_low_poly_cylinder(0.16, 0.08, Color("#1E1E22"), 10, 0.1)
-			t.rotation_degrees.x = 90.0
-			t.position = Vector3(pos.x + float(i) * 0.05, pos.y, 0.04 + float(i) * 0.08)
-			props.add_child(t)
-		_static_box(props, Vector3(0.36, 0.36, 0.26), Vector3(pos.x + 0.05, pos.y, 0.13))
 
 func _build_deposit_pads() -> void:
 	for di in range(1, DEPOSITS.size()):

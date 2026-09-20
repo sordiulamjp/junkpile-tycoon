@@ -550,7 +550,7 @@ func _count_bodies(root: Node, cls: String) -> int:
 
 func test_props_rubble_gates_rack_all_have_static_colliders() -> void:
 	var field = _load_field()
-	assert_gt(_count_bodies(field._site.get_node("Props"), "StaticBody3D"), 12, "石／廢車／燈柱／油桶／輪胎全部有 StaticBody3D")
+	assert_eq(_count_bodies(field._site.get_node("Props"), "StaticBody3D"), 0, "用戶 2026-09-21：場內冇非分區障礙物")
 	assert_gt(_count_bodies(field._vein_rubble[0], "StaticBody3D"), 0, "礦床石頭係實體")
 	assert_eq(field._vein_rubble[0].process_mode, Node.PROCESS_MODE_INHERIT)
 	assert_gt(_count_bodies(field._site.get_node("Gate_x2"), "StaticBody3D"), 1, "倍數門兩支柱都係實體")
