@@ -51,7 +51,7 @@ var _site: Node3D
 var _cam: Camera3D
 var _car: CharacterBody3D
 var _car_body: Node3D
-var _blade: MeshInstance3D
+var _blade: Node3D
 var _car_vel := Vector2.ZERO
 var _joy_down := false
 var _joy_origin := Vector2.ZERO
@@ -368,17 +368,59 @@ func _static_box(parent: Node3D, size: Vector3, pos: Vector3, rot_z: float = 0.0
 	parent.add_child(sb)
 	return sb
 
+## VR-17b：喺一棵 glb 場景入面搵一個「resource_name 岩爐吻合」嘅材質——
+## 熔爐 emission 脈動要攞返 furnace.glb 入面 furnace_fire 嗰個 surface
+## 材質嚟改 emission_energy_multiplier；fallback 灰模嗰邊將 material_override
+## 個 resource_name 打成一樣個名，兩條路徑用同一個搵法。
+static func _find_material_by_name(node: Node, name: String) -> Material:
+	if node is MeshInstance3D:
+		var mi := node as MeshInstance3D
+		if mi.material_override != null and mi.material_override.resource_name == name:
+			return mi.material_override
+		if mi.mesh != null:
+			for i in range(mi.mesh.get_surface_count()):
+				var mat := mi.mesh.surface_get_material(i)
+				if mat != null and mat.resource_name == name:
+					return mat
+	for child in node.get_children():
+		var found := _find_material_by_name(child, name)
+		if found != null:
+			return found
+	return null
+
+## VR-17b：鏟斗跟 tier 變色（col_tint）—— glb 入面每個 MeshInstance3D
+## 逐個 surface 蓋一個新材質，唔靠 mesh 原本嘅烘焙色。
+static func _tint_mesh_surfaces(node: Node, color: Color) -> void:
+	if node is MeshInstance3D:
+		var mi := node as MeshInstance3D
+		if mi.mesh != null:
+			var mat := VisualFactory.flat_material(color, Color(0, 0, 0), 0.0, 0.6, 0.35)
+			for i in range(mi.mesh.get_surface_count()):
+				mi.set_surface_override_material(i, mat)
+	for child in node.get_children():
+		_tint_mesh_surfaces(child, color)
+
+var _rock_cycle := 0
 func _rock(size: Vector3, tone: Color, solid: bool = true) -> Node3D:
 	var root := Node3D.new()
 	if solid:
 		_static_box(root, Vector3(size.x, size.y, size.z), Vector3(0.0, 0.0, size.z * 0.5 - 0.05))
-	var body := VisualFactory.make_flat_box(Vector3(size.x, size.y, size.z * 0.72), tone)
-	body.position = Vector3(0.0, 0.0, size.z * 0.36 - 0.05)
-	root.add_child(body)
-	var cap := VisualFactory.make_rock_facet(Vector3(size.x, size.z * 0.28, size.y), tone.lightened(0.15), rng.randf_range(0.2, 0.8))
-	cap.rotation_degrees.x = 90.0
-	cap.position = Vector3(0.0, 0.0, size.z * 0.72 + size.z * 0.14 - 0.05)
-	root.add_child(cap)
+	var idx: int = _rock_cycle % VisualFactory.MODEL_ROCK.size()
+	_rock_cycle += 1
+	var model := VisualFactory.make_model(VisualFactory.MODEL_ROCK[idx], func() -> Node3D:
+		var fb := Node3D.new()
+		var body := VisualFactory.make_flat_box(Vector3(size.x, size.y, size.z * 0.72), tone)
+		body.position = Vector3(0.0, 0.0, size.z * 0.36 - 0.05)
+		fb.add_child(body)
+		var cap := VisualFactory.make_rock_facet(Vector3(size.x, size.z * 0.28, size.y), tone.lightened(0.15), rng.randf_range(0.2, 0.8))
+		cap.rotation_degrees.x = 90.0
+		cap.position = Vector3(0.0, 0.0, size.z * 0.72 + size.z * 0.14 - 0.05)
+		fb.add_child(cap)
+		return fb)
+	model.rotation_degrees.x = 90.0
+	model.scale = size
+	model.position = Vector3(0.0, 0.0, -0.05)
+	root.add_child(model)
 	return root
 
 func _build_rock_bowl() -> void:
@@ -445,9 +487,26 @@ func _build_zone1(saved: Dictionary) -> void:
 	furnace.position = _site_to_local(FURNACE_POS)
 	_site.add_child(furnace)
 	_furnace_node = furnace
-	var body := VisualFactory.make_metal_box(Vector3(1.1, 0.8, 0.6), Color(MineConstants.PALETTE["furnace"]))
-	body.position = Vector3(0.0, 0.2, 0.3)
-	furnace.add_child(body)
+	var model := VisualFactory.make_model(VisualFactory.MODEL_FURNACE, func() -> Node3D:
+		var fb := Node3D.new()
+		var body := VisualFactory.make_metal_box(Vector3(1.1, 0.8, 0.6), Color(MineConstants.PALETTE["furnace"]))
+		body.position = Vector3(0.0, 0.2, 0.3)
+		fb.add_child(body)
+		var chimney := VisualFactory.make_metal_box(Vector3(0.22, 0.22, 0.35), Color(MineConstants.PALETTE["furnace"]).lightened(0.1))
+		chimney.position = Vector3(0.28, 0.35, 0.7)
+		fb.add_child(chimney)
+		var mouth := VisualFactory.make_metal_box(Vector3(0.6, 0.06, 0.32), Color(MineConstants.PALETTE["furnace_fire"]), Color(MineConstants.PALETTE["furnace_fire"]), 1.8)
+		mouth.position = Vector3(0.0, -0.16, 0.2)
+		mouth.material_override.resource_name = "furnace_fire"
+		fb.add_child(mouth)
+		var board := VisualFactory.make_metal_box(Vector3(0.9, 0.12, 0.34), Color("#15151A"))
+		board.position = Vector3(0.0, 0.45, 0.78)
+		board.rotation.x = -0.35
+		fb.add_child(board)
+		return fb)
+	model.rotation_degrees.x = 90.0
+	furnace.add_child(model)
+	_furnace_glow = _find_material_by_name(model, "furnace_fire") as StandardMaterial3D
 	# Reviewer round 3：熔爐本體純粹係 mesh，冇 collider，車可以直穿——
 	# 加 StaticBody3D 貼實爐身，SellArea（下面）維持獨立 Area3D 唔受影響。
 	var body_collider := StaticBody3D.new()
@@ -456,15 +515,8 @@ func _build_zone1(saved: Dictionary) -> void:
 	body_shape.size = Vector3(0.9, 0.7, 0.55)
 	body_col.shape = body_shape
 	body_collider.add_child(body_col)
-	body_collider.position = body.position
+	body_collider.position = Vector3(0.0, 0.2, 0.3)
 	furnace.add_child(body_collider)
-	var chimney := VisualFactory.make_metal_box(Vector3(0.22, 0.22, 0.35), Color(MineConstants.PALETTE["furnace"]).lightened(0.1))
-	chimney.position = Vector3(0.28, 0.35, 0.7)
-	furnace.add_child(chimney)
-	var mouth := VisualFactory.make_metal_box(Vector3(0.6, 0.06, 0.32), Color(MineConstants.PALETTE["furnace_fire"]), Color(MineConstants.PALETTE["furnace_fire"]), 1.8)
-	mouth.position = Vector3(0.0, -0.16, 0.2)
-	_furnace_glow = mouth.material_override
-	furnace.add_child(mouth)
 	# 用戶：全方位都可以收碎料——爐四周一圈紫墊，任何方向入到都賣
 	var pad := VisualFactory.make_flat_box(Vector3(2.4, 2.2, 0.02), Color(MineConstants.PALETTE["pad"]))
 	pad.position = Vector3(0.0, 0.2, 0.01)
@@ -482,10 +534,6 @@ func _build_zone1(saved: Dictionary) -> void:
 	head.rotation_degrees = Vector3(90.0, 0.0, -90.0)
 	head.position = Vector3(0.34, -0.5, 0.03)
 	furnace.add_child(head)
-	var board := VisualFactory.make_metal_box(Vector3(0.9, 0.12, 0.34), Color("#15151A"))
-	board.position = Vector3(0.0, 0.45, 0.78)
-	board.rotation.x = -0.35
-	furnace.add_child(board)
 	_furnace_counter = Label3D.new()
 	_furnace_counter.text = "0"
 	_furnace_counter.font_size = 110
@@ -530,15 +578,20 @@ func _build_car() -> void:
 	_cargo_root.name = "Cargo"
 	_car.add_child(_cargo_root)
 	_car_body.scale = Vector3.ONE * 0.88
-	var body := VisualFactory.make_metal_box(Vector3(0.3, 0.32, 0.16), Color("#F2C230"))
+	var body := VisualFactory.make_model(VisualFactory.MODEL_DOZER_BODY, func() -> Node3D:
+		var fb := Node3D.new()
+		var b := VisualFactory.make_metal_box(Vector3(0.3, 0.32, 0.16), Color("#F2C230"))
+		fb.add_child(b)
+		var cab := VisualFactory.make_metal_box(Vector3(0.18, 0.16, 0.12), Color("#F7D35A"))
+		cab.position = Vector3(0.0, -0.04, 0.13)
+		fb.add_child(cab)
+		for sx in [-1.0, 1.0]:
+			var track := VisualFactory.make_metal_box(Vector3(0.09, 0.4, 0.1), Color("#26262B"))
+			track.position = Vector3(sx * 0.2, 0.0, -0.05)
+			fb.add_child(track)
+		return fb)
+	body.rotation_degrees.x = 90.0
 	_car_body.add_child(body)
-	var cab := VisualFactory.make_metal_box(Vector3(0.18, 0.16, 0.12), Color("#F7D35A"))
-	cab.position = Vector3(0.0, -0.04, 0.13)
-	_car_body.add_child(cab)
-	for sx in [-1.0, 1.0]:
-		var track := VisualFactory.make_metal_box(Vector3(0.09, 0.4, 0.1), Color("#26262B"))
-		track.position = Vector3(sx * 0.2, 0.0, -0.05)
-		_car_body.add_child(track)
 	_rebuild_blade()
 
 ## 鏟斗按 tier 變闊變高（升級要「見得到」）：視覺 + 真碰撞一齊重砌
@@ -579,15 +632,23 @@ func _rebuild_blade() -> void:
 		trim.position = Vector3(0.0, -0.04, 0.2)
 		_car_body.add_child(trim)
 		_blade_nodes.append(trim)
+	var blade := VisualFactory.make_model(VisualFactory.MODEL_DOZER_BLADE, func() -> Node3D:
+		var fb := Node3D.new()
+		for i in range(5):
+			var a: float = (float(i) - 2.0) * 0.32
+			var seg := VisualFactory.make_metal_box(Vector3(0.16 * w, 0.04, 0.16 + 0.05 * (w - 1.0)), col_tint)
+			seg.position = Vector3(sin(a) * 0.34 * w, 0.2 + cos(a) * 0.14 * w, 0.0)
+			seg.rotation.z = -a
+			fb.add_child(seg)
+		return fb)
+	blade.rotation_degrees.x = 90.0
+	blade.scale = Vector3(w, 1.0, (0.16 + 0.05 * (w - 1.0)) / 0.16)
+	_tint_mesh_surfaces(blade, col_tint)
+	_blade = blade
+	_car_body.add_child(blade)
+	_blade_nodes.append(blade)
 	for i in range(5):
 		var a: float = (float(i) - 2.0) * 0.32
-		var seg := VisualFactory.make_metal_box(Vector3(0.16 * w, 0.04, 0.16 + 0.05 * (w - 1.0)), col_tint)
-		seg.position = Vector3(sin(a) * 0.34 * w, 0.2 + cos(a) * 0.14 * w, 0.0)
-		seg.rotation.z = -a
-		_car_body.add_child(seg)
-		_blade_nodes.append(seg)
-		if i == 2:
-			_blade = seg
 		var bc := CollisionShape3D.new()
 		var bs := BoxShape3D.new()
 		bs.size = Vector3(0.17 * w, 0.05, 0.22)
@@ -598,8 +659,12 @@ func _rebuild_blade() -> void:
 		_blade_nodes.append(bc)
 	# 側翼：鏟斗兩端向後延伸嘅矮牆，礦唔會由兩側瀉走（視覺 + 碰撞）
 	for sx in [-1.0, 1.0]:
-		var wing := VisualFactory.make_metal_box(Vector3(0.04, 0.26, wing_h), Color("#F2C230").darkened(0.2))
-		wing.position = Vector3(sx * 0.38 * w, 0.14, wing_h * 0.5 - 0.07)
+		var wing := VisualFactory.make_model(VisualFactory.MODEL_DOZER_WING, func() -> Node3D:
+			var fb := VisualFactory.make_metal_box(Vector3(0.04, 0.26, wing_h), Color("#F2C230").darkened(0.2))
+			fb.position = Vector3(sx * 0.38 * w, 0.14, wing_h * 0.5 - 0.07)
+			return fb)
+		wing.rotation_degrees.x = 90.0
+		wing.scale = Vector3(-1.0 if sx < 0.0 else 1.0, 1.0, wing_h / 0.14)
 		_car_body.add_child(wing)
 		_blade_nodes.append(wing)
 		var wc := CollisionShape3D.new()
@@ -1027,12 +1092,18 @@ func _build_props() -> void:
 	props.name = "Props"
 	_site.add_child(props)
 	for pos in [Vector2(-2.4, FIELD_MAX.y + 0.45), Vector2(2.4, FIELD_MAX.y + 0.45), Vector2(FIELD_MAX.x + 0.45, -5.6), Vector2(FIELD_MIN.x - 0.45, -3.6)]:
-		var post := VisualFactory.make_flat_box(Vector3(0.08, 0.08, 1.1), Color("#3A3140"))
-		post.position = Vector3(pos.x, pos.y, 0.55)
+		var post := VisualFactory.make_model(VisualFactory.MODEL_LAMP_POST, func() -> Node3D:
+			var fb := Node3D.new()
+			var pole := VisualFactory.make_flat_box(Vector3(0.08, 0.08, 1.1), Color("#3A3140"))
+			pole.position = Vector3(0.0, 0.0, 0.55)
+			fb.add_child(pole)
+			var lamp := VisualFactory.make_lamp(0.08, Color("#FFD27A"), 1.6)
+			lamp.position = Vector3(0.0, 0.0, 1.15)
+			fb.add_child(lamp)
+			return fb)
+		post.rotation_degrees.x = 90.0
+		post.position = Vector3(pos.x, pos.y, 0.0)
 		props.add_child(post)
-		var lamp := VisualFactory.make_lamp(0.08, Color("#FFD27A"), 1.6)
-		lamp.position = Vector3(pos.x, pos.y, 1.15)
-		props.add_child(lamp)
 		var light := OmniLight3D.new()
 		light.light_color = Color("#FFD27A")
 		light.light_energy = 0.9
@@ -2326,15 +2397,28 @@ func _build_garage() -> void:
 	_garage_root.name = "Garage"
 	_garage_root.position = Vector3(GARAGE_POS.x, GARAGE_POS.y, 0.0)
 	_site.add_child(_garage_root)
-	var shed := VisualFactory.make_metal_box(Vector3(0.95, 0.7, 0.5), Color("#4A4652"))
-	shed.position = Vector3(0.0, 0.0, 0.25)
-	_garage_root.add_child(shed)
-	var roof := VisualFactory.make_metal_box(Vector3(1.05, 0.8, 0.08), Color("#F2C230"))
-	roof.position = Vector3(0.0, 0.0, 0.54)
-	_garage_root.add_child(roof)
-	var door := VisualFactory.make_metal_box(Vector3(0.5, 0.04, 0.38), Color("#26262B"))
-	door.position = Vector3(0.0, -0.36, 0.2)
-	_garage_root.add_child(door)
+	var model := VisualFactory.make_model(VisualFactory.MODEL_GARAGE, func() -> Node3D:
+		var fb := Node3D.new()
+		var shed := VisualFactory.make_metal_box(Vector3(0.95, 0.7, 0.5), Color("#4A4652"))
+		shed.position = Vector3(0.0, 0.0, 0.25)
+		fb.add_child(shed)
+		var roof := VisualFactory.make_metal_box(Vector3(1.05, 0.8, 0.08), Color("#F2C230"))
+		roof.position = Vector3(0.0, 0.0, 0.54)
+		fb.add_child(roof)
+		var door := VisualFactory.make_metal_box(Vector3(0.5, 0.04, 0.38), Color("#26262B"))
+		door.position = Vector3(0.0, -0.36, 0.2)
+		fb.add_child(door)
+		var handle := VisualFactory.make_metal_box(Vector3(0.06, 0.32, 0.04), Color("#C9CFD6"))
+		handle.position = Vector3(0.0, -0.75, 0.05)
+		handle.rotation.z = 0.6
+		fb.add_child(handle)
+		var head := VisualFactory.make_metal_box(Vector3(0.16, 0.12, 0.04), Color("#C9CFD6"))
+		head.position = Vector3(-0.1, -0.6, 0.05)
+		head.rotation.z = 0.6
+		fb.add_child(head)
+		return fb)
+	model.rotation_degrees.x = 90.0
+	_garage_root.add_child(model)
 	var shed_col := StaticBody3D.new()
 	var sc := CollisionShape3D.new()
 	var ss := BoxShape3D.new()
@@ -2343,18 +2427,10 @@ func _build_garage() -> void:
 	shed_col.add_child(sc)
 	shed_col.position = Vector3(0.0, 0.0, 0.25)
 	_garage_root.add_child(shed_col)
+	# 墊上一支扳手圖示（同 HUD 車房掣一樣，已經係 garage.glb 一部分）
 	var pad := VisualFactory.make_flat_box(Vector3(1.0, 0.7, 0.03), Color("#F2C230").darkened(0.35))
 	pad.position = Vector3(0.0, -0.75, 0.015)
 	_garage_root.add_child(pad)
-	# 墊上一支扳手圖示（同 HUD 車房掣一樣）
-	var handle := VisualFactory.make_metal_box(Vector3(0.06, 0.32, 0.04), Color("#C9CFD6"))
-	handle.position = Vector3(0.0, -0.75, 0.05)
-	handle.rotation.z = 0.6
-	_garage_root.add_child(handle)
-	var head := VisualFactory.make_metal_box(Vector3(0.16, 0.12, 0.04), Color("#C9CFD6"))
-	head.position = Vector3(-0.1, -0.6, 0.05)
-	head.rotation.z = 0.6
-	_garage_root.add_child(head)
 	_garage_hint = Label3D.new()
 	_garage_hint.text = "車房"
 	_garage_hint.font_size = 72
