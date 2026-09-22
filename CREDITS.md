@@ -15,6 +15,31 @@ GDScript 程式碼）全部自製，唔涉及第三方授權。
 其餘大部分係人形／殭屍（character-l、character-o 顯著殭屍綠皮黃牙，明確要避開），
 機械人造型完全符合 issue 要求「唔可以似 Idle Zombie Miner」。
 
+## 3D 模型（自製，headless Blender 生成）
+
+VR-17（ALTA-249）：以下 `.glb` 全部由 `tools/blender/gen_models.py` 用 Blender 4.2 LTS 無介面
+（`blender -b -P`）程式化生成，冇貼圖、每件一組純色材質（沿用 `MineConstants.PALETTE` 紫岩色板
+同 `scenes/field.gd` 嘅車身黃 `#F2C230`），每檔 < 30KB。自製，冇第三方授權問題；重新生成：
+`~/blender-4.2/blender -b -P tools/blender/gen_models.py -- assets/models`，預覽圖：
+`tools/blender/preview.py`。
+
+| 檔案 | 對應灰模 | 原點 |
+|---|---|---|
+| `dozer_body.glb` | 推土機車身＋駕駛室＋履帶（`field.gd` `_build_car()`） | 車原點（`_car_body` 0,0,0） |
+| `dozer_blade.glb` | 弧形鏟斗（`_rebuild_blade()` 5 段弧，w=1） | 車原點；x 按 `BLADE_SCALE`、z 按 `(0.16+0.05(w−1))/0.16` 縮放 |
+| `dozer_wing.glb` | 右側翼板（`scale.x = −1` 做左邊） | 車原點 |
+| `furnace.glb` | 熔爐身＋煙囪＋發光爐口（`furnace_fire` 材質 emission）＋告示板 | Furnace 節點地面原點 |
+| `mine_entrance.glb` | 礦道入口：木柱、橫樑、山牆、黑洞口、兩盞燈 | 柱腳 |
+| `mine_cart.glb` | 礦車（斗＋輪）0.22×0.16×0.14 | 盒中心（碰撞體係子節點） |
+| `rock_0/1/2.glb` | 岩壁圓石，單位 1×1×1，底喺 z=0 | 底部中心，按 `_rock()` size 縮放 |
+| `warehouse.glb` | 倉庫＋屋頂＋門 | 倉身中心 |
+| `crate.glb` / `barrel.glb` | 木箱 0.22×0.22×0.18 ／ 油桶 r0.11 h0.24 | 中心 ／ 底部 |
+| `lamp_post.glb` | 燈柱（`_build_props()`） | 地面 |
+| `garage.glb` | 車房（`_build_garage()`） | 地面 |
+
+座標：Blender 用場地 Z-up 慣例（x 闊、+y 前、z 高）匯出成 glTF Y-up，Godot 載入後同礦工一樣
+加 `rotation_degrees.x = 90` 即回到場地軸；所有尺寸同灰模數字一致。碰撞形狀唔喺模型入面。
+
 ## 圖示
 
 | 檔案 | 來源 | 授權 |
