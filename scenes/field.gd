@@ -407,7 +407,7 @@ func _rock(size: Vector3, tone: Color, solid: bool = true) -> Node3D:
 		_static_box(root, Vector3(size.x, size.y, size.z), Vector3(0.0, 0.0, size.z * 0.5 - 0.05))
 	var idx: int = _rock_cycle % VisualFactory.MODEL_ROCK.size()
 	_rock_cycle += 1
-	var model := VisualFactory.make_model(VisualFactory.MODEL_ROCK[idx], func() -> Node3D:
+	var fallback := func() -> Node3D:
 		var fb := Node3D.new()
 		var body := VisualFactory.make_flat_box(Vector3(size.x, size.y, size.z * 0.72), tone)
 		body.position = Vector3(0.0, 0.0, size.z * 0.36 - 0.05)
@@ -416,9 +416,10 @@ func _rock(size: Vector3, tone: Color, solid: bool = true) -> Node3D:
 		cap.rotation_degrees.x = 90.0
 		cap.position = Vector3(0.0, 0.0, size.z * 0.72 + size.z * 0.14 - 0.05)
 		fb.add_child(cap)
-		return fb)
-	model.rotation_degrees.x = 90.0
-	model.scale = size
+		return fb
+	# Review round 1：glb 匯入後 local Y=場地高度、Z=場地深度（rotation_degrees.x=90 前），
+	# 同 site 嘅 (x,y,z)＝(闊,深,高) 要換軸，唔可以直接 `model.scale = size`
+	var model := VisualFactory.make_model(VisualFactory.MODEL_ROCK[idx], fallback, Vector3(size.x, size.z, size.y))
 	model.position = Vector3(0.0, 0.0, -0.05)
 	root.add_child(model)
 	return root
@@ -504,7 +505,6 @@ func _build_zone1(saved: Dictionary) -> void:
 		board.rotation.x = -0.35
 		fb.add_child(board)
 		return fb)
-	model.rotation_degrees.x = 90.0
 	furnace.add_child(model)
 	_furnace_glow = _find_material_by_name(model, "furnace_fire") as StandardMaterial3D
 	# Reviewer round 3：熔爐本體純粹係 mesh，冇 collider，車可以直穿——
@@ -590,7 +590,6 @@ func _build_car() -> void:
 			track.position = Vector3(sx * 0.2, 0.0, -0.05)
 			fb.add_child(track)
 		return fb)
-	body.rotation_degrees.x = 90.0
 	_car_body.add_child(body)
 	_rebuild_blade()
 
@@ -632,7 +631,7 @@ func _rebuild_blade() -> void:
 		trim.position = Vector3(0.0, -0.04, 0.2)
 		_car_body.add_child(trim)
 		_blade_nodes.append(trim)
-	var blade := VisualFactory.make_model(VisualFactory.MODEL_DOZER_BLADE, func() -> Node3D:
+	var blade_fallback := func() -> Node3D:
 		var fb := Node3D.new()
 		for i in range(5):
 			var a: float = (float(i) - 2.0) * 0.32
@@ -640,9 +639,11 @@ func _rebuild_blade() -> void:
 			seg.position = Vector3(sin(a) * 0.34 * w, 0.2 + cos(a) * 0.14 * w, 0.0)
 			seg.rotation.z = -a
 			fb.add_child(seg)
-		return fb)
-	blade.rotation_degrees.x = 90.0
-	blade.scale = Vector3(w, 1.0, (0.16 + 0.05 * (w - 1.0)) / 0.16)
+		return fb
+	# Review round 1：glb local Y=場地高度（rotation 之前），呢個先係「變闊變高」嗰個高度
+	# 增量要落嘅軸——原本 `Vector3(w, 1, h/0.16)` 錯縮咗深度（Z），高度冇變
+	var blade := VisualFactory.make_model(VisualFactory.MODEL_DOZER_BLADE, blade_fallback,
+		Vector3(w, (0.16 + 0.05 * (w - 1.0)) / 0.16, 1.0))
 	_tint_mesh_surfaces(blade, col_tint)
 	_blade = blade
 	_car_body.add_child(blade)
@@ -659,12 +660,17 @@ func _rebuild_blade() -> void:
 		_blade_nodes.append(bc)
 	# 側翼：鏟斗兩端向後延伸嘅矮牆，礦唔會由兩側瀉走（視覺 + 碰撞）
 	for sx in [-1.0, 1.0]:
-		var wing := VisualFactory.make_model(VisualFactory.MODEL_DOZER_WING, func() -> Node3D:
+		var wing_fallback := func() -> Node3D:
 			var fb := VisualFactory.make_metal_box(Vector3(0.04, 0.26, wing_h), Color("#F2C230").darkened(0.2))
 			fb.position = Vector3(sx * 0.38 * w, 0.14, wing_h * 0.5 - 0.07)
-			return fb)
-		wing.rotation_degrees.x = 90.0
-		wing.scale = Vector3(-1.0 if sx < 0.0 else 1.0, 1.0, wing_h / 0.14)
+			return fb
+		# Review round 1：glb local Y=場地高度（rotation 之前），高度增量要落嗰個軸，
+		# 原本 `Vector3(±1, 1, wing_h/0.14)` 錯縮咗深度；glb 內 x 位置固定 ±0.38（w=1
+		# 基準），w>1 嗰段闊度要自己補返 position.x（glb 冇跟 w 縮位置）——用
+		# model_position 淨係喺真係讀到 glb 先加，fallback 已經自己擺晒位
+		var wing := VisualFactory.make_model(VisualFactory.MODEL_DOZER_WING, wing_fallback,
+			Vector3(-1.0 if sx < 0.0 else 1.0, wing_h / 0.14, 1.0),
+			Vector3(sx * 0.38 * (w - 1.0), 0.0, 0.0))
 		_car_body.add_child(wing)
 		_blade_nodes.append(wing)
 		var wc := CollisionShape3D.new()
@@ -1101,7 +1107,6 @@ func _build_props() -> void:
 			lamp.position = Vector3(0.0, 0.0, 1.15)
 			fb.add_child(lamp)
 			return fb)
-		post.rotation_degrees.x = 90.0
 		post.position = Vector3(pos.x, pos.y, 0.0)
 		props.add_child(post)
 		var light := OmniLight3D.new()
@@ -2417,7 +2422,6 @@ func _build_garage() -> void:
 		head.rotation.z = 0.6
 		fb.add_child(head)
 		return fb)
-	model.rotation_degrees.x = 90.0
 	_garage_root.add_child(model)
 	var shed_col := StaticBody3D.new()
 	var sc := CollisionShape3D.new()
