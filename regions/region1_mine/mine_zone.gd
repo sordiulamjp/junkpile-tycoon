@@ -170,7 +170,6 @@ func _rebuild_wh_crates() -> void:
 			fb.add_child(band)
 			return fb)
 		crate.position = base + Vector3(-0.24 + float(col) * 0.24, 0.0, 0.4 + float(row) * 0.19)
-		crate.rotation_degrees.x = 90.0
 		add_child(crate)
 		_wh_crates.append(crate)
 
@@ -330,7 +329,6 @@ func _build_rail_and_cart() -> void:
 	add_child(_cart_mesh)
 	var cart_model := VisualFactory.make_model(VisualFactory.MODEL_MINE_CART, func() -> Node3D:
 		return VisualFactory.make_metal_box(Vector3(0.22, 0.16, 0.14), Color("#F2B830")))
-	cart_model.rotation_degrees.x = 90.0
 	_cart_mesh.add_child(cart_model)
 	var cb := AnimatableBody3D.new() # 用戶 2026-09-20：礦車係實體
 	cb.sync_to_physics = true
@@ -356,7 +354,6 @@ func _build_warehouse() -> void:
 		return fb)
 	model.name = "Warehouse"
 	model.position = wh_pos
-	model.rotation_degrees.x = 90.0
 	add_child(model)
 
 	var whb := StaticBody3D.new() # 用戶 2026-09-20：倉庫係實體
@@ -405,7 +402,6 @@ func _build_entrance() -> void:
 		dark.position = Vector3(0.0, 0.08, 0.0)
 		fb.add_child(dark)
 		return fb)
-	model.rotation_degrees.x = 90.0
 	sign.add_child(model)
 
 	var area := Area3D.new()

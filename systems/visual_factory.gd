@@ -90,17 +90,33 @@ static var _miner_load_attempted := false
 ## VR-17b：通用 .glb 換模入口，`make_miner()` 嗰套 pattern 攞出嚟做任何
 ## 一件模型都用得——`ResourceLoader.exists` + static cache（keyed by path，
 ## `has()` 分得出「未試過」同「試過但搵唔到」）+ 缺檔就用 `fallback()`
-## 起返原本嘅灰模，成個場景照樣 build 得出。call site 自己加
-## `rotation_degrees.x = 90.0`（Blender Z-up 匯出做 glTF Y-up，呢個先
-## 轉返場地 Z-up 慣例，同 `make_miner()` 一致，見 CREDITS.md）。
+## 起返原本嘅灰模，成個場景照樣 build 得出。
+##
+## Review round 1（ALTA-399）修正：`rotation_degrees.x = 90.0`（Blender
+## Z-up 匯出做 glTF Y-up，呢個先轉返場地 Z-up 慣例）同埋 `scale` 淨係
+## 喺真係讀到 glb 嗰陣先套用，落喺呢度而唔係 call site——fallback 灰模
+## 本身已經係場地座標砌，唔應該再食多一次旋轉／縮放（吼喺場景會瞓低／
+## 雙重縮放）。`scale` 用嘅係 glTF 匯入後、rotation 之前嘅 local 軸——即係
+## Y = 場地高度（rotation_degrees.x=90 之後先變 Z）、Z = 場地深度（負 Y）；
+## call site 揸 site 語意嘅 Vector3(x, z, y) 傳入，唔好直接用 site 嘅
+## Vector3(x, y, z)。`model_position` 同一道理：淨係喺讀到真 glb 先加落去
+## （例如鏟斗兩側 wing 個 x 位置要跟 tier 闊度）——fallback 已經自己喺
+## site 座標度擺好位，唔應該再疊多一層 offset。
 static var _model_cache: Dictionary = {}
-static func make_model(path: String, fallback: Callable) -> Node3D:
+static func make_model(
+	path: String, fallback: Callable,
+	model_scale: Vector3 = Vector3.ONE, model_position: Vector3 = Vector3.ZERO
+) -> Node3D:
 	if not _model_cache.has(path):
 		_model_cache[path] = load(path) if ResourceLoader.exists(path) else null
 	var scene: PackedScene = _model_cache[path]
 	if scene == null:
 		return fallback.call()
-	return scene.instantiate()
+	var inst: Node3D = scene.instantiate()
+	inst.rotation_degrees.x = 90.0
+	inst.scale = model_scale
+	inst.position = model_position
+	return inst
 
 
 # ══════════════════════ 材質 ══════════════════════
