@@ -56,6 +56,23 @@ const ORE_TIER_COLOR := {
 ## 金／鑽／皇冠三階波「少少自發光」（issue 視覺參考），其餘唔發光。
 const ORE_TIER_EMISSIVE_TIERS := ["gold", "diamond", "crown"]
 
+## VR-17b（ALTA-399）：ALTA-249 headless-Blender 灰模換模，接線用嘅 .glb 路徑。
+const MODEL_DOZER_BODY := "res://assets/models/dozer_body.glb"
+const MODEL_DOZER_BLADE := "res://assets/models/dozer_blade.glb"
+const MODEL_DOZER_WING := "res://assets/models/dozer_wing.glb"
+const MODEL_FURNACE := "res://assets/models/furnace.glb"
+const MODEL_MINE_ENTRANCE := "res://assets/models/mine_entrance.glb"
+const MODEL_MINE_CART := "res://assets/models/mine_cart.glb"
+const MODEL_ROCK := [
+	"res://assets/models/rock_0.glb",
+	"res://assets/models/rock_1.glb",
+	"res://assets/models/rock_2.glb",
+]
+const MODEL_WAREHOUSE := "res://assets/models/warehouse.glb"
+const MODEL_CRATE := "res://assets/models/crate.glb"
+const MODEL_LAMP_POST := "res://assets/models/lamp_post.glb"
+const MODEL_GARAGE := "res://assets/models/garage.glb"
+
 const MINER_MODEL_PATH := "res://assets/models/character-g.glb"
 ## Kenney 機械人 glTF 企立高度實測 ≈2.7 世界單位（見 ALTA-153 留言）。
 ## 用戶實機回饋（round2 第 5 點）：礦工放大到約 0.35 世界單位高——呢個
@@ -69,6 +86,21 @@ const MINER_VISUAL_SCALE := 0.2
 
 static var _miner_scene: PackedScene = null
 static var _miner_load_attempted := false
+
+## VR-17b：通用 .glb 換模入口，`make_miner()` 嗰套 pattern 攞出嚟做任何
+## 一件模型都用得——`ResourceLoader.exists` + static cache（keyed by path，
+## `has()` 分得出「未試過」同「試過但搵唔到」）+ 缺檔就用 `fallback()`
+## 起返原本嘅灰模，成個場景照樣 build 得出。call site 自己加
+## `rotation_degrees.x = 90.0`（Blender Z-up 匯出做 glTF Y-up，呢個先
+## 轉返場地 Z-up 慣例，同 `make_miner()` 一致，見 CREDITS.md）。
+static var _model_cache: Dictionary = {}
+static func make_model(path: String, fallback: Callable) -> Node3D:
+	if not _model_cache.has(path):
+		_model_cache[path] = load(path) if ResourceLoader.exists(path) else null
+	var scene: PackedScene = _model_cache[path]
+	if scene == null:
+		return fallback.call()
+	return scene.instantiate()
 
 
 # ══════════════════════ 材質 ══════════════════════

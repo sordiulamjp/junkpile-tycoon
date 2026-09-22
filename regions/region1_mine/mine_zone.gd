@@ -40,7 +40,7 @@ var panel: MineCrossSectionPanel
 
 var _layer_root: Node3D
 var _pile_root: Node3D
-var _cart_mesh: MeshInstance3D
+var _cart_mesh: Node3D
 var _cart_anim_t: float = 0.0
 
 var _layer_unlock_panels: Array[UnlockPanel] = [] # index 對應 layer_unlocked idx（idx 0 一定唔會有）
@@ -162,14 +162,17 @@ func _rebuild_wh_crates() -> void:
 	for i in range(n):
 		var col: int = i % 3
 		var row: int = i / 3
-		var crate := VisualFactory.make_flat_box(Vector3(0.22, 0.22, 0.18), Color("#B8894A"))
+		var crate := VisualFactory.make_model(VisualFactory.MODEL_CRATE, func() -> Node3D:
+			var fb := Node3D.new()
+			var body := VisualFactory.make_flat_box(Vector3(0.22, 0.22, 0.18), Color("#B8894A"))
+			fb.add_child(body)
+			var band := VisualFactory.make_flat_box(Vector3(0.24, 0.06, 0.2), Color("#6B4A24"))
+			fb.add_child(band)
+			return fb)
 		crate.position = base + Vector3(-0.24 + float(col) * 0.24, 0.0, 0.4 + float(row) * 0.19)
+		crate.rotation_degrees.x = 90.0
 		add_child(crate)
 		_wh_crates.append(crate)
-		var band := VisualFactory.make_flat_box(Vector3(0.24, 0.06, 0.2), Color("#6B4A24"))
-		band.position = crate.position
-		add_child(band)
-		_wh_crates.append(band)
 
 func _animate_miner(node: Node3D, phase: float) -> void:
 	var base_z := node.position.z
@@ -321,10 +324,14 @@ func _build_rail_and_cart() -> void:
 	rail.position = Vector3(LAYER_WIDTH * 0.5 + 0.2, rail_len * 0.5, 0.05)
 	add_child(rail)
 
-	_cart_mesh = VisualFactory.make_metal_box(Vector3(0.22, 0.16, 0.14), Color("#F2B830"))
+	_cart_mesh = Node3D.new()
 	_cart_mesh.name = "Cart"
 	_cart_mesh.position = Vector3(LAYER_WIDTH * 0.5 + 0.2, 0.0, 0.12)
 	add_child(_cart_mesh)
+	var cart_model := VisualFactory.make_model(VisualFactory.MODEL_MINE_CART, func() -> Node3D:
+		return VisualFactory.make_metal_box(Vector3(0.22, 0.16, 0.14), Color("#F2B830")))
+	cart_model.rotation_degrees.x = 90.0
+	_cart_mesh.add_child(cart_model)
 	var cb := AnimatableBody3D.new() # 用戶 2026-09-20：礦車係實體
 	cb.sync_to_physics = true
 	var cc := CollisionShape3D.new()
@@ -335,15 +342,22 @@ func _build_rail_and_cart() -> void:
 	_cart_mesh.add_child(cb)
 
 func _build_warehouse() -> void:
-	var wh := VisualFactory.make_flat_box(Vector3(0.8, 0.55, 0.5), Color(PALETTE["wall_light"]).darkened(0.15))
-	wh.name = "Warehouse"
-	wh.position = Vector3(LAYER_WIDTH * 0.5 + 0.65, -0.25, 0.25)
-	add_child(wh)
-
-	var roof := VisualFactory.make_flat_box(Vector3(0.9, 0.65, 0.06), Color(PALETTE["wall_dark"]))
-	roof.name = "WarehouseRoof"
-	roof.position = wh.position + Vector3(0.0, 0.0, 0.28)
-	add_child(roof)
+	var wh_pos := Vector3(LAYER_WIDTH * 0.5 + 0.65, -0.25, 0.25)
+	var model := VisualFactory.make_model(VisualFactory.MODEL_WAREHOUSE, func() -> Node3D:
+		var fb := Node3D.new()
+		var wh := VisualFactory.make_flat_box(Vector3(0.8, 0.55, 0.5), Color(PALETTE["wall_light"]).darkened(0.15))
+		fb.add_child(wh)
+		var roof := VisualFactory.make_flat_box(Vector3(0.9, 0.65, 0.06), Color(PALETTE["wall_dark"]))
+		roof.position = Vector3(0.0, 0.0, 0.28)
+		fb.add_child(roof)
+		var door := VisualFactory.make_flat_box(Vector3(0.3, 0.02, 0.32), Color(PALETTE["wall_dark"]).darkened(0.3))
+		door.position = Vector3(0.0, -0.28, -0.08)
+		fb.add_child(door)
+		return fb)
+	model.name = "Warehouse"
+	model.position = wh_pos
+	model.rotation_degrees.x = 90.0
+	add_child(model)
 
 	var whb := StaticBody3D.new() # 用戶 2026-09-20：倉庫係實體
 	var whc := CollisionShape3D.new()
@@ -351,12 +365,9 @@ func _build_warehouse() -> void:
 	whs.size = Vector3(0.9, 0.65, 0.6)
 	whc.shape = whs
 	whb.add_child(whc)
-	whb.position = wh.position + Vector3(0.0, 0.0, 0.05)
+	whb.position = wh_pos + Vector3(0.0, 0.0, 0.05)
 	add_child(whb)
 	# 屋頂木箱由 _rebuild_wh_crates() 按倉庫等級疊
-	var door := VisualFactory.make_flat_box(Vector3(0.3, 0.02, 0.32), Color(PALETTE["wall_dark"]).darkened(0.3))
-	door.position = wh.position + Vector3(0.0, -0.28, -0.08)
-	add_child(door)
 
 
 # ══════════════════════ 3D 視覺：礦道入口（toggle 剖面面板） ══════════════════════
@@ -378,19 +389,24 @@ func _build_entrance() -> void:
 	sign.name = "EntranceSign"
 	sign.position = sign_pos
 	add_child(sign)
-	for px in [-0.32, 0.32]:
-		var post := VisualFactory.make_flat_box(Vector3(0.09, 0.09, 0.55), Color("#8B5A2B"))
-		post.position = Vector3(px, 0.0, 0.0)
-		sign.add_child(post)
-		var lamp := VisualFactory.make_lamp(0.045, Color("#FFD27A"))
-		lamp.position = Vector3(px, -0.08, 0.2)
-		sign.add_child(lamp)
-	var lintel := VisualFactory.make_flat_box(Vector3(0.8, 0.12, 0.09), Color("#6B4A24"))
-	lintel.position = Vector3(0.0, 0.0, 0.31)
-	sign.add_child(lintel)
-	var dark := VisualFactory.make_flat_box(Vector3(0.6, 0.02, 0.5), Color("#1A1420"))
-	dark.position = Vector3(0.0, 0.08, 0.0)
-	sign.add_child(dark)
+	var model := VisualFactory.make_model(VisualFactory.MODEL_MINE_ENTRANCE, func() -> Node3D:
+		var fb := Node3D.new()
+		for px in [-0.32, 0.32]:
+			var post := VisualFactory.make_flat_box(Vector3(0.09, 0.09, 0.55), Color("#8B5A2B"))
+			post.position = Vector3(px, 0.0, 0.0)
+			fb.add_child(post)
+			var lamp := VisualFactory.make_lamp(0.045, Color("#FFD27A"))
+			lamp.position = Vector3(px, -0.08, 0.2)
+			fb.add_child(lamp)
+		var lintel := VisualFactory.make_flat_box(Vector3(0.8, 0.12, 0.09), Color("#6B4A24"))
+		lintel.position = Vector3(0.0, 0.0, 0.31)
+		fb.add_child(lintel)
+		var dark := VisualFactory.make_flat_box(Vector3(0.6, 0.02, 0.5), Color("#1A1420"))
+		dark.position = Vector3(0.0, 0.08, 0.0)
+		fb.add_child(dark)
+		return fb)
+	model.rotation_degrees.x = 90.0
+	sign.add_child(model)
 
 	var area := Area3D.new()
 	area.input_ray_pickable = true
